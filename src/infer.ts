@@ -1042,7 +1042,10 @@ export class Infer {
             fields[a.name] = STR;
           }
         }
-        if (n.children.length) fields["children"] = HTML;
+        // `children` is always supplied at the call site (an empty fragment when
+        // there are none). Components that do not declare it simply ignore the
+        // extra field, because call-site records are open.
+        fields["children"] = HTML;
         const inst = instantiate(this.lookupVar(n.name, n.span), 0);
         if (inst.k !== "fun") this.fail(`component '${n.name}' is not a function`, n.span);
         if (inst.params.length === 1) {

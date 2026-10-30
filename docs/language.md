@@ -258,6 +258,13 @@ A bare element is also an expression, which is what makes conditional markup pos
 {if (cond) { <p>{"yes"}</p> } else { <p>{"no"}</p> }}
 ```
 
+A component call in a static position is built once. Put it in a hole to make it
+re-render when its inputs change:
+
+```flow
+{<Counter n={n.get()} />}
+```
+
 ---
 
 ## 8. The boundary, worked through

@@ -16,7 +16,7 @@ fn main() -> Html {
     <div class="card">
       <h1>{"Counter"}</h1>
       <button class="inc" onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
-      <Counter n={n.get()} />
+      {<Counter n={n.get()} />}
     </div>
   }
 }
