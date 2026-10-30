@@ -1,0 +1,22 @@
+effect Client {
+  fn state<a>(init: a) -> Cell<a>
+}
+
+// Components are functions taking a record and returning Html.
+// A tag starting with an upper-case letter is a component call.
+fn Counter(props: { n: Int, children: Html }) -> Html {
+  html {
+    <p class="count">{"count: "}{props.n}</p>
+  }
+}
+
+fn main() -> Html {
+  let n = Client.state(0);
+  html {
+    <div class="card">
+      <h1>{"Counter"}</h1>
+      <button class="inc" onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
+      <Counter n={n.get()} />
+    </div>
+  }
+}

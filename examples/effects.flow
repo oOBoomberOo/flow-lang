@@ -1,0 +1,36 @@
+// User-defined effects are *capabilities*. The provider's placement decides
+// where every call runs — the boundary follows the authority.
+
+effect Audit {
+  fn record(msg: Str) -> Unit
+}
+
+effect Server {
+  fn log(msg: Str) -> Unit
+}
+
+effect Client {
+  fn state<a>(init: a) -> Cell<a>
+}
+
+// Provided on the server (its body uses Server.log), so every Audit.record call
+// is placed on the server even though it is written inside a client handler.
+// Because it sits inside an event handler, the compiler emits a request/response
+// cut (`await R.call`) instead of a streaming one.
+provide Audit with {
+  record = fn(msg: Str) -> Unit { Server.log(msg) }
+}
+
+fn main() -> Html {
+  let clicks = Client.state(0);
+  html {
+    <div class="card">
+      <h1>{"Effects"}</h1>
+      <button class="rec" onClick={fn(e: Event) {
+        clicks.set(clicks.get() + 1);
+        Audit.record("clicked " + str(clicks.get()));
+      }}>{"record a click"}</button>
+      <p class="clicks">{"clicks: "}{clicks.get()}</p>
+    </div>
+  }
+}

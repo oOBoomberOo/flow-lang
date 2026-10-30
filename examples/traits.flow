@@ -1,0 +1,55 @@
+// Traits: type-directed dictionary dispatch, with a generic instance.
+
+type Money = { cents: Int, currency: Str }
+
+trait Describe<a> {
+  fn describe(x: a) -> Str
+}
+
+impl Describe for Int {
+  fn describe(x: Int) -> Str { "Int(" + str(x) + ")" }
+}
+
+impl Describe for Str {
+  fn describe(x: Str) -> Str { "\"" + x + "\"" }
+}
+
+impl Describe for Money {
+  fn describe(m: Money) -> Str { str(m.cents) + " " + m.currency }
+}
+
+// A generic instance: dispatches on the element only at the dynamic edge.
+impl Describe<a> for List<a> {
+  fn describe(xs: List<a>) -> Str { "List of " + str(len(xs)) }
+}
+
+trait Monoid<a> {
+  fn empty() -> a
+  fn combine(a: a, b: a) -> a
+}
+
+impl Monoid for Int {
+  fn empty() -> Int { 0 }
+  fn combine(a: Int, b: Int) -> Int { a + b }
+}
+
+fn total(xs: List<Int>) -> Int {
+  match xs {
+    [] => Monoid.empty(),
+    [x, ..rest] => Monoid.combine(x, total(rest)),
+  }
+}
+
+fn main() -> Html {
+  let m = { cents: 1250, currency: "USD" };
+  html {
+    <div class="card">
+      <h1>{"Traits"}</h1>
+      <p class="d1">{"int: "}{Describe.describe(42)}</p>
+      <p class="d2">{"str: "}{Describe.describe("flow")}</p>
+      <p class="d3">{"record: "}{Describe.describe(m)}</p>
+      <p class="d4">{"list: "}{Describe.describe([1, 2, 3])}</p>
+      <p class="d5">{"monoid total: "}{total([1, 2, 3, 4])}</p>
+    </div>
+  }
+}

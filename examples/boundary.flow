@@ -1,0 +1,31 @@
+effect Server {
+  fn secret(name: Str) -> Str
+  fn now() -> Int
+}
+
+effect Client {
+  fn state<a>(init: a) -> Cell<a>
+  fn now() -> Int
+}
+
+// The `if` lives on the client (its branches produce Html, which is client-only).
+// The then-branch contains a server computation, so the compiler cuts exactly
+// there: the branch is rendered on the client but its data is fetched from the
+// server, and only when the branch is actually taken.
+fn main() -> Html {
+  let reveal = Client.state(false);
+  html {
+    <div class="card">
+      <h1>{"If across the boundary"}</h1>
+      <button class="toggle" onClick={fn(e: Event) { reveal.set(not reveal.get()) }}>
+        {"toggle the secret"}
+      </button>
+      {if (reveal.get()) {
+        <p class="secret">{"server says: "}{Server.secret("flag")}</p>
+      } else {
+        <p class="hidden">{"nothing to see here"}</p>
+      }}
+      <p class="skew">{"server/client clock skew: "}{Server.now() - Client.now()}</p>
+    </div>
+  }
+}

@@ -1,0 +1,51 @@
+// Algebraic data types, pattern matching, and exhaustiveness checking.
+
+type Shape =
+  | Circle(Float)
+  | Rect(Float, Float)
+  | Triangle(Float, Float, Float)
+
+type Option<a> = None | Some(a)
+
+fn pi() -> Float { 3.141592653589793 }
+
+fn area(s: Shape) -> Float {
+  match s {
+    Circle(r) => pi() * r * r,
+    Rect(w, h) => w * h,
+    Triangle(a, b, _c) => 0.5 * a * b,
+  }
+}
+
+fn describe(o: Option<Shape>) -> Str {
+  match o {
+    None => "no shape",
+    Some(Circle(r)) => "circle of radius " + str(r),
+    Some(Rect(w, h)) => "rect " + str(w) + "x" + str(h),
+    Some(Triangle(_, _, _)) => "triangle",
+  }
+}
+
+fn safeDiv(a: Int, b: Int) -> Option<Int> {
+  if (b == 0) { None } else { Some(a / b) }
+}
+
+fn view(shapes: List<Shape>) -> Html {
+  html {
+    <ul class="shapes">
+      <li>{"first: "}{describe(head(shapes))}</li>
+      <li>{"area: "}{match head(shapes) { Some(s) => area(s), None => 0.0 }}</li>
+    </ul>
+  }
+}
+
+fn main() -> Html {
+  let shapes = [Rect(3.0, 4.0), Circle(2.0)];
+  html {
+    <div class="card">
+      <h1>{"ADTs"}</h1>
+      {view(shapes)}
+      <p>{"division: "}{match safeDiv(10, 2) { Some(n) => str(n), None => "undefined" }}</p>
+    </div>
+  }
+}
