@@ -1,8 +1,10 @@
 node_modules/
 dist/
+build/
 .flow-build/
 .tmp/
 .flow*.out
 .flow*.err
 *.log
+*.vsix
 flow_modules/
