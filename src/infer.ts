@@ -287,17 +287,26 @@ export class Infer {
   }
 
   registerEffect(d: Decl & { k: "Effect" }) {
-    const ops = new Map<string, { sig: FnSig; ty: Type }>();
+    // Declarations with the same name describe the same capability: merge their
+    // operations so a program may redeclare a subset (or extend) an effect that
+    // std already declares.
+    const existing = this.mod.effects.get(d.name);
+    const ops = new Map(existing?.ops ?? []);
     for (const o of d.ops) ops.set(o.name, { sig: o, ty: this.resolveSig(o, new Map()) });
-    this.mod.effects.set(d.name, { name: d.name, ops, place: d.place ?? "server" });
+    this.mod.effects.set(d.name, {
+      name: d.name,
+      ops,
+      place: d.place ?? existing?.place ?? "server",
+    });
   }
 
   /** A provider decides where its effect runs; otherwise the declaration's
-   *  `@ client` / `@ server` annotation stands. */
+   *  `@ client` / `@ server` annotation stands. A provider whose body is
+   *  placement-neutral (FFI calls, pure code) does not move the effect. */
   private applyProviderPlaces() {
     for (const e of this.mod.effects.values()) {
       const p = this.mod.provides.get(e.name);
-      if (p) e.place = p.place;
+      if (p && p.place !== "neutral") e.place = p.place;
     }
   }
 

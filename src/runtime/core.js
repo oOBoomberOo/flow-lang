@@ -319,35 +319,37 @@ export function createRuntime() {
     eq: (a, b) => R.eq(a, b),
     get: (x) => R.get(x),
     set: (x, v) => R.set(x, v),
+    host: {
+      now: () => Date.now(),
+      cell: (v) => R.cell(v),
+      ctor: (tag, args) => R.ctor(tag, args),
+    },
   };
 
   return R;
 }
 
 /* ------------------------------------------------------------------ */
-/* native capability implementations                                  */
+/* host primitives                                                    */
 /* ------------------------------------------------------------------ */
+//
+// The runtime no longer implements the capabilities. It exposes raw
+// primitives, and std/prelude.flow provides Server, Client and Store on top of
+// them through `unsafe extern js`.
 
 /** Authority that only exists on a server process. */
 export function installServerCapabilities(R, opts = {}) {
   const store = new Map(Object.entries(opts.store ?? {}));
-  R.provide("Server", {
-    now: () => Date.now(),
-    secret: (name) => (opts.secrets && opts.secrets[name] != null ? String(opts.secrets[name]) : ""),
-    log: (msg) => { (opts.log ?? console.log)(`[flow/server] ${msg}`); return null; },
-    random: () => Math.random(),
-  });
-  R.provide("Store", {
-    get: (k) => (store.has(k) ? R.ctor("Some", [store.get(k)]) : R.ctor("None", [])),
-    set: (k, v) => { store.set(k, v); return null; },
-  });
+  const host = globalThis.__flow.host;
+  host.secret = (name) =>
+    opts.secrets && opts.secrets[name] != null ? String(opts.secrets[name]) : "";
+  host.storeGet = (k) =>
+    store.has(k) ? R.ctor("Some", [store.get(k)]) : R.ctor("None", []);
+  host.storeSet = (k, v) => { store.set(k, v); return null; };
+  host.log = (msg) => { (opts.log ?? console.log)(msg); return null; };
 }
 
-/** Authority that only exists on a client process. */
-export function installClientCapabilities(R) {
-  R.provide("Client", {
-    now: () => Date.now(),
-    state: (init) => R.cell(init),
-    log: (msg) => { (globalThis.console ?? console).log(`[flow/client] ${msg}`); return null; },
-  });
+/** The client has no extra authority beyond the shared primitives. */
+export function installClientCapabilities(_R) {
+  // `Client` is provided by std/prelude.flow (state/now/log over __flow.host).
 }

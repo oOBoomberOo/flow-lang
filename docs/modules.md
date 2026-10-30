@@ -117,10 +117,10 @@ imports take precedence over the prelude.
 
 | | |
 |---|---|
-| effects | `Server`, `Client`, `Store` (declared here, not by the compiler) |
+| effects | `Server`, `Client`, `Store` — declared **and provided** here, not by the compiler; the runtime only exposes raw host primitives |
 | lists | `len`, `isEmpty`, `push`, `head`, `tail`, `concat`, `reverse` |
-| strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars` |
-| numbers | `int`, `float` |
+| strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars`, `strLen` |
+| numbers | `int`, `float`, `eq`, `neq` |
 
 The prelude is ordinary Flow: every primitive is an `unsafe extern js` binding to
 the host (`#length`, `@toUpperCase`, `__flow.show`, …). Nothing here is emitted by

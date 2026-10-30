@@ -35,6 +35,13 @@ pub effect Store @ server {
 
 unsafe extern js fn host_show<a>(x: a) -> Str = "__flow.show"
 unsafe extern js fn host_eq<a>(x: a, y: a) -> Bool = "__flow.eq"
+unsafe extern js fn host_now() -> Int = "__flow.host.now"
+unsafe extern js fn host_secret(name: Str) -> Str = "__flow.host.secret"
+unsafe extern js fn host_cell<a>(init: a) -> Cell<a> = "__flow.host.cell"
+unsafe extern js fn host_store_get(key: Str) -> Option<Str> = "__flow.host.storeGet"
+unsafe extern js fn host_store_set(key: Str, value: Str) -> Unit = "__flow.host.storeSet"
+unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
+unsafe extern js fn math_random() -> Float = "Math.random"
 unsafe extern js fn host_parse_int(s: Str) -> Int = "parseInt"
 unsafe extern js fn host_parse_float(s: Str) -> Float = "parseFloat"
 
@@ -105,3 +112,26 @@ pub fn eq<a>(x: a, y: a) -> Bool { host_eq(x, y) }
 pub fn neq<a>(x: a, y: a) -> Bool { not host_eq(x, y) }
 pub fn int(s: Str) -> Int { host_parse_int(s) }
 pub fn float(s: Str) -> Float { host_parse_float(s) }
+
+// ---------------------------------------------------------------- capabilities
+// The runtime exposes only raw primitives; the capabilities are std code.
+
+fn makeCell<a>(init: a) -> Cell<a> { host_cell(init) }
+
+provide Server with {
+  now = fn() -> Int { host_now() },
+  secret = fn(name: Str) -> Str { host_secret(name) },
+  log = fn(msg: Str) -> Unit { console_log(msg); () },
+  random = fn() -> Float { math_random() },
+}
+
+provide Client with {
+  now = fn() -> Int { host_now() },
+  state = makeCell,
+  log = fn(msg: Str) -> Unit { console_log(msg); () },
+}
+
+provide Store with {
+  get = fn(key: Str) -> Option<Str> { host_store_get(key) },
+  set = fn(key: Str, value: Str) -> Unit { host_store_set(key, value) },
+}

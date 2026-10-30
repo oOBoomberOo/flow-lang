@@ -7,7 +7,7 @@ unsafe extern js fn console_warn(msg: Str) -> Unit = "console.warn"
 unsafe extern js fn console_error(msg: Str) -> Unit = "console.error"
 unsafe extern js fn console_debug(msg: Str) -> Unit = "console.debug"
 
-pub fn info(msg: Str) -> Unit { console_log(msg) }
+pub fn info(msg: Str) -> Unit { console_log(msg); () }
 
 pub fn warn(msg: Str) -> Unit { console_warn("[warn] " + msg) }
 

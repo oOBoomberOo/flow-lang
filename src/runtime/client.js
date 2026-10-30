@@ -6,8 +6,8 @@
  * registers cuts and pushes subscriptions exactly like `runtime/server.js`.
  */
 
-import { createRuntime, installClientCapabilities } from "./core.js";
-import { installDom } from "./dom.js";
+import { createRuntime, installClientCapabilities } from "./core.js?v=2";
+import { installDom } from "./dom.js?v=2";
 
 const R = createRuntime();
 installClientCapabilities(R);
@@ -34,7 +34,7 @@ function post(msg) {
 R._attach(post, sid);
 
 const es = new EventSource(`/__flow/sse?sid=${encodeURIComponent(sid)}`);
-globalThis.__flow = R;
+globalThis.__flowRuntime = R;
 globalThis.__flow_sid = sid;
 es.onopen = () => {
   ready = true;
