@@ -3,7 +3,7 @@
 
 use std::log::{info, value}
 use std::time::{nowMs, duration}
-use std::math::{sqrt, floor, pow}
+use std::math::{sqrt, floor, pow, pi}
 
 // User code can bind raw JavaScript directly — the same mechanism std uses.
 unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
@@ -20,6 +20,7 @@ fn main() -> Html {
   let loud = shout("flow ffi");
   let n = countOf([10, 20, 30]);
   let second = itemAt([10, 20, 30], 1);
+  let circle = pi() * 4.0;
 
   info("flow: ffi demo");
   value("sqrt(144)", root);
@@ -35,7 +36,7 @@ fn main() -> Html {
   html {
     <div class="card">
       <h1>{"FFI primitives"}</h1>
-      <p class="math">{"sqrt(144) = "}{str(root)}{", floor(2.7) = "}{str(whole)}{", 2^10 = "}{str(big)}</p>
+      <p class="math">{"sqrt(144) = "}{str(root)}{", floor(2.7) = "}{str(whole)}{", 2^10 = "}{str(big)}{", pi*4 = "}{str(circle)}</p>
       <p class="direct">{"hypot(3,4) = "}{str(hyp)}{", upper = "}{loud}{", length = "}{str(n)}{", index 1 = "}{str(second)}</p>
       <p class="time">{"started at "}{str(started)}</p>
     </div>

@@ -183,7 +183,11 @@ export function createRuntime() {
         recv = recv == null ? undefined : recv[p];
       }
       const fn = recv == null ? undefined : recv[name];
-      if (typeof fn !== "function") throw new Error(`flow: FFI target '${target}' is not a function`);
+      // A dotted target may be a constant (`Math.PI`); a nullary binding reads it.
+      if (typeof fn !== "function") {
+        if (args.length === 0 && fn !== undefined) return fn;
+        throw new Error(`flow: FFI target '${target}' is not a function`);
+      }
       return fn.apply(recv, args);
     },
 

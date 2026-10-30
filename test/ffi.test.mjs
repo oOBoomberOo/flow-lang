@@ -110,3 +110,14 @@ test("ffi: Int division uses the host divInt primitive", () => {
   assert.ok(r.client.includes('R.ffiCall("__flow.divInt"'), "division uses __flow.divInt");
   assert.ok(!r.client.includes("Math.trunc"), "no direct library call");
 });
+
+test("ffi: a dotted target can be a global constant", () => {
+  const { entry } = packageWith({
+    "main.flow": `use std::math::{pi, e}
+
+${page(`<p>{str(pi())}{str(e())}</p>`)}`,
+  });
+  const r = compileFile(entry);
+  assert.ok(r.client.includes('R.ffiCall("Math.PI"'), "pi reads Math.PI");
+  assert.ok(r.client.includes('R.ffiCall("Math.E"'), "e reads Math.E");
+});

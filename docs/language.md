@@ -416,7 +416,7 @@ Targets:
 
 | form | meaning | example |
 |---|---|---|
-| `"Path.to.fn"` | global function, called with its receiver | `"Math.floor"` |
+| `"Path.to.fn"` | global function, called with its receiver; a non-function reads as a constant when the binding is nullary | `"Math.floor"`, `"Math.PI"` |
 | `"@method"` | method on the first argument | `"@concat"` → `xs.concat(ys)` |
 | `"#property"` | property of the first argument | `"#length"` → `xs.length` |
 | `"#index"` | element of the first argument | `xs[i]` |

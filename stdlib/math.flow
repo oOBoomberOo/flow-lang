@@ -16,6 +16,8 @@ unsafe extern js fn f_exp(x: Float) -> Float = "Math.exp"
 unsafe extern js fn f_sin(x: Float) -> Float = "Math.sin"
 unsafe extern js fn f_cos(x: Float) -> Float = "Math.cos"
 unsafe extern js fn f_random() -> Float = "Math.random"
+unsafe extern js fn f_pi() -> Float = "Math.PI"
+unsafe extern js fn f_e() -> Float = "Math.E"
 
 pub fn sqrt(x: Float) -> Float { f_sqrt(x) }
 
@@ -42,6 +44,11 @@ pub fn sinF(x: Float) -> Float { f_sin(x) }
 pub fn cosF(x: Float) -> Float { f_cos(x) }
 
 pub fn random() -> Float { f_random() }
+
+/// Constants are dotted FFI targets too: a nullary binding reads the value.
+pub fn pi() -> Float { f_pi() }
+
+pub fn e() -> Float { f_e() }
 
 // ---------------------------------------------------------------- Int helpers
 

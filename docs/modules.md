@@ -160,7 +160,7 @@ FFI (`unsafe extern js … = "@sort"`); no compiler intrinsic is involved.
 
 Int helpers in Flow: `abs`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `div`, `mod`.
 Float primitives through the FFI: `sqrt`, `pow`, `floor`, `ceil`, `round`, `absF`,
-`minF`, `maxF`, `logF`, `expF`, `sinF`, `cosF`.
+`minF`, `maxF`, `logF`, `expF`, `sinF`, `cosF`, `random`, `pi`, `e`.
 
 ### `std::log`
 
