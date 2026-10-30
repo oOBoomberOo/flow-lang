@@ -235,3 +235,25 @@ test("packages: manifest validation", () => {
   fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "Bad Name", version: "x" }));
   assert.throws(() => install(dir), FlowError);
 });
+
+test("ffi: a std wrapper follows the placement of its call site", () => {
+  const { entry } = packageWith({
+    "main.flow": `use std::log::info
+effect Server { fn now() -> Int }
+
+fn stamp() -> Int {
+  info("stamping on the server");
+  Server.now()
+}
+
+fn main() -> Html {
+  html { <p>{"t = "}{str(stamp())}</p> }
+}
+`,
+  });
+  const r = compileFile(entry);
+  // `stamp` is server-placed, so the neutral `info` (and its console.log FFI)
+  // is emitted into the server bundle and reached through a cut.
+  assert.match(r.server, /R\.ffiCall\("console\.log"/);
+  assert.equal(r.diagnostics.filter((d) => /server-side/.test(d)).length, 1);
+});
