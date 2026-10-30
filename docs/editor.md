@@ -26,7 +26,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
 | `textDocument/completion` | keywords, locals in scope, every symbol in the package, **module members after `::`**, **fields and Cell members after `.`** |
-| `textDocument/definition` | variables, constructors, components, and names on `use` lines → the declaring file/range |
+| `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
 | `workspace/symbol` | search the whole package graph |

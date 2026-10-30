@@ -188,7 +188,11 @@ function importTargetAt(file: string, pos: Position): SymbolInfo | null {
 
 function definition(file: string, pos: Position) {
   const node = nodeAt(file, pos);
-  const sym = node?.ident ? symbolForName(node.ident) : importTargetAt(file, pos);
+  const text = textOf(file);
+  const word = wordAt(text, offsetAt(text, pos)).word;
+  const sym = (node?.ident ? symbolForName(node.ident) : undefined)
+    ?? (word ? (lastAnalysis?.symbols ?? []).find((s) => s.name === word) : undefined)
+    ?? importTargetAt(file, pos);
   if (!sym) return null;
   return { uri: pathToUri(sym.file), range: sym.range };
 }
@@ -393,7 +397,7 @@ function semanticTokens(uri: string): { data: number[] } {
 const KEYWORDS = [
   "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect",
   "provide", "with", "use", "pub", "unsafe", "extern", "html", "true", "false",
-  "and", "or", "not",
+  "and", "or", "not", "handle",
 ];
 
 const HTML_TAGS = [
@@ -453,6 +457,7 @@ const KEYWORD_SNIPPETS: Record<string, string> = {
   trait: "trait ${1:Name}<a> {\n\tfn ${2:method}(x: a) -> ${3:Type}\n}",
   effect: "effect ${1:Name} @ ${2|client,server|} {\n\tfn ${3:op}() -> ${4:Type}\n}",
   provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
+  handle: "handle ${1:Effect} with {\n\t${2:op} = fn(${3}) -> ${4:Type} { ${0} }\n} {\n\t${5}\n}",
   unsafe: "unsafe extern js fn ${1:name}(${2}) -> ${3:Type} = \"${4:Math.floor}\"",
   use: "use ${1:pkg}::${2:module}::{${3:name}}",
 };
@@ -942,10 +947,12 @@ function documentLinks(file: string) {
 
 function typeDefinition(file: string, pos: Position) {
   const node = nodeAt(file, pos);
-  if (!node) return null;
-  if (!/^[A-Z][A-Za-z0-9_]*$/.test(node.type)) return null;
+  const text = textOf(file);
+  const word = wordAt(text, offsetAt(text, pos)).word;
+  const name = node && /^[A-Z][A-Za-z0-9_]*$/.test(node.type) ? node.type : word;
+  if (!name || !/^[A-Z][A-Za-z0-9_]*$/.test(name)) return null;
   const sym = (lastAnalysis?.symbols ?? []).find((s) =>
-    s.name === node.type && (s.kind === "type" || s.kind === "record" || s.kind === "alias"));
+    s.name === name && (s.kind === "type" || s.kind === "record" || s.kind === "alias"));
   return sym ? { uri: pathToUri(sym.file), range: sym.range } : null;
 }
 

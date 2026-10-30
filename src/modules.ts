@@ -608,6 +608,12 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
       return { ...e, e: rwExpr(e.e, scope, values, types) };
     case "Html":
       return { ...e, nodes: e.nodes.map((n) => rwHtml(n, scope, values, types)) };
+    case "Handle":
+      return {
+        ...e,
+        ops: e.ops.map((op) => ({ ...op, fn: rwExpr(op.fn, scope, values, types) })),
+        body: rwExpr(e.body, scope, values, types),
+      };
     case "Block": {
       let inner = new Set(scope);
       const stmts = e.stmts.map((s) => {

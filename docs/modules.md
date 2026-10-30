@@ -182,7 +182,7 @@ use std::http::{get, post, Router, Request, RequestObject, Response, htmlRespons
 | route helpers | `get`, `post`, `put`, `patch`, `del`, `route` |
 | responses | `textResponse`, `htmlResponse`, `jsonResponse`, `withStatus`, `withHeader`, `redirect`, `notFoundResponse` |
 | request helpers | `queryParam`, `pathParam`, `header` |
-| handler | `handle(routes, request)` — pure in-language dispatch |
+| handler | `dispatch(routes, request)` — pure in-language dispatch |
 
 A program opts in with `fn routes() -> Unit { Router.mount([...]) }`; the host
 calls it at startup and serves matching HTTP requests. Full reference:

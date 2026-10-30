@@ -67,6 +67,7 @@ examples/adt.flow        sum types, records, exhaustive matching
 examples/traits.flow     trait dispatch, generic instances, list patterns
 examples/bounds.flow     trait bounds, bounded generic instances, dictionaries
 examples/hkt.flow        higher-kinded type parameters (Functor for List/Option)
+examples/handler.flow    scoped and nested local capability handlers
 examples/http.flow       request/routing effect capabilities and easy routing
 examples/effects.flow    user-defined capability, request/response cut chain
 
@@ -76,9 +77,9 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **146 tests** across grammar, types, boundaries, modules, packages,
-the language server, HTTP capabilities, trait bounds, higher-kinded types and the
-VS Code extension.
+Tests: `npm test` — **152 tests** across grammar, types, boundaries, modules, packages,
+the language server, HTTP capabilities, trait bounds, higher-kinded types, local
+handlers and the VS Code extension.
 
 ---
 
@@ -96,7 +97,8 @@ $ node src/lsp/server.ts     # LSP on stdio
 * **Diagnostics** — every type error in the package, with quick fixes (*make public*, *import*).
 * **Completion** — keywords, locals, package symbols, module members after `::`, fields and
   Cell members after `.`.
-* **Navigation** — go-to-definition (including from `use` lines), find references, rename
+* **Navigation** - go-to-definition (including from `use` lines, effects, effect operations and
+  builtin types such as `Html`/`List`/`Int`), find references, rename
   (package-wide for globals, scoped for locals), document/workspace symbols.
 * **Editing** — signature help, folding, selection ranges, document highlights, formatting.
 
@@ -144,6 +146,8 @@ fn area(s: Shape) -> Float {
   (`impl Show<a> for List<a> where a: Show`) with dictionary passing at call sites
 * **Higher-kinded type parameters** - `trait Functor<f>` with `f<a>` / `f<b>`;
   instances at the constructor (`impl Functor for List`), dispatch by head constructor
+* **Local capability handlers** - `handle Effect with { … } { body }` scopes a
+  provider, nests/restores correctly, and removes the handled effect from the row
 * **HTTP capabilities** - `std::http` declares `Request` and `Router` as effect
   capabilities, with easy `get`/`post` route helpers and a host-backed dispatcher
 * **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds

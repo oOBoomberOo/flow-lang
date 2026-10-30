@@ -68,12 +68,21 @@ effect Server {
 }
 ```
 
-A `provide` installs an implementation:
+A `provide` installs a file-level implementation:
 
 ```flow
 provide Audit with {
   record = fn(msg: Str) -> Unit { Server.log(msg) }
 }
+```
+
+A `handle Effect with { … } { body }` expression installs a **scoped** capability
+handler for `body`; nested handlers restore the previous provider. The handled
+effect is removed from the body's row and the handler operations' effects are
+added:
+
+```
+ε_handle = (ε_body \ {E}) ⊔ ε_ops
 ```
 
 The **placement of an effect is the join of the placements of its providers**. That is the
@@ -95,7 +104,8 @@ Consequences worth stating explicitly:
 2. **Moving a capability moves the boundary.** Change a provider from a client lambda to a
    server lambda and the cut relocates itself. This is the property no annotation-based system
    has.
-3. **No provider, no call.** A call to `E.op` whose effect has no provider is a type error.
+3. **No handler, no call.** A call to `E.op` whose effect has no file-level `provide`
+   and no enclosing `handle` is a type error.
 
 Effect rows **accumulate**. There is no subtraction and no row-polymorphic tail in 0.1:
 

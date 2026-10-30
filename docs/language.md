@@ -274,7 +274,8 @@ Audit.record("hello")      // placed wherever the provider lives
 
 Rules:
 
-1. **A call requires a provider.** Without one, it is a type error.
+1. **A call requires a handler.** It must be supplied by a file-level `provide` or an
+   enclosing `handle` expression (see below).
 2. **The provider's placement decides where the call runs.** `record` uses `Server.log`, so
    `Audit` is server-placed, so every `Audit.record` call is a server computation — even when
    written inside a client event handler.
@@ -284,6 +285,36 @@ Rules:
    fn f() -> Int { Server.now() }          // inferred ! {Server}
    fn g() -> Int ! {} { Server.now() }     // error: unhandled effect(s) {Server}
    ```
+
+### Local capability handlers
+
+`provide` is file-level. A `handle Effect with { … } { body }` expression installs
+a **scoped** capability handler for the body, like Koka's `with` handlers:
+
+```flow
+effect Local @ client {
+  fn ping(msg: Str) -> Str
+}
+
+fn main() -> Html {
+  let msg = handle Local with {
+    ping = fn(msg: Str) -> Str { "pong " + msg }
+  } {
+    Local.ping("x")
+  };
+  html { <p>{msg}</p> }
+}
+```
+
+* The handler is active only while `body` runs; nested handlers restore the
+  previous provider when they finish.
+* A local handler overrides the operations it supplies and falls back to a
+  file-level `provide` for the rest. Without a global provider, it must supply
+  every operation.
+* The handled effect is removed from the body's effect row; the handler
+  operations' own effects remain. The body sees the handler's placement.
+* Handler operations are capability implementations, not continuations: there is
+  no `resume`. The handler runs the operation and the call returns normally.
 
 ---
 
@@ -543,7 +574,7 @@ Honest list, so you do not discover them by surprise:
 * Traits dispatch on one parameter; supertraits and associated types are not supported.
   Trait bounds, bounded generic instances and higher-kinded type parameters are supported
   (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`, `trait Functor<f>`).
-* No effect handlers (no `handle … with …`); effects are capabilities.
+* Local capability handlers are scoped providers; there is no `resume` / continuation-based effect handler.
 * No `String` interpolation — use `+`.
 * Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.
 * One logical session per server; no auth model.

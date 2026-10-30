@@ -320,6 +320,26 @@ export class Parser {
     return { k: "Provide", effect, target, ops, span: this.spanFrom(start) };
   }
 
+  parseHandle(): Expr {
+    const start = this.expectKw("handle");
+    const effect = this.expect("Con").value;
+    this.expectKw("with");
+    this.expectSym("{");
+    const ops: { name: string; fn: Expr; span: Span }[] = [];
+    while (!this.atSym("}")) {
+      const t = this.tok;
+      const name = this.expect("id").value;
+      this.expectSym("=");
+      const fn = this.parseExpr();
+      this.eatSym(",");
+      this.eatSym(";");
+      ops.push({ name, fn, span: this.spanFrom(t) });
+    }
+    this.expectSym("}");
+    const body = this.parseBlock();
+    return { k: "Handle", effect, ops, body, span: this.spanFrom(start) };
+  }
+
   parseFnSig(): FnSig {
     const start = this.tok;
     const nameTok = this.tok;
@@ -580,6 +600,7 @@ export class Parser {
     if (this.atKw("fn")) return this.parseLambda();
     if (this.atKw("if")) return this.parseIf();
     if (this.atKw("match")) return this.parseMatch();
+    if (this.atKw("handle")) return this.parseHandle();
     if (this.atKw("html")) return this.parseHtml();
 
     // `{ a: 1 }` is a record literal; `{ expr }` is a block.

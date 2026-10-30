@@ -39,7 +39,7 @@ whitespace      = " " | "\t" | "\r" | "\n" ;
 
 ; Keywords (reserved, may not be used as identifiers)
 ;   fn let mut if else match type trait impl effect provide with
-;   use extern unsafe html pub return for in true false and or not
+;   use extern unsafe html handle pub return for in true false and or not
 
 ; Multi-character symbols
 ;   =>  ->  ==  !=  <=  >=  &&  ||  ..  ::
@@ -251,6 +251,7 @@ primary-expr    = literal
                 | lambda
                 | if-expr
                 | match-expr
+                | handle-expr
                 | html-expr
                 | element                                   ; bare markup is an expression
                 | '(' ')'                                   ; Unit
@@ -266,6 +267,11 @@ if-expr         = 'if' '(' expr ')' block [ 'else' ( block | if-expr ) ] ;
 
 match-expr      = 'match' expr '{' { match-arm } '}' ;
 match-arm       = pattern [ 'if' expr ] '=>' expr [ ',' | ';' ] ;
+
+; A scoped capability handler. `provide` is file-level; this is its local form.
+handle-expr     = 'handle' constructor 'with'
+                  '{' { identifier '=' expr [ ',' | ';' ] } '}'
+                  block ;
 
 record-literal  = '{' identifier ':' expr { ',' identifier ':' expr } [ ',' ] '}' ;
 

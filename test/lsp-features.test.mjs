@@ -442,3 +442,50 @@ fn main() -> Html { html { <p>{str(hypot(3.0, 4.0))}</p> } }
     assert.ok(syms.some((s) => s.name === "hypot"), "extern appears in the outline");
   } finally { c.proc.kill(); }
 });
+
+test("lsp: definitions for effects, operations and builtin types", async () => {
+  const { entry } = packageWith({
+    "main.flow": `effect Local @ client { fn ping() -> Str }
+
+fn main() -> Html {
+  let xs: List<Int> = [1];
+  let n: Int = 1;
+  html { <p>{Local.ping()}{str(n)}{str(len(xs))}</p> }
+}
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const defAt = (needle, offset = 1, nth = 0) =>
+      c.request("textDocument/definition", {
+        textDocument: { uri: uri(entry) },
+        position: pos(text, needle, offset, nth),
+      });
+
+    const html = await defAt("Html", 1);
+    assert.ok(html, "Html has a definition");
+    assert.equal(path.basename(new URL(html.uri).pathname), "builtins.flow");
+
+    const list = await defAt("List<Int>", 1);
+    assert.equal(path.basename(new URL(list.uri).pathname), "builtins.flow");
+
+    const local = await defAt("Local.ping", 1);
+    assert.ok(local, "effect name has a definition");
+    assert.equal(path.basename(new URL(local.uri).pathname), "main.flow");
+    assert.equal(local.range.start.line, 0);
+
+    const ping = await defAt("ping()", 1, 1);
+    assert.ok(ping, "effect operation has a definition");
+    assert.equal(path.basename(new URL(ping.uri).pathname), "main.flow");
+    assert.equal(ping.range.start.line, 0);
+
+    const typeDef = await c.request("textDocument/typeDefinition", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, "Html", 1),
+    });
+    assert.ok(typeDef, "type definition on a builtin");
+    assert.equal(path.basename(new URL(typeDef.uri).pathname), "builtins.flow");
+  } finally { c.proc.kill(); }
+});

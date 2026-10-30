@@ -155,7 +155,7 @@ fn findQuery(pairs: List<Str>, name: Str) -> Option<Str> {
 
 /// Pure route dispatch over a route list. The host uses the same Route values
 /// for real HTTP dispatch; this is the reusable in-language handler.
-pub fn handle(routes: List<Route>, request: RequestObject) -> Response {
+pub fn dispatch(routes: List<Route>, request: RequestObject) -> Response {
   match findRoute(routes, request.method, request.path) {
     Some(route) => route.handler(request),
     None => notFoundResponse("Not found"),

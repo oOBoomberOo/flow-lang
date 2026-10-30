@@ -1,0 +1,13 @@
+// Flow built-in types. This file is documentation for editor navigation; it is
+// not imported by programs and is not compiled as a module.
+//
+// Html — client-rendered markup tree
+// Int — integer
+// Float — floating-point number
+// Str — text string
+// Bool — true or false
+// Unit — the empty value
+// List<a> — built-in list
+// Cell<a> — client-local reactive state
+// Event — DOM event
+// Dom — DOM handle

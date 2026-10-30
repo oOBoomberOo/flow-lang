@@ -111,12 +111,12 @@ Helpers: `textResponse`, `htmlResponse`, `jsonResponse`, `withStatus`,
 
 ## The capability handler
 
-`std::http::handle(routes, request)` is a reusable, in-language dispatcher over
+`std::http::dispatch(routes, request)` is a reusable, in-language dispatcher over
 a route list. It is the pure capability handler used for tests and for code that
 wants to dispatch a request value without the host:
 
 ```flow
-let response = handle(routes, request);
+let response = dispatch(routes, request);
 ```
 
 The host uses the same `Route` values for real requests; it adds path captures

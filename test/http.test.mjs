@@ -87,18 +87,18 @@ test("http: the client bundle and runtime remain served", async () => {
   });
 });
 
-test("http: handle is a reusable in-language capability handler", () => {
+test("http: dispatch is a reusable in-language capability handler", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-http-handle-"));
   const file = path.join(root, "main.flow");
-  fs.writeFileSync(file, `use std::http::{get, handle, RequestObject, Response, textResponse}
+  fs.writeFileSync(file, `use std::http::{get, dispatch, RequestObject, Response, textResponse}
 
 fn main() -> Html {
   let routes = [get("/x", fn(req: RequestObject) -> Response { textResponse(req.path) })];
   let request = { method: "GET", path: "/x", query: "", body: "", headers: [], params: [] };
-  html { <p>{handle(routes, request).body}</p> }
+  html { <p>{dispatch(routes, request).body}</p> }
 }
 `);
   const r = compileFile(file);
   assert.deepEqual(r.diagnostics, []);
-  assert.ok(r.client.includes("handle("), "the pure handler is compiled");
+  assert.ok(r.client.includes("dispatch("), "the pure handler is compiled");
 });

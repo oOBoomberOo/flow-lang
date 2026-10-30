@@ -65,6 +65,7 @@ export type Expr =
   | { k: "Binary"; op: string; l: Expr; r: Expr; span: Span }
   | { k: "Unary"; op: string; e: Expr; span: Span }
   | { k: "Html"; nodes: HtmlNode[]; span: Span }
+  | { k: "Handle"; effect: string; ops: { name: string; fn: Expr; span: Span }[]; body: Expr; span: Span }
   | { k: "Block"; stmts: Stmt[]; value?: Expr; span: Span };
 
 export type Stmt =

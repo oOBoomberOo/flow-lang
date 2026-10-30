@@ -201,6 +201,26 @@ export function createRuntime() {
       provides.set(effect, { ...(provides.get(effect) ?? {}), ...impl });
     },
 
+    /** Scoped capability handler: install `impl` for `effect` while `fn` runs. */
+    withEffect(effect, impl, fn) {
+      const prev = provides.get(effect);
+      provides.set(effect, { ...(prev ?? {}), ...(impl ?? {}) });
+      const restore = () => {
+        if (prev) provides.set(effect, prev);
+        else provides.delete(effect);
+      };
+      let result;
+      try {
+        result = fn();
+      } catch (e) {
+        restore();
+        throw e;
+      }
+      if (result && typeof result.then === "function") return result.finally(restore);
+      restore();
+      return result;
+    },
+
     op(effect, name) {
       return (...args) => {
         const impl = provides.get(effect);

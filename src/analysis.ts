@@ -168,6 +168,44 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       });
     }
 
+    // Effect operations are not linker symbols; index them for navigation.
+    for (const eff of result.mod.effects.values()) {
+      for (const [opName, op] of eff.ops) {
+        const span = op.sig.span;
+        if (!span?.file) continue;
+        const src = srcFor(span.file);
+        symbols.push({
+          name: opName,
+          display: `${eff.name}.${opName}`,
+          finalName: opName,
+          kind: "function",
+          file: span.file,
+          range: spanRange(src, span),
+        });
+      }
+    }
+
+    // Primitive types live in the compiler/runtime; point navigation at the
+    // builtins documentation so `Html`, `Int`, `List`, … have a definition.
+    const builtinsFile = path.join(import.meta.dirname, "..", "stdlib", "builtins.flow");
+    if (fs.existsSync(builtinsFile)) {
+      const builtins = fs.readFileSync(builtinsFile, "utf8");
+      for (const name of ["Html", "Int", "Float", "Str", "Bool", "Unit", "List", "Cell", "Event", "Dom"]) {
+        if (symbols.some((s) => s.name === name && s.kind === "type")) continue;
+        const at = builtins.indexOf(name);
+        if (at < 0) continue;
+        const start = offsetToPosition(builtins, at);
+        symbols.push({
+          name,
+          display: `std::builtins::${name}`,
+          finalName: name,
+          kind: "type",
+          file: builtinsFile,
+          range: { start, end: { line: start.line, character: start.character + name.length } },
+        });
+      }
+    }
+
     const regions: Region[] = [];
     if (result.codegen) {
       for (const [name, fn] of result.mod.fns) {

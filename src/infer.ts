@@ -838,6 +838,8 @@ export class Infer {
         return { ty: HTML, place, eff };
       }
 
+      case "Handle": return this.inferHandle(e);
+
       case "Block": {
         const saved = this.env;
         this.env = new Map(saved);
@@ -877,6 +879,63 @@ export class Infer {
     if (e.k === "Var") return e.name;
     if (e.k === "Ctor" && e.args.length === 0) return e.name;
     return null;
+  }
+
+  inferHandle(e: Expr & { k: "Handle" }): ResInfo {
+    const effect = this.mod.effects.get(e.effect);
+    if (!effect) this.fail(`handler for unknown effect '${e.effect}'`, e.span);
+
+    const seen = new Set<string>();
+    let opPlace: Place = "neutral";
+    let opEff = emptyEff();
+    for (const op of e.ops) {
+      if (seen.has(op.name)) this.fail(`duplicate handler operation '${op.name}'`, op.span);
+      seen.add(op.name);
+      const declared = effect.ops.get(op.name);
+      if (!declared) this.fail(`effect ${e.effect} has no operation '${op.name}'`, op.span);
+      const r = this.infer(op.fn);
+      const before = snapshotSubst();
+      try {
+        unify(r.ty, instantiate(declared.ty, 0));
+      } catch (err) {
+        restoreSubst(before);
+        if (err instanceof FlowError) {
+          this.fail(`handler for ${e.effect}.${op.name} does not match its signature: ${err.message}`, op.span);
+        }
+        throw err;
+      }
+      restoreSubst(before);
+      opPlace = joinPlace(opPlace, r.place);
+      opEff = mergeEff(opEff, r.eff);
+    }
+
+    if (!this.mod.provides.has(e.effect)) {
+      const missing = [...effect.ops.keys()].filter((name) => !seen.has(name));
+      if (missing.length) {
+        this.fail(
+          `handler for ${e.effect} is missing operation(s) ${missing.sort().join(", ")}`,
+          e.span,
+        );
+      }
+    }
+
+    // Calls inside the body see the handler's placement, not the global one.
+    const savedPlace = effect.place;
+    if (opPlace === "client" || opPlace === "server") effect.place = opPlace;
+    let body: ResInfo;
+    try {
+      body = this.infer(e.body);
+    } finally {
+      effect.place = savedPlace;
+    }
+
+    const labels = new Set(body.eff.labels);
+    labels.delete(e.effect);
+    return {
+      ty: body.ty,
+      place: joinPlace(opPlace, body.place),
+      eff: mergeEff({ labels }, opEff),
+    };
   }
 
   inferApp(e: Expr & { k: "App" }): ResInfo {

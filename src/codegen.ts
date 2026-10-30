@@ -366,6 +366,13 @@ export class Codegen {
       case "Unary":
         return e.op === "not" || e.op === "!" ? `(!${this.val(e.e, side, ctxHome, env)})` : `(-${this.val(e.e, side, ctxHome, env)})`;
       case "Html": return this.emitHtml(e.nodes, side, ctxHome, env);
+      case "Handle": {
+        const ops = e.ops
+          .map((op) => `${ev(op.name)}: ${this.emitExpr(op.fn, side, ctxHome, env)}`)
+          .join(", ");
+        const asyncKw = this.hasCallCut(e.body) ? "async " : "";
+        return `R.withEffect(${ev(e.effect)}, { ${ops} }, ${asyncKw}() => ${this.emitExpr(e.body, side, ctxHome, env)})`;
+      }
       case "Block": return this.emitBlock(e, side, ctxHome, env);
     }
   }
@@ -641,6 +648,7 @@ export function childExprs(e: Expr): Expr[] {
     case "Binary": return [e.l, e.r];
     case "Unary": return [e.e];
     case "Html": return htmlHoles(e.nodes);
+    case "Handle": return [...e.ops.map((op) => op.fn), e.body];
     case "Block": return [
       ...e.stmts.map((s) => (s.k === "LetStmt" ? s.value : s.e)),
       ...(e.value ? [e.value] : []),
