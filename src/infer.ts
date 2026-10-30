@@ -729,19 +729,18 @@ export class Infer {
   }
 
   inferApp(e: Expr & { k: "App" }): ResInfo {
-    // Cell.get() / Cell.set(value)
+    // Cell.get() / Cell.set(value) — std trait methods over the host primitives
     if (e.fn.k === "Field" && (e.fn.name === "get" || e.fn.name === "set")) {
       const target = this.infer(e.fn.target);
       const tt = prune(target.ty);
       if (tt.k === "con" && tt.name === "Cell") {
-        if (e.fn.name === "get") {
-          if (e.args.length !== 0) this.fail("Cell.get takes no arguments", e.span);
-          return { ty: tt.args[0]!, place: "client", eff: target.eff };
+        const tname = this.mod.methodIndex.get(e.fn.name);
+        if (tname) {
+          const tr = this.mod.traits.get(tname)!;
+          const m = tr.methods.get(e.fn.name)!;
+          return this.inferTraitCall(tname, e.fn.name, m.ty, [e.fn.target, ...e.args], e);
         }
-        if (e.args.length !== 1) this.fail("Cell.set expects exactly one argument", e.span);
-        const v = this.infer(e.args[0]!);
-        unify(v.ty, tt.args[0]!);
-        return { ty: UNIT, place: "client", eff: mergeEff(target.eff, v.eff) };
+        this.fail(`no Cell operation '${e.fn.name}' in std`, e.span);
       }
     }
 
@@ -817,8 +816,10 @@ export class Infer {
     const inst = instantiate(schemeTy, 0);
     if (inst.k !== "fun") this.fail(`${traitName}.${method} is not callable`);
     if (args.length !== inst.params.length) this.fail(`${traitName}.${method} expects ${inst.params.length} argument(s)`);
-    let place: Place = "neutral";
-    let eff = emptyEff();
+    // A trait method may declare effects; they participate in placement exactly
+    // like a function's declared row (CellOps declares `! Client`).
+    let place: Place = placeFromEffects(inst.eff, this);
+    let eff: Eff = { labels: new Set(inst.eff.labels) };
     args.forEach((a, i) => {
       const r = this.infer(a);
       unify(r.ty, inst.params[i]!);

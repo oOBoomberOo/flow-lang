@@ -171,7 +171,8 @@ fn main() -> Html {
   html { <div>{if (on.get()) { <p>{Server.secret("k")}</p> } else { <p>{"no"}</p> }}</div> }
 }`);
   assert.equal(r.diagnostics.length, 1, "exactly the secret is cut out");
-  assert.match(r.client, /R\.get/);              // condition stays on the client
+  assert.match(r.client, /\$impl_CellOps_\d+_get/); // condition stays on the client
+  assert.match(r.client, /__flow\.get/);            // Cell.get is std code over the FFI
   assert.match(r.server, /R\.serve\("cut1"/);    // branch body is served
 });
 

@@ -43,6 +43,8 @@ unsafe extern js fn host_eq<a>(x: a, y: a) -> Bool = "__flow.eq"
 unsafe extern js fn host_now() -> Int = "__flow.host.now"
 unsafe extern js fn host_secret(name: Str) -> Str = "__flow.host.secret"
 unsafe extern js fn host_cell<a>(init: a) -> Cell<a> = "__flow.host.cell"
+unsafe extern js fn host_get<a>(c: Cell<a>) -> a = "__flow.get"
+unsafe extern js fn host_set<a>(c: Cell<a>, value: a) -> Unit = "__flow.set"
 unsafe extern js fn host_store_get(key: Str) -> Option<Str> = "__flow.host.storeGet"
 unsafe extern js fn host_store_set(key: Str, value: Str) -> Unit = "__flow.host.storeSet"
 unsafe extern js fn host_log(msg: Str) -> Unit = "__flow.host.log"
@@ -123,6 +125,21 @@ pub fn float(s: Str) -> Float { host_parse_float(s) }
 // The runtime exposes only raw primitives; the capabilities are std code.
 
 fn makeCell<a>(init: a) -> Cell<a> { host_cell(init) }
+
+// ---------------------------------------------------------------- cells
+// Cell.get / Cell.set are std trait methods over the host's reactive
+// primitives. The `Client` effect declares that they need client authority,
+// so placement follows the capability instead of a compiler special case.
+
+pub trait CellOps<a> {
+  fn get(c: Cell<a>) -> a ! Client
+  fn set(c: Cell<a>, value: a) -> Unit ! Client
+}
+
+impl CellOps<a> for Cell<a> {
+  fn get(c: Cell<a>) -> a ! Client { host_get(c) }
+  fn set(c: Cell<a>, value: a) -> Unit ! Client { host_set(c, value) }
+}
 
 provide Server with {
   now = fn() -> Int { host_now() },

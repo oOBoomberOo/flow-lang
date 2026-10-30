@@ -374,17 +374,15 @@ export class Codegen {
   }
 
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
-    const setTarget = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
-    if (e.fn.k === "Field" && e.fn.name === "get" && !(setTarget && this.mod.traits.has(setTarget))) {
-      return `R.get(${this.emitExpr(e.fn.target, side, ctxHome, env)})`;
-    }
-    if (e.fn.k === "Field" && e.fn.name === "set" && !(setTarget && this.mod.traits.has(setTarget))) {
-      return `R.set(${this.emitExpr(e.fn.target, side, ctxHome, env)}, ${this.emitExpr(e.args[0]!, side, ctxHome, env)})`;
-    }
-
     const choice = this.mod.implChoices.get(e);
     if (choice) {
-      return `${choice.mangled}(${e.args.map((a) => this.emitExpr(a, side, ctxHome, env)).join(", ")})`;
+      // A method call carries its receiver outside `e.args`; a qualified trait
+      // call (`Trait.method(x, …)`) already has it in the argument list.
+      const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
+      const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
+      const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      return `${choice.mangled}(${parts.join(", ")})`;
     }
 
     const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
