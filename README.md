@@ -9,6 +9,11 @@ requires — `Client` for the DOM, `Server` for secrets and state, user effects 
 provider needs. Where placements disagree, the compiler cuts the program into a browser bundle
 and a server bundle, and turns the seam into a wire.
 
+A function is a value, not a region: a callback is hosted by whoever invokes it, and the
+statements inside it cross individually when they need the other side. A client `Timer.every`
+callback that logs with `Server.log` stays in the browser; only the log statement is a server
+call.
+
 ```flow
 effect Server { fn secret(name: Str) -> Str }
 effect Client { fn state<a>(init: a) -> Cell<a> }
@@ -87,7 +92,7 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **222 tests** across grammar, types, boundaries, modules, packages,
+Tests: `npm test` — **226 tests** across grammar, types, boundaries, modules, packages,
 the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
 algebraic effects, cell sugar, monads, currying, qualified paths, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 

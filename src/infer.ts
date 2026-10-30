@@ -540,7 +540,9 @@ export class Infer {
       name: d.name,
       ops,
       // An algebraic effect has no host side: it runs wherever its handler runs.
-      place: algebraic ? "neutral" : d.place ?? existing?.place ?? "server",
+      // An unannotated effect has no side of its own: it runs where its provider
+      // runs, or where it is called. Only `@ client` / `@ server` pins it down.
+      place: algebraic ? "neutral" : d.place ?? existing?.place ?? "neutral",
       algebraic,
     });
   }
@@ -715,7 +717,11 @@ export class Infer {
     const ops = new Map<string, Expr>();
     let place: Place = "neutral";
     for (const o of d.ops) {
-      const r = this.mod.info.get(o.fn);
+      // The provider runs where its implementation runs: look through the
+      // operation's lambda (which is itself place-neutral, as all functions are)
+      // at the body that actually performs the work.
+      const body = o.fn.k === "Lam" ? o.fn.body : o.fn;
+      const r = this.mod.info.get(body) ?? this.mod.info.get(o.fn);
       place = joinPlace(place, r ? r.place : "neutral");
       ops.set(o.name, o.fn);
     }
@@ -1058,7 +1064,10 @@ export class Infer {
         const ret = e.ret ? this.resolveType(e.ret, this.typeParams) : body.ty;
         const eff: Eff = { labels: new Set(body.eff.labels) };
         if (e.eff) for (const l of e.eff.effects) eff.labels.add(l);
-        return { ty: fnT(paramTypes, ret, eff), place: body.place, eff: { labels: new Set() } };
+        // A function is a value, not a region. Its side is where it is invoked,
+        // which the consumer decides; the effects of its body live in the fn's
+        // effect row and become per-statement cuts at codegen time.
+        return { ty: fnT(paramTypes, ret, eff), place: "neutral", eff: { labels: new Set() } };
       }
 
       case "App": return this.inferApp(e);

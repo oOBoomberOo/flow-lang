@@ -135,9 +135,9 @@ export class Codegen {
    *   (a) a type that can only live on one side wins (Html/Cell/Event ⇒ client);
    *   (b) otherwise the callee side wins (compute where the function lives);
    *   (c) otherwise the first non-neutral operand side;
-   *   (d) otherwise server (keep computation near the authoritative data).
+   *   (d) otherwise neutral (the node has no side; run it where it is used).
    */
-  private resolveCross(e: Expr): Side {
+  private resolveCross(e: Expr): Side | "neutral" {
     const t = this.mod.info.get(e)?.ty;
     if (t) { const tp = typePlace(t); if (tp === "client" || tp === "server") return tp; }
 
@@ -158,7 +158,8 @@ export class Codegen {
       }
     }
     for (const c of childExprs(e)) { const h = this.home(c); if (h !== "neutral") return h; }
-    return "server";
+    // Nothing in this node needs a particular side: run it where it is used.
+    return "neutral";
   }
 
   /* ---------------------------------------------------------------- */
@@ -205,7 +206,10 @@ export class Codegen {
       ctxHome = h;
     }
 
-    for (const c of childExprs(e)) this.walk(c, ctxHome, inHandler || this.isHandlerExpr(e, c), top);
+    // A lambda body runs later, on the side that holds the function: anything it
+    // needs from the other side is a request/response call, not a subscription.
+    const deferred = e.k === "Lam";
+    for (const c of childExprs(e)) this.walk(c, ctxHome, inHandler || deferred || this.isHandlerExpr(e, c), top);
   }
 
   private walkHtml(n: HtmlNode, ctxHome: Side | "neutral", inHandler: boolean, top: Expr): void {
@@ -411,6 +415,10 @@ export class Codegen {
     if (e.name === "_") return true;
     const ty = this.mod.info.get(e.value)?.ty;
     if (ty && typeStr(ty) === "Unit") return true;
+    // Binding for the effect it performs (`let cancel = Timer.every(…)`) must run
+    // even if the variable is never read; the effect is the point.
+    const eff = this.effOf(e.value);
+    if (eff && eff.labels.size > 0) return true;
     return this.callsExtern(e.value);
   }
 
@@ -424,7 +432,9 @@ export class Codegen {
   /** True when evaluating `e` needs `await`, i.e. it contains a request/response cut. */
   hasCallCut(e: Expr, skipSelf = false): boolean {
     const c = this.cuts.get(e);
-    if (c && !skipSelf) return c.mode === "call";
+    // A cut node currently being emitted is the call's target, not a call site;
+    // its own `await` belongs to the caller.
+    if (c && !skipSelf && !this.emitting.has(e)) return c.mode === "call";
     if (e.k === "Lam") return false; // a nested lambda becomes async on its own
     for (const x of childExprs(e)) if (this.hasCallCut(x)) return true;
     for (const n of htmlChildren(e)) for (const h of htmlHoles([n])) if (this.hasCallCut(h)) return true;

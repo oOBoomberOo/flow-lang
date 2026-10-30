@@ -94,7 +94,12 @@ place(Server) = server          (installed by the server runtime)
 place(Client) = client          (installed by the client runtime)
 place(Store)  = server
 place(E)      = ⊔ { home(provider_op) | provider of E }   for user effects
+place(E)      = neutral                                   unannotated, unprovided
 ```
+
+An unannotated effect that no provider pins down has no side of its own: it runs wherever its
+provider runs, or wherever it is called. Only `@ client` / `@ server` on the declaration (or a
+one-sided provider) moves it.
 
 Consequences worth stating explicitly:
 
@@ -169,6 +174,21 @@ blocks, providers, components): those slots run after the handler scope ends.
 A binding is a *name*, not a location: `let t = Server.now()` binds a neutral name whose
 *value expression* is placed on the server. The cut happens at the expression, once — not at
 every use.
+
+A **function is a value, not a region**: the effects of its body belong to the function's
+effect row, and the function itself is placed `neutral`. Where it runs is decided by whoever
+holds and invokes it. This is what makes a callback written in a client component that calls a
+server effect work the way it reads:
+
+```flow
+let cancel = Timer.every(1000, fn() {
+  Server.log("tick");          // this statement crosses; the callback does not
+});
+```
+
+`Timer.every`'s provider runs on the client, so the callback is emitted in the client bundle
+next to `window.setInterval`, and `Server.log` becomes a `call` cut that the callback awaits
+when it fires. Nothing functional is serialized.
 
 ### 4.2 Application
 
@@ -284,7 +304,7 @@ home(e) = resolve(e)           if p = cross
 | 2 | `App`: the callee's home wins | compute where the function lives; arguments travel |
 | 3 | `If`/`Match`/`Block`: the first non-neutral branch wins | follow the work |
 | 4 | first non-neutral operand | data flow direction |
-| 5 | otherwise **server** | keep computation next to authoritative state |
+| 5 | otherwise **neutral** | no part of it needs a side; run it in the enclosing context |
 
 ### 5.2 Cuts
 
@@ -303,7 +323,10 @@ Two cut modes, chosen by *where the node sits*, not by a flag:
 | Context | Mode | Semantics |
 |---|---|---|
 | render graph (html, cells, derived values) | `reactive` | a stream: the serving side recomputes when deps change and pushes values down |
-| inside an event handler | `call` | request/response: the handler `await`s a round trip |
+| inside an event handler or a function body | `call` | request/response: the handler `await`s a round trip |
+
+A cut inside a `fn` body is always `call`: the body runs when someone invokes the function, and
+its non-local work is one round trip at that moment, not a subscription.
 
 The distinction is forced by the data: render-position dependencies are *signals* (they have a
 current value and can be subscribed to); handler-position dependencies are *event locals* that
