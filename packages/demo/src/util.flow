@@ -1,0 +1,22 @@
+// A module of the `demo` package. `pub` marks the exported surface; everything
+// else stays private to this file.
+
+pub type Priority =
+  | Low
+  | High
+
+pub fn priorityLabel(p: Priority) -> Str {
+  match p {
+    Low => "low",
+    High => "high",
+  }
+}
+
+// Not exported: importing this from another module is a compile error.
+fn secretSauce() -> Str { "sssh" }
+
+pub fn describe(p: Priority) -> Str {
+  priorityLabel(p) + " (" + secretSauce() + ")"
+}
+
+pub fn priorities() -> List<Priority> { [High, Low] }

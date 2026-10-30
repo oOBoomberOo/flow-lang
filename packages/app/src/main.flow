@@ -1,0 +1,28 @@
+// A package that consumes two registry dependencies.
+//
+//   flow install            -> vendors flow_modules/, writes flow.lock
+//   flow check src/main.flow
+
+use app::dashboard::{Card, bars}
+use app::status::{BootBadge, UpFor}
+use std::list::{map, range}
+use std::string::{capitalize, padLeft}
+use flow-charts::bar::Chart
+use flow-time::format::{hms, duration}
+
+fn main() -> Html {
+  let stats = bars();
+  html {
+    <div class="app">
+      <h1>{"Dependencies"}</h1>
+      <Chart title={"Squares"} bars={stats} />
+      <BootBadge />
+      <UpFor started={0} />
+      <p class="time">{"uptime: "}{hms(3723000)}</p>
+      <p class="dur">{"took: "}{duration(65000)}</p>
+      <p class="cap">{"capitalized: "}{capitalize("flow")}</p>
+      <p class="pad">{"padded: "}{padLeft("9", 3, "0")}</p>
+      {map(range(3), fn(n: Int) -> Html { html { <Card n={n} /> } })}
+    </div>
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "dependencies": {
+    "flow-charts": "^1.0.0",
+    "flow-time": "^1.2.0"
+  }
+}

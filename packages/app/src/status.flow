@@ -1,0 +1,26 @@
+// A module that declares and provides its own capability, and renders markup
+// from a server-side computation. The cut lands inside this file.
+
+pub effect Runtime {
+  fn bootedAt() -> Int
+}
+
+provide Runtime with {
+  bootedAt = fn() -> Int { Server.now() }
+}
+
+pub fn BootBadge() -> Html {
+  html {
+    <span class="boot">
+      {"booted at "}{Runtime.bootedAt()}
+    </span>
+  }
+}
+
+pub fn UpFor(props: { started: Int }) -> Html {
+  html {
+    <span class="up">
+      {"up for "}{Runtime.bootedAt() - props.started}{"ms"}
+    </span>
+  }
+}

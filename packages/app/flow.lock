@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "flow-charts": {
+      "version": "1.0.0",
+      "integrity": "sha256-3b18e5f94ed108dec1130685ad111bc430f03a1515145bc28c1f2fdb03aed4dc",
+      "dependencies": {}
+    },
+    "flow-time": {
+      "version": "1.2.0",
+      "integrity": "sha256-a4a00629dde2c39ef739e3d7d3fe05425b2cf1c96a1d10d407b9a8ae9cc9704b",
+      "dependencies": {}
+    }
+  }
+}

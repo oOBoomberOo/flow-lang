@@ -1,0 +1,26 @@
+// Package entry: `use` resolves across packages and modules.
+// Try importing `secretSauce` from demo::util — it is private and rejected.
+
+use demo::util::{Priority, describe, priorities, priorityLabel}
+use std::list::{map, range}
+use std::math::{sum, clamp}
+use std::string::{padLeft, words}
+use std::html::{Card, Badge}
+
+fn label(p: Priority) -> Html {
+  html { <Badge label={priorityLabel(p)} /> }
+}
+
+fn main() -> Html {
+  let nums = map(range(6), fn(n: Int) -> Int { n * n });
+  html {
+    <Card title={"Modules & packages"}>
+      <p class="sum">{"sum of squares: "}{sum(nums)}</p>
+      <p class="clamp">{"clamped: "}{clamp(42, 0, 10)}</p>
+      <p class="words">{"words: "}{str(len(words("  flow is a   language ")))}</p>
+      <p class="pad">{"padded: "}{padLeft("7", 3, "0")}</p>
+      {map(priorities(), label)}
+      <p class="desc">{"describe: "}{describe(High)}</p>
+    </Card>
+  }
+}
