@@ -196,6 +196,36 @@ A nullary trait method (such as `Monoid.empty()`) uses the unique instance when
 the trait has exactly one; with several instances it is an error unless a value
 or annotation determines the type.
 
+A trait parameter may also range over a **type constructor** (a higher-kinded
+parameter). Apply it to type arguments with `f<a>`, and write instances at the
+constructor:
+
+```flow
+trait Functor<f> {
+  fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b>
+}
+
+impl Functor for List {
+  fn map<a, b>(value: List<a>, mapper: (a) -> b) -> List<b> {
+    match value {
+      [] => [],
+      [x, ..rest] => concat([mapper(x)], map(rest, mapper)),
+    }
+  }
+}
+
+impl Functor for Option {
+  fn map<a, b>(value: Option<a>, mapper: (a) -> b) -> Option<b> {
+    match value { None => None, Some(x) => Some(mapper(x)) }
+  }
+}
+```
+
+Dispatch uses the head constructor of the constructor-typed argument:
+`Functor.map([1, 2], …)` selects the `List` instance, while
+`Functor.map(Some(1), …)` selects `Option`. Type applications are normalized
+after unification, so `f<b>` becomes `List<b>` or `Option<b>`.
+
 ---
 
 ## 6. Effects are capabilities
@@ -511,7 +541,8 @@ Honest list, so you do not discover them by surprise:
 
 * FFI targets are JavaScript only; FFI is unsafe and unchecked at the boundary.
 * Traits dispatch on one parameter; supertraits and associated types are not supported.
-  Trait bounds and bounded generic instances are supported (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`).
+  Trait bounds, bounded generic instances and higher-kinded type parameters are supported
+  (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`, `trait Functor<f>`).
 * No effect handlers (no `handle … with …`); effects are capabilities.
 * No `String` interpolation — use `+`.
 * Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.

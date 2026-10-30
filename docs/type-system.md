@@ -208,6 +208,10 @@ dictionary for its element type. Calling a trait method on a type variable
 without the matching bound is rejected at the call site.
 
 Traits still dispatch on one parameter: the type after `for` is the dispatch key.
+A parameter may itself be a type constructor (`trait Functor<f>`); `f<a>` is a
+higher-kinded application, normalized to `List<a>` / `Option<a>` after unification,
+and impls are written at the constructor (`impl Functor for List`). Dispatch uses
+the head constructor of the constructor-typed argument.
 
 ### 4.7 Exhaustiveness
 

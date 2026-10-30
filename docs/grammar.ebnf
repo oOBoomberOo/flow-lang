@@ -153,8 +153,13 @@ type-atom       = constructor [ '<' type { ',' type } '>' ]   ; named / generic
                 | '(' ')'                                      ; Unit
                 | '(' type { ',' type } ')'                    ; tuple
                 | '{' record-type-fields-loose '}'             ; record type
-                | type-param                                   ; type variable
+                | type-param [ '<' type { ',' type } '>' ]     ; type variable / higher-kinded application
                 ;
+
+; A type parameter may be applied to type arguments as a higher-kinded type:
+;   trait Functor<f> { fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b> }
+; Instances are written at the constructor (`impl Functor for List`) and
+; dispatch on the head constructor of the constructor-typed argument.
 
 record-type-fields-loose
                 = [ field { ',' field } [ ',' ] ] ;

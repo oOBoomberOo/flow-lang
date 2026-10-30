@@ -30,6 +30,8 @@ export interface CtorInfo {
 
 export interface TraitInfo {
   name: string; params: string[];
+  /** type parameters used as type constructors (`f<a>`) */
+  ctorParams: Set<string>;
   methods: Map<string, { sig: FnSig; ty: Type }>;
 }
 
@@ -286,13 +288,40 @@ export class Infer {
   registerTrait(d: Decl & { k: "Trait" }) {
     const params = new Map<string, Type>();
     for (const p of d.params) { const tv = fresh(0); tv.generic = true; params.set(p, tv); }
+    const ctorParams = new Set<string>();
+    const scanType = (te: TypeExpr | undefined) => {
+      if (!te) return;
+      switch (te.k) {
+        case "TCon":
+          if (d.params.includes(te.name) && te.args.length > 0) ctorParams.add(te.name);
+          for (const a of te.args) scanType(a);
+          break;
+        case "TFun":
+          for (const p of te.params) scanType(p);
+          scanType(te.ret);
+          break;
+        case "TRecord":
+          for (const f of te.fields) scanType(f.type);
+          break;
+        case "TTuple":
+          for (const item of te.items) scanType(item);
+          break;
+        case "TPlaced":
+          scanType(te.inner);
+          break;
+      }
+    };
+    for (const m of d.methods) {
+      for (const p of m.params) scanType(p.type);
+      scanType(m.ret);
+    }
     const methods = new Map<string, { sig: FnSig; ty: Type }>();
     for (const m of d.methods) {
       const ty = this.resolveSig(m, params);
       methods.set(m.name, { sig: m, ty });
       this.mod.methodIndex.set(m.name, d.name);
     }
-    this.mod.traits.set(d.name, { name: d.name, params: d.params, methods });
+    this.mod.traits.set(d.name, { name: d.name, params: d.params, ctorParams, methods });
   }
 
   registerEffect(d: Decl & { k: "Effect" }) {
@@ -568,9 +597,20 @@ export class Infer {
         return t;
       }
       case "TCon": {
+        // A type parameter applied to arguments is a higher-kinded application:
+        // `f<a>` where `f` is a trait/function type parameter.
+        if (params.has(te.name)) {
+          const v = params.get(te.name)!;
+          if (te.args.length === 0) return v;
+          return { k: "app", fn: v, args: te.args.map((a) => this.resolveType(a, params)) };
+        }
         const def = this.mod.typeDefs.get(te.name);
-        if (te.name === "List") return listOf(this.resolveType(te.args[0]!, params));
-        if (te.name === "Cell") return cellOf(this.resolveType(te.args[0]!, params));
+        if (te.name === "List") {
+          return te.args.length ? listOf(this.resolveType(te.args[0]!, params)) : con("List");
+        }
+        if (te.name === "Cell") {
+          return te.args.length ? cellOf(this.resolveType(te.args[0]!, params)) : con("Cell");
+        }
         if (te.name === "Event") return con("Event");
         if (def && def.kind === "alias") {
           const d = def.decl as Decl & { k: "Alias" };
@@ -967,7 +1007,11 @@ export class Infer {
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
+    const trait = this.mod.traits.get(traitName)!;
     let target = prune(inst.params[0] ?? inst.ret);
+    if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
+      target = headConstructor(target);
+    }
     if (target.k === "var" && !target.bounds?.includes(traitName) && args.length === 0) {
       // A nullary trait method (e.g. Monoid.empty()) has no value to dispatch
       // on. If the trait has exactly one instance, use it; otherwise the call is
@@ -1240,6 +1284,15 @@ export function mergeEff(...rows: Eff[]): Eff {
   const out: Eff = { labels: new Set() };
   for (const r of rows) for (const l of r.labels) out.labels.add(l);
   return out;
+}
+
+/** The head constructor of a type, for traits parameterised by a type
+ *  constructor (`Functor<f>` dispatches on List, Option, …). */
+function headConstructor(t: Type): Type {
+  const p = prune(t);
+  if (p.k === "con") return { k: "con", name: p.name, args: [] };
+  if (p.k === "app") return headConstructor(p.fn);
+  return p;
 }
 
 export function placeFromEffects(eff: Eff, inf: Infer): Place {

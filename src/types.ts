@@ -11,10 +11,12 @@ export type Place = "neutral" | "client" | "server" | "cross";
 
 export interface TVar { k: "var"; id: number; level: number; generic?: boolean; bounds?: string[]; origin?: number }
 export interface TCon { k: "con"; name: string; args: Type[] }
+/** A higher-kinded application: `f<a>` where `f` is a type constructor. */
+export interface TApp { k: "app"; fn: Type; args: Type[] }
 export interface TFun { k: "fun"; params: Type[]; ret: Type; eff: Eff }
 export interface TRec { k: "rec"; fields: Record<string, Type>; open?: boolean }
 export interface TTuple { k: "tuple"; items: Type[] }
-export type Type = TVar | TCon | TFun | TRec | TTuple;
+export type Type = TVar | TCon | TApp | TFun | TRec | TTuple;
 
 export interface Eff { labels: Set<string>; tail?: number }
 
@@ -61,6 +63,11 @@ export function typePlace(t: Type): Place {
   if (p.k === "tuple") {
     for (const i of p.items) { const q = typePlace(i); if (q !== "neutral") return q; }
   }
+  if (p.k === "app") {
+    const q = typePlace(p.fn);
+    if (q !== "neutral") return q;
+    for (const a of p.args) { const r = typePlace(a); if (r !== "neutral") return r; }
+  }
   if (p.k === "rec") {
     for (const f of Object.values(p.fields)) { const q = typePlace(f); if (q !== "neutral") return q; }
   }
@@ -79,6 +86,13 @@ export function sendable(t: Type): { ok: true } | { ok: false; reason: string } 
       if (p.name === "Event") return { ok: false, reason: "Event handles cannot leave the client" };
       if (p.name === "Html") return { ok: false, reason: "Html can only be produced on the client" };
       for (const a of p.args) { const r = sendable(a); if (!r.ok) return r; }
+      return { ok: true };
+    }
+    case "app": {
+      const fn = prune(p.fn);
+      if (fn.k === "con" && fn.args.length === 0) {
+        return sendable({ k: "con", name: fn.name, args: p.args });
+      }
       return { ok: true };
     }
     case "tuple": {
@@ -101,6 +115,17 @@ export function prune(t: Type): Type {
     const r = prune(subst.get(t.id)!);
     subst.set(t.id, r);
     return r;
+  }
+  if (t.k === "app") {
+    const fn = prune(t.fn);
+    const args = t.args.map((a) => prune(a));
+    // `List<Int>` is represented as a constructor application until the
+    // constructor is known; once it is, normalize to an ordinary TCon.
+    if (fn.k === "con" && fn.args.length === 0) {
+      return { k: "con", name: fn.name, args };
+    }
+    if (fn === t.fn && args.every((a, i) => a === t.args[i])) return t;
+    return { k: "app", fn, args };
   }
   return t;
 }
@@ -128,6 +153,7 @@ export function occurs(id: number, t: Type): boolean {
   switch (p.k) {
     case "var": return p.id === id;
     case "con": return p.args.some((a) => occurs(id, a));
+    case "app": return occurs(id, p.fn) || p.args.some((a) => occurs(id, a));
     case "fun": return p.params.some((a) => occurs(id, a)) || occurs(id, p.ret);
     case "rec": return Object.values(p.fields).some((f) => occurs(id, f));
     case "tuple": return p.items.some((i) => occurs(id, i));
@@ -152,6 +178,30 @@ export function unify(a: Type, b: Type): void {
     if (occurs(y.id, x)) tErr(`infinite type: ${typeStr(x)} = ${typeStr(y)}`);
     bind(y.id, x);
     return;
+  }
+  if (x.k === "app" || y.k === "app") {
+    if (x.k === "app" && y.k === "app") {
+      unify(x.fn, y.fn);
+      if (x.args.length !== y.args.length) {
+        tErr(`type constructor arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+      }
+      for (let i = 0; i < x.args.length; i++) unify(x.args[i]!, y.args[i]!);
+      return;
+    }
+    const app = x.k === "app" ? x : (y as TApp);
+    const con = x.k === "con" ? x : (y.k === "con" ? y : undefined);
+    if (con) {
+      const fn = prune(app.fn);
+      if (fn.k === "var") {
+        if (occurs(fn.id, con)) tErr(`infinite type: ${typeStr(fn)} = ${typeStr(con)}`);
+        bind(fn.id, { k: "con", name: con.name, args: [] });
+        return unify({ k: "con", name: con.name, args: app.args }, con);
+      }
+      if (fn.k === "con" && fn.args.length === 0) {
+        return unify({ k: "con", name: fn.name, args: app.args }, con);
+      }
+    }
+    tErr(`type mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
   }
   if (x.k === "fun" && y.k === "fun") {
     if (x.params.length !== y.params.length) {
@@ -248,6 +298,7 @@ export function mapType(t: Type, f: (t: Type) => Type): Type {
   switch (p.k) {
     case "var": return f(p);
     case "con": return { k: "con", name: p.name, args: p.args.map((a) => mapType(a, f)) };
+    case "app": return { k: "app", fn: mapType(p.fn, f), args: p.args.map((a) => mapType(a, f)) };
     case "fun": return {
       k: "fun",
       params: p.params.map((a) => mapType(a, f)),
@@ -270,6 +321,7 @@ export function freeVars(t: Type, acc = new Set<number>()): Set<number> {
   switch (p.k) {
     case "var": acc.add(p.id); break;
     case "con": p.args.forEach((a) => freeVars(a, acc)); break;
+    case "app": freeVars(p.fn, acc); p.args.forEach((a) => freeVars(a, acc)); break;
     case "fun": p.params.forEach((a) => freeVars(a, acc)); freeVars(p.ret, acc); break;
     case "rec": Object.values(p.fields).forEach((a) => freeVars(a, acc)); break;
     case "tuple": p.items.forEach((a) => freeVars(a, acc)); break;
@@ -286,6 +338,7 @@ export function typeStr(t: Type): string {
   switch (p.k) {
     case "var": return `t${p.id}`;
     case "con": return p.args.length ? `${p.name}<${p.args.map(typeStr).join(", ")}>` : p.name;
+    case "app": return `${typeStr(p.fn)}<${p.args.map(typeStr).join(", ")}>`;
     case "fun": {
       const eff = p.eff.labels.size ? ` ! {${[...p.eff.labels].join(", ")}}` : "";
       return `(${p.params.map(typeStr).join(", ")}) -> ${typeStr(p.ret)}${eff}`;

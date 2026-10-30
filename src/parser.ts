@@ -449,6 +449,11 @@ export class Parser {
 
     if (this.tok.kind === "id") {
       const name = this.next().value;
+      // A lowercase type parameter can be higher-kinded: `f<a>`.
+      if (this.atSym("<")) {
+        const args = this.parseTypeArgs();
+        return { k: "TCon", name, args, span: this.spanFrom(start) };
+      }
       return { k: "TVar", name, span: this.spanFrom(start) };
     }
 
