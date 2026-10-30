@@ -15,6 +15,10 @@ export interface CompileOptions {
   collectErrors?: boolean;
   /** require `fn main() -> Html` (CLI mode; libraries do not have one) */
   requireMain?: boolean;
+  /** editor mode: recover from parse/link errors instead of throwing */
+  recover?: boolean;
+  /** editor mode: preload all std modules for path completion */
+  allStd?: boolean;
 }
 
 export interface CompileResult {
@@ -102,13 +106,21 @@ export function compileFile(
   file: string,
   opts: CompileOptions & { overlay?: Map<string, string> } = {},
 ): CompileResult {
-  const linked = new Linker({ overlay: opts.overlay }).link(file);
+  const linked = new Linker({
+    overlay: opts.overlay,
+    recover: opts.recover,
+    allStd: opts.allStd,
+  }).link(file);
   const result = compileProgram(
     linked.program,
     linked.entry.file,
     linked.units.map((u) => ({ id: u.id, file: u.file })),
     opts,
   );
+  if (linked.errors.length) {
+    result.errors = [...linked.errors, ...result.errors];
+    if (!opts.collectErrors) throw linked.errors[0];
+  }
   result.display = linked.display;
   result.symbols = linked.symbols;
   result.importedByFile = linked.importedByFile;

@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse } from "./parser.ts";
 import { FlowError } from "./lexer.ts";
-import type { Decl, Expr, HtmlNode, Pattern, Program, Span, TypeExpr } from "./ast.ts";
+import type { Decl, Expr, FnSig, HtmlNode, Pattern, Program, Span, TypeExpr } from "./ast.ts";
 
 export const STDLIB_DIR = path.join(import.meta.dirname, "..", "stdlib");
 
@@ -79,6 +79,8 @@ export interface LinkedProgram {
   /** file -> final names imported into that file (for auto-import) */
   importedByFile: Map<string, Set<string>>;
   entry: SourceUnit;
+  /** parse/link errors collected in editor mode */
+  errors: FlowError[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -189,9 +191,16 @@ export class Linker {
   units = new Map<string, SourceUnit>();
   /** In-memory file contents (unsaved editor buffers) keyed by absolute path. */
   overlay: Map<string, string>;
+  /** editor mode: recover from parse/link errors instead of throwing */
+  recover: boolean;
+  /** editor mode: preload every std module so path completion works */
+  allStd: boolean;
+  errors: FlowError[] = [];
 
-  constructor(opts: { overlay?: Map<string, string> } = {}) {
+  constructor(opts: { overlay?: Map<string, string>; recover?: boolean; allStd?: boolean } = {}) {
     this.overlay = opts.overlay ?? new Map();
+    this.recover = Boolean(opts.recover);
+    this.allStd = Boolean(opts.allStd);
   }
 
   private read(file: string): string {
@@ -202,12 +211,21 @@ export class Linker {
   entry!: SourceUnit;
 
   link(entryFile: string): LinkedProgram {
+    this.errors = [];
     const pkg = loadPackage(entryFile);
     const rel = pkg.singleFile
       ? ["main"]
       : path.relative(pkg.srcDir, path.resolve(entryFile)).replace(/\.flow$/, "").split(/[\\/]/);
 
     this.entry = this.loadUnit(pkg, rel);
+    if (this.allStd) {
+      let files: string[] = [];
+      try { files = fs.readdirSync(STDLIB_DIR).filter((f) => f.endsWith(".flow") && f !== "builtins.flow"); } catch { /* no std */ }
+      for (const f of files) {
+        try { this.loadUnit(stdPackage(), [f.replace(/\.flow$/, "")]); }
+        catch (e) { if (this.recover && e instanceof FlowError) this.errors.push(e); else throw e; }
+      }
+    }
     const ordered: SourceUnit[] = [];
     const seen = new Set<string>();
     const visit = (u: SourceUnit) => {
@@ -220,9 +238,12 @@ export class Linker {
     for (const u of this.units.values()) visit(u);
 
     // The prelude is injected into every module: intrinsics and the capability
-    // effects live in std, not in the compiler.
+    // effects live in std, not in the compiler. It must be first so its types
+    // (Option, …) are registered before modules that use them.
     const prelude = this.loadUnit(stdPackage(), ["prelude"]);
-    if (!ordered.includes(prelude)) ordered.unshift(prelude);
+    const preludeIndex = ordered.indexOf(prelude);
+    if (preludeIndex >= 0) ordered.splice(preludeIndex, 1);
+    ordered.unshift(prelude);
 
     return this.flatten(ordered);
   }
@@ -239,7 +260,8 @@ export class Linker {
       throw new FlowError(`module '${id}' not found (expected ${file})`, { code: "E_MODULE" });
     }
     const src = this.read(file);
-    const program = parse(src, file);
+    const program = parse(src, file, { recover: this.recover });
+    if (program.errors?.length) this.errors.push(...program.errors);
     const declares = new Map<string, Decl>();
     for (const d of program.decls) {
       if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
@@ -252,11 +274,46 @@ export class Linker {
     // eagerly load imported modules so cycles work
     for (const use of program.decls) {
       if (use.k !== "Use") continue;
-      for (const ref of this.resolveUse(pkg, unit, use)) {
-        if (!this.units.has(ref.id)) this.loadUnit(ref.pkg, ref.modulePath);
+      try {
+        for (const ref of this.resolveUse(pkg, unit, use)) {
+          if (!this.units.has(ref.id)) this.loadUnit(ref.pkg, ref.modulePath);
+        }
+      } catch (e) {
+        if (this.recover && e instanceof FlowError) this.errors.push(e);
+        else throw e;
       }
     }
+
+    // `std::list::map` works without a `use`: load the module the path names.
+    this.discoverQualified(unit);
     return unit;
+  }
+
+  private packageFor(pkg: Package, name: string): Package | null {
+    if (name === "std") return stdPackage();
+    if (name === pkg.name) return pkg;
+    return pkg.deps.get(name) ?? null;
+  }
+
+  /** Load modules referenced by qualified paths in this unit. */
+  private discoverQualified(unit: SourceUnit): void {
+    for (const full of collectQualifiedPaths(unit.program)) {
+      const segs = full.split("::");
+      if (segs.length < 3) continue;
+      const pkgName = segs[0]!;
+      const name = segs[segs.length - 1]!;
+      const modulePath = segs.slice(1, -1);
+      if (!name || modulePath.length === 0) continue;
+      const target = this.packageFor(unit.pkgObj, pkgName);
+      if (!target) continue;
+      let exists = false;
+      try { exists = fs.existsSync(MODULE_FILE(target, modulePath)); } catch { exists = false; }
+      if (!exists) continue;
+      const id = `${target.name}::${modulePath.join("::")}`;
+      if (this.units.has(id)) continue;
+      try { this.loadUnit(target, modulePath); }
+      catch (e) { if (this.recover && e instanceof FlowError) this.errors.push(e); else throw e; }
+    }
   }
 
   /* ---------- import resolution ---------- */
@@ -299,28 +356,33 @@ export class Linker {
     const table = new Map<string, { unit: SourceUnit; name: string }>();
     for (const d of unit.program.decls) {
       if (d.k !== "Use") continue;
-      const [ref] = this.resolveUse(pkg, unit, d);
-      const targetUnit = { id: ref.id };
-      const target = this.loadUnit(ref.pkg, ref.modulePath);
-      for (const item of d.items) {
-        const alias = item.alias ?? item.name;
-        if (table.has(alias)) {
-          throw new FlowError(`duplicate import '${alias}'`, { file: unit.file, code: "E_MODULE" });
+      try {
+        const [ref] = this.resolveUse(pkg, unit, d);
+        const targetUnit = { id: ref.id };
+        const target = this.loadUnit(ref.pkg, ref.modulePath);
+        for (const item of d.items) {
+          const alias = item.alias ?? item.name;
+          if (table.has(alias)) {
+            throw new FlowError(`duplicate import '${alias}'`, { file: unit.file, code: "E_MODULE" });
+          }
+          const decl = target.declares.get(item.name);
+          if (!decl) {
+            throw new FlowError(
+              `'${item.name}' is not exported by ${targetUnit.id}`,
+              { file: unit.file, code: "E_MODULE" },
+            );
+          }
+          if (!(decl as { pub?: boolean }).pub) {
+            throw new FlowError(
+              `'${item.name}' is private in ${targetUnit.id}; mark it 'pub' to export it`,
+              { file: unit.file, code: "E_MODULE" },
+            );
+          }
+          table.set(alias, { unit: target, name: item.name });
         }
-        const decl = target.declares.get(item.name);
-        if (!decl) {
-          throw new FlowError(
-            `'${item.name}' is not exported by ${targetUnit.id}`,
-            { file: unit.file, code: "E_MODULE" },
-          );
-        }
-        if (!(decl as { pub?: boolean }).pub) {
-          throw new FlowError(
-            `'${item.name}' is private in ${targetUnit.id}; mark it 'pub' to export it`,
-            { file: unit.file, code: "E_MODULE" },
-          );
-        }
-        table.set(alias, { unit: target, name: item.name });
+      } catch (e) {
+        if (this.recover && e instanceof FlowError) this.errors.push(e);
+        else throw e;
       }
     }
     return table;
@@ -412,6 +474,43 @@ export class Linker {
       }
     }
 
+    // `std::list::map` paths resolve through the same final names, visible only
+    // when the declaration is `pub`.
+    const qValues = new Map<string, string>();
+    const qTypes = new Map<string, string>();
+    const isTypeName = (d: Decl, name: string) =>
+      d.k === "RecordType" || d.k === "Alias" || (d.k === "Adt" && name === d.name);
+    for (const u of units) {
+      for (const [n, d] of u.declares) {
+        if (!(d as { pub?: boolean }).pub) continue;
+        const key = `${u.id}::${n}`;
+        const final = finalName.get(key);
+        if (!final) continue;
+        if (isTypeName(d, n)) qTypes.set(key, final);
+        else qValues.set(key, final);
+      }
+    }
+    QUALIFIED_VALUES = qValues;
+    QUALIFIED_TYPES = qTypes;
+
+    // Prelude declarations are conceptually part of the std modules that use
+    // them: `std::option::Option` / `std::option::Some` should resolve even
+    // though `Option` lives in the injected prelude.
+    const prelude = this.units.get("std::prelude");
+    if (prelude) {
+      for (const u of units) {
+        if (u.pkg !== "std" || u.id === "std::prelude") continue;
+        for (const [n, d] of prelude.declares) {
+          const key = `${u.id}::${n}`;
+          if (qTypes.has(key) || qValues.has(key)) continue;
+          const final = finalName.get(`${prelude.id}::${n}`);
+          if (!final) continue;
+          if (isTypeName(d, n)) qTypes.set(key, final);
+          else qValues.set(key, final);
+        }
+      }
+    }
+
     for (const u of units) {
       const values = new Map<string, string>();
       const types = new Map<string, string>();
@@ -458,6 +557,7 @@ export class Linker {
       symbols,
       importedByFile,
       entry: this.entry,
+      errors: this.errors,
     };
   }
 }
@@ -473,12 +573,118 @@ export function stdPackage(): Package {
 /* AST rewriting                                                      */
 /* ------------------------------------------------------------------ */
 
+/** Every `pkg::module::name` reference in a unit, for on-demand loading. */
+function collectQualifiedPaths(program: Program): Set<string> {
+  const out = new Set<string>();
+  const add = (name?: string) => {
+    if (name && name.includes("::") && !name.startsWith("::")) out.add(name);
+  };
+  const ty = (t?: TypeExpr): void => {
+    if (!t) return;
+    switch (t.k) {
+      case "TCon": add(t.name); t.args.forEach(ty); return;
+      case "TFun": t.params.forEach(ty); ty(t.ret); t.eff?.effects.forEach(add); return;
+      case "TRecord": t.fields.forEach((f) => ty(f.type)); return;
+      case "TTuple": t.items.forEach(ty); return;
+      case "TPlaced": ty(t.inner); return;
+      default: return;
+    }
+  };
+  const pat = (p: Pattern): void => {
+    switch (p.k) {
+      case "PCtor": add(p.name); p.args.forEach(pat); return;
+      case "PTuple": p.items.forEach(pat); return;
+      case "PRecord": p.fields.forEach((f) => pat(f.pat)); return;
+      case "PList": p.items.forEach(pat); return;
+      default: return;
+    }
+  };
+  const sig = (s: FnSig): void => {
+    s.params.forEach((p) => ty(p.type));
+    ty(s.ret);
+    s.eff?.effects.forEach(add);
+  };
+  const html = (n: HtmlNode): void => {
+    switch (n.k) {
+      case "Hole": ex(n.e); return;
+      case "Element": case "Component":
+        for (const a of n.attrs) if (a.value.k === "expr") ex(a.value.e);
+        n.children.forEach(html);
+        return;
+      default: return;
+    }
+  };
+  const ex = (e?: Expr): void => {
+    if (!e) return;
+    switch (e.k) {
+      case "Lit": return;
+      case "Var": add(e.name); return;
+      case "Ctor": add(e.name); e.args.forEach(ex); return;
+      case "Lam":
+        e.params.forEach((p) => ty(p.type)); ty(e.ret); e.eff?.effects.forEach(add);
+        ex(e.body); return;
+      case "App": ex(e.fn); e.args.forEach(ex); return;
+      case "If": ex(e.cond); ex(e.then); ex(e.else); return;
+      case "Match":
+        ex(e.scrut);
+        for (const a of e.arms) { pat(a.pat); ex(a.guard); ex(a.body); }
+        return;
+      case "Let": ty(e.ann); ex(e.value); ex(e.body); return;
+      case "Record": e.fields.forEach((f) => ex(f.value)); return;
+      case "Field": ex(e.target); return;
+      case "Tuple": case "List": e.items.forEach(ex); return;
+      case "Binary": ex(e.l); ex(e.r); return;
+      case "Unary": ex(e.e); return;
+      case "Html": e.nodes.forEach(html); return;
+      case "Handle":
+        for (const op of e.ops) ex(op.fn);
+        ex(e.body); return;
+      case "Assign": ex(e.target); ex(e.value); return;
+      case "Block":
+        for (const s of e.stmts) ex(s.k === "LetStmt" ? s.value : s.e);
+        ex(e.value); return;
+    }
+  };
+
+  for (const d of program.decls) {
+    switch (d.k) {
+      case "Use": break;
+      case "Fn":
+        d.params.forEach((p) => ty(p.type)); ty(d.ret); d.eff?.effects.forEach(add);
+        ex(d.body);
+        break;
+      case "Extern": sig(d.sig); break;
+      case "Adt": for (const v of d.variants) v.args.forEach(ty); break;
+      case "RecordType": d.fields.forEach((f) => ty(f.type)); break;
+      case "Alias": ty(d.type); break;
+      case "Trait": d.methods.forEach(sig); break;
+      case "Impl":
+        add(d.trait);
+        d.traitArgs.forEach(ty); ty(d.target);
+        for (const m of d.methods) { sig(m); ex(m.body); }
+        break;
+      case "Effect": d.ops.forEach(sig); break;
+      case "Provide":
+        add(d.effect);
+        ty(d.target);
+        d.ops.forEach((o) => ex(o.fn));
+        break;
+    }
+  }
+  return out;
+}
+
 const BUILTIN_TYPES = new Set([
   "Int", "Float", "Str", "Bool", "Unit", "Html", "List", "Option", "Cell", "Event", "Dom",
 ]);
 
 let CURRENT_VALUES: Map<string, string> = new Map();
-const effLabels = (row: { effects: string[] }) => ({ ...row, effects: row.effects.map((e) => CURRENT_VALUES.get(e) ?? e) });
+let QUALIFIED_VALUES: Map<string, string> = new Map();
+let QUALIFIED_TYPES: Map<string, string> = new Map();
+const effLabels = (row: { effects: string[] }) => ({
+  ...row,
+  effects: row.effects.map((e) => CURRENT_VALUES.get(e) ?? QUALIFIED_VALUES.get(e) ?? e),
+});
 
 function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, string>, file: string): Decl {
   CURRENT_VALUES = values;
@@ -517,7 +723,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
     case "Impl":
       return {
         ...d,
-        trait: values.get(d.trait) ?? d.trait,
+        trait: values.get(d.trait) ?? QUALIFIED_VALUES.get(d.trait) ?? d.trait,
         traitArgs: d.traitArgs.map((t) => rwType(t, types)),
         target: rwType(d.target, types),
         methods: d.methods.map((m) => ({
@@ -528,7 +734,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
     case "Provide":
       return {
         ...d,
-        effect: values.get(d.effect) ?? d.effect,
+        effect: values.get(d.effect) ?? QUALIFIED_VALUES.get(d.effect) ?? d.effect,
         target: d.target ? rwType(d.target, types) : undefined,
         ops: d.ops.map((o) => ({ ...o, fn: rwExpr(o.fn, new Set(), values, types) })),
       };
@@ -551,7 +757,7 @@ function rwType(t: TypeExpr, types: Map<string, string>): TypeExpr {
   switch (t.k) {
     case "TVar": return t;
     case "TCon":
-      return { ...t, name: types.get(t.name) ?? t.name, args: t.args.map((a) => rwType(a, types)) };
+      return { ...t, name: types.get(t.name) ?? QUALIFIED_TYPES.get(t.name) ?? t.name, args: t.args.map((a) => rwType(a, types)) };
     case "TFun":
       return { ...t, params: t.params.map((p) => rwType(p, types)), ret: rwType(t.ret, types), eff: t.eff ? effLabels(t.eff) : t.eff };
     case "TRecord":
@@ -567,9 +773,11 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
   switch (e.k) {
     case "Lit": return e;
     case "Var":
-      return scope.has(e.name) ? e : { ...e, name: values.get(e.name) ?? e.name };
+      return scope.has(e.name)
+        ? e
+        : { ...e, name: values.get(e.name) ?? QUALIFIED_VALUES.get(e.name) ?? e.name };
     case "Ctor":
-      return { ...e, name: values.get(e.name) ?? e.name, args: e.args.map((a) => rwExpr(a, scope, values, types)) };
+      return { ...e, name: values.get(e.name) ?? QUALIFIED_VALUES.get(e.name) ?? e.name, args: e.args.map((a) => rwExpr(a, scope, values, types)) };
     case "Lam": {
       const inner = new Set(scope);
       for (const p of e.params) inner.add(p.name);
@@ -617,6 +825,7 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
     case "Handle":
       return {
         ...e,
+        effect: values.get(e.effect) ?? QUALIFIED_VALUES.get(e.effect) ?? e.effect,
         ops: e.ops.map((op) => ({ ...op, fn: rwExpr(op.fn, scope, values, types) })),
         body: rwExpr(e.body, scope, values, types),
       };
@@ -659,7 +868,7 @@ function rwPattern(p: Pattern, scope: Set<string>, values: Map<string, string>):
     case "PTuple": p.items.forEach((q) => rwPattern(q, scope, values)); return;
     case "PRecord": p.fields.forEach((f) => rwPattern(f.pat, scope, values)); return;
     case "PList": p.items.forEach((q) => rwPattern(q, scope, values)); if (p.rest) scope.add(p.rest); return;
-    case "PCtor": (p as { name: string }).name = values.get(p.name) ?? p.name; p.args.forEach((q) => rwPattern(q, scope, values)); return;
+    case "PCtor": (p as { name: string }).name = values.get(p.name) ?? QUALIFIED_VALUES.get(p.name) ?? p.name; p.args.forEach((q) => rwPattern(q, scope, values)); return;
     default: return;
   }
 }

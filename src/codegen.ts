@@ -421,6 +421,15 @@ export class Codegen {
     switch (e.k) {
       case "Lit": return litJs(e.lit);
       case "Var": {
+        if (!env.has(e.name)) {
+          const ctor = this.mod.ctors.get(e.name);
+          if (ctor) {
+            // A constructor referenced through a path (`std::option::Some`) is a
+            // value, not a JS function.
+            if (ctor.arity === 0) return `R.ctor(${ev(e.name)}, [])`;
+            return `((...$ctorArgs) => R.ctor(${ev(e.name)}, $ctorArgs))`;
+          }
+        }
         const ext = this.mod.fns.get(e.name)?.extern;
         if (ext && !env.has(e.name)) return `R.ffiFn(${ev(ext.implName)})`;
         return e.name;

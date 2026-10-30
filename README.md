@@ -87,9 +87,9 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **210 tests** across grammar, types, boundaries, modules, packages,
+Tests: `npm test` — **216 tests** across grammar, types, boundaries, modules, packages,
 the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
-algebraic effects, cell sugar, monads, currying, trait bounds, higher-kinded types, local handlers and the VS Code extension.
+algebraic effects, cell sugar, monads, currying, qualified paths, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 
 ---
 
@@ -166,6 +166,12 @@ fn area(s: Shape) -> Float {
   `add(1)(2)` works), lambdas infer parameter types (`fn(x) => x + 1`), and
   `x |> f`, `f <| x`, `f $ x` chain and apply; `std::fn` adds `compose`, `flip`,
   `apply` and friends
+* **Qualified paths** - `std::list::length(xs)`, `std::option::Some(1)`,
+  `std::state::State.get()` and qualified types/patterns work without a `use`;
+  modules load on demand and `pub` is enforced
+* **Error-resilient editor** - a syntax or type error in one declaration does not
+  blank the file: symbols, hover, definitions, semantic tokens and completion keep
+  working, and completion knows modules after `std::` / members after `std::list::`
 * **Monads** - `std::monad` provides `Monad<f>` (`bind`/`map`) for Option and List,
   with `m >>= f` and `do { x <- m; … }` sugar that desugars to nested binds
 * **Local capability handlers** - `handle Effect with { … } { body }` scopes a

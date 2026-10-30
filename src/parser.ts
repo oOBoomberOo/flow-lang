@@ -20,17 +20,21 @@ const PREC: Record<string, number> = {
   "*": 5, "/": 5, "%": 5,
 };
 
+const DECL_STARTS = new Set(["fn", "type", "trait", "impl", "effect", "algebraic", "provide", "use", "pub", "extern", "unsafe"]);
+
 export class Parser {
   src: string;
   file: string;
   toks: Token[];
   pos = 0;
+  recover: boolean;
   lastSpan: Span = { start: 0, end: 0, line: 1, col: 1 };
 
-  constructor(src: string, file = "<input>") {
+  constructor(src: string, file = "<input>", opts: { recover?: boolean } = {}) {
     this.src = src;
     this.file = file;
     this.toks = lex(src, file);
+    this.recover = Boolean(opts.recover);
   }
 
   /* ---------- token helpers ---------- */
@@ -82,10 +86,31 @@ export class Parser {
 
   parseProgram(): Program {
     const decls: Decl[] = [];
+    const errors: FlowError[] = [];
     while (!this.at("eof")) {
-      decls.push(this.parseDecl());
+      const before = this.pos;
+      try {
+        decls.push(this.parseDecl());
+      } catch (e) {
+        if (!this.recover || !(e instanceof FlowError)) throw e;
+        errors.push(e);
+        if (this.pos === before) this.next();
+        this.synchronize();
+      }
     }
-    return { decls, file: this.file };
+    return { decls, file: this.file, ...(errors.length ? { errors } : {}) };
+  }
+
+  /** Skip a broken declaration up to the next top-level declaration start. */
+  private synchronize(): void {
+    let depth = 0;
+    while (!this.at("eof")) {
+      const t = this.tok;
+      if (depth === 0 && t.kind === "kw" && DECL_STARTS.has(t.value)) return;
+      if (t.value === "{" || t.value === "(" || t.value === "[") depth++;
+      else if ((t.value === "}" || t.value === ")" || t.value === "]") && depth > 0) depth--;
+      this.next();
+    }
   }
 
   parseDecl(): Decl {
@@ -177,6 +202,14 @@ export class Parser {
     return name;
   }
 
+  /** `std::list::map` — a path to a declaration, without a `use`. */
+  parseQualifiedPath(): { name: string; span: Span } {
+    const start = this.tok;
+    const parts = [this.pathSegment()];
+    while (this.eatSym("::")) parts.push(this.pathSegment());
+    return { name: parts.join("::"), span: this.spanFrom(start) };
+  }
+
   parseExtern(start: Token, pub = false): Decl {
     if (!this.eatKw("unsafe")) this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
     this.expectKw("extern");
@@ -256,7 +289,7 @@ export class Parser {
 
   parseImpl(start: Token): Decl {
     this.expectKw("impl");
-    const trait = this.expect("Con").value;
+    const trait = this.parseQualifiedPath().name;
     let traitArgs: TypeExpr[] = [];
     if (this.atSym("<")) traitArgs = this.parseTypeArgs();
     this.expectKw("for");
@@ -308,7 +341,7 @@ export class Parser {
 
   parseProvide(start: Token): Decl {
     this.expectKw("provide");
-    const effect = this.expect("Con").value;
+    const effect = this.parseQualifiedPath().name;
     let target: TypeExpr | undefined;
     if (this.atKw("for")) { this.next(); target = this.parseType(); }
     this.expectKw("with");
@@ -330,7 +363,7 @@ export class Parser {
 
   parseHandle(): Expr {
     const start = this.expectKw("handle");
-    const effect = this.expect("Con").value;
+    const effect = this.parseQualifiedPath().name;
     this.expectKw("with");
     this.expectSym("{");
     const ops: { name: string; fn: Expr; span: Span }[] = [];
@@ -543,6 +576,12 @@ export class Parser {
     if (this.atSym("{")) {
       const fields = this.parseRecordTypeFields();
       return { k: "TRecord", fields, span: this.spanFrom(start) };
+    }
+
+    if ((this.tok.kind === "Con" || this.tok.kind === "id") && this.peek().value === "::") {
+      const p = this.parseQualifiedPath();
+      const args = this.atSym("<") ? this.parseTypeArgs() : [];
+      return { k: "TCon", name: p.name, args, span: p.span };
     }
 
     if (this.tok.kind === "Con") {
@@ -777,6 +816,10 @@ export class Parser {
     }
 
     if (t.kind === "Con") {
+      if (this.peek().value === "::") {
+        const p = this.parseQualifiedPath();
+        return { k: "Var", name: p.name, span: p.span };
+      }
       this.next();
       const args: Expr[] = [];
       if (this.atSym("(")) {
@@ -788,6 +831,10 @@ export class Parser {
     }
 
     if (t.kind === "id") {
+      if (this.peek().value === "::") {
+        const p = this.parseQualifiedPath();
+        return { k: "Var", name: p.name, span: p.span };
+      }
       this.next();
       return { k: "Var", name: t.value, span: this.spanFrom(t) };
     }
@@ -913,16 +960,31 @@ export class Parser {
       return { k: "PList", items, rest, span: this.spanFrom(t) };
     }
     if (t.kind === "Con") {
-      this.next();
+      let name = t.value;
+      if (this.peek().value === "::") name = this.parseQualifiedPath().name;
+      else this.next();
       const args: Pattern[] = [];
       if (this.atSym("(")) {
         this.next();
         if (!this.atSym(")")) { do { args.push(this.parsePattern()); } while (this.eatSym(",")); }
         this.expectSym(")");
       }
-      return { k: "PCtor", name: t.value, args, span: this.spanFrom(t) };
+      return { k: "PCtor", name, args, span: this.spanFrom(t) };
     }
-    if (t.kind === "id") { this.next(); return { k: "PVar", name: t.value, span: this.spanFrom(t) }; }
+    if (t.kind === "id") {
+      if (this.peek().value === "::") {
+        const p = this.parseQualifiedPath();
+        const args: Pattern[] = [];
+        if (this.atSym("(")) {
+          this.next();
+          if (!this.atSym(")")) { do { args.push(this.parsePattern()); } while (this.eatSym(",")); }
+          this.expectSym(")");
+        }
+        return { k: "PCtor", name: p.name, args, span: p.span };
+      }
+      this.next();
+      return { k: "PVar", name: t.value, span: this.spanFrom(t) };
+    }
     this.err(`expected a pattern, found ${JSON.stringify(t.value)}`);
   }
 
@@ -1029,6 +1091,6 @@ function collapseWs(s: string): string {
   return s.replace(/\s+/g, " ").replace(/^ | $/g, "");
 }
 
-export function parse(src: string, file = "<input>"): Program {
-  return new Parser(src, file).parseProgram();
+export function parse(src: string, file = "<input>", opts: { recover?: boolean } = {}): Program {
+  return new Parser(src, file, opts).parseProgram();
 }

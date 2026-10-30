@@ -22,10 +22,10 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | LSP request / notification | Behaviour |
 |---|---|
 | `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly** |
-| `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus module/link errors, published per file |
+| `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
-| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **module members after `::`**, **fields and Cell members after `.`** |
+| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **modules after `std::`**, **module members after `std::list::`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
@@ -40,6 +40,19 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
 | `flow/boundary` | placement regions for the whole package, one entry per file |
+
+### Error resilience
+
+Editor analysis runs with recovery enabled: the parser skips a broken declaration
+and keeps the rest, type errors are collected per function, and module imports that
+fail do not discard the file. Symbols, semantic tokens, hover, definitions and
+completion therefore keep working while the buffer has errors; the diagnostic list
+still shows them. `flow check` / `build` keep the strict behaviour and fail on the
+first error.
+
+Paths work without imports: `std::list::length(xs)` loads `std::list` on demand,
+and completion offers modules after `std::` and members after `std::list::` even
+before any `use` is written.
 
 `flow/boundary` is the Flow-specific piece: LSP tokens can colour a *token*, but the
 thing worth seeing is a **region** — "these twelve lines run on the server".
@@ -167,6 +180,7 @@ picked up live.
 |---|---|
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
 | `test/lsp-features.test.mjs` | completion (3 kinds), definition, references, highlights, rename, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, code lens, multi-error reporting |
+| `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, Cell dot completion |
 | `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results |
 
 ```

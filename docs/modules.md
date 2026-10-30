@@ -71,6 +71,21 @@ use flow-charts::bar::Chart
 * Keyword-like module names work too: `use std::html::Card`.
 * Glob imports (`*`) are parsed and rejected — be explicit.
 
+Names can be referenced by their full path without importing them:
+
+```flow
+let n = std::list::length(xs);
+let o = std::option::Some(1);
+let req: std::http::RequestObject = Request.current();
+handle std::state::State with { … } { … }
+match o { std::option::Some(x) => x, std::option::None => 0 }
+```
+
+The module is loaded on demand, `pub` is still required, and the path appears
+verbatim in diagnostics if it is unknown or private. This works for functions,
+constructors (including patterns), effects, traits and types; the editor does not
+need a `use` either, and completes module segments after `std::`.
+
 ### Visibility
 
 Only `pub` declarations can be imported:

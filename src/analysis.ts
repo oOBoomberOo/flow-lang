@@ -120,7 +120,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
   const abs = path.resolve(entry);
 
   try {
-    const result = compileFile(abs, { overlay, collectErrors: true, requireMain: false });
+    const result = compileFile(abs, { overlay, collectErrors: true, requireMain: false, recover: true, allStd: true });
     const srcCache = new Map<string, string>();
     const srcFor = (file: string) => {
       let s = srcCache.get(file);

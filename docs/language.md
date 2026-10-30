@@ -676,6 +676,20 @@ use std::list::{map, range}
 use flow-charts::bar::Chart
 ```
 
+A name can also be used through its full path, without a `use`:
+
+```flow
+let n = std::list::length(xs);
+let o = std::option::Some(1);
+let req: std::http::RequestObject = Request.current();
+handle std::state::State with { … } { … }
+```
+
+Paths work for functions, constructors, effects, traits and types; the linker
+loads the module on demand and still enforces `pub`. Completion offers modules
+after `std::`, members after `std::list::`, and unimported names with an import
+insertion.
+
 ```bash
 flow install          # resolve + vendor deps into flow_modules/, write flow.lock
 flow add flow-time    # add the best matching version from the registry

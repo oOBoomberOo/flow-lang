@@ -152,7 +152,10 @@ placement       = 'client' | 'server' ;
 ; Effect declarations may also be neutral: calls follow their arguments/callbacks.
 effect-placement = 'client' | 'server' | 'neutral' ;
 
-type-atom       = constructor [ '<' type { ',' type } '>' ]   ; named / generic
+qualified-name  = path-segment { '::' path-segment } ;
+path-segment    = identifier | constructor | keyword ;   ; `std`, `flow-charts`, `type`
+
+type-atom       = ( constructor | qualified-name ) [ '<' type { ',' type } '>' ]   ; named / generic
                 | '(' ')'                                      ; Unit
                 | '(' type { ',' type } ')'                    ; tuple
                 | '{' record-type-fields-loose '}'             ; record type
@@ -178,7 +181,7 @@ effect-list     = constructor { ',' constructor } | identifier ;
 
 trait-decl      = 'trait' constructor [ type-params ] '{' { fn-signature [ ';' ] } '}' ;
 
-impl-decl       = 'impl' constructor [ type-args ] 'for' type [ where-clause ] '{' { impl-method } '}' ;
+impl-decl       = 'impl' qualified-name [ type-args ] 'for' type [ where-clause ] '{' { impl-method } '}' ;
 impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
 
 where-clause    = 'where' where-bound { ',' where-bound } ;
@@ -189,7 +192,7 @@ effect-decl     = 'effect' constructor [ '@' effect-placement ] '{' { fn-signatu
 ;   algebraic effect State { fn get() -> Int  fn put(x: Int) -> Unit }
 ; Its handler operations may call `resume(value)`.
 
-provide-decl    = 'provide' constructor [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
+provide-decl    = 'provide' qualified-name [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
 provide-op      = identifier '=' expr [ ',' | ';' ] ;
 
 fn-signature    = identifier [ type-params ] '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] ;
@@ -263,6 +266,7 @@ postfix-expr    = primary { '(' [ expr { ',' expr } ] ')' | '.' ( identifier | i
 
 primary-expr    = literal
                 | identifier
+                | qualified-name
                 | constructor [ '(' [ expr { ',' expr } ] ')' ]
                 | lambda
                 | if-expr
@@ -289,7 +293,7 @@ match-expr      = 'match' expr '{' { match-arm } '}' ;
 match-arm       = pattern [ 'if' expr ] '=>' expr [ ',' | ';' ] ;
 
 ; A scoped capability handler. `provide` is file-level; this is its local form.
-handle-expr     = 'handle' constructor 'with'
+handle-expr     = 'handle' qualified-name 'with'
                   '{' { identifier '=' expr [ ',' | ';' ] } '}'
                   block ;
 
@@ -311,7 +315,7 @@ literal         = integer | float | string | 'true' | 'false' ;
 pattern         = '_'                                       ; wildcard
                 | identifier                                ; binder
                 | literal
-                | constructor [ '(' [ pattern { ',' pattern } ] ')' ]
+                | ( constructor | qualified-name ) [ '(' [ pattern { ',' pattern } ] ')' ]
                 | '(' pattern { ',' pattern } ')'           ; tuple
                 | '{' identifier ':' pattern { ',' identifier ':' pattern } '}'
                 | '[' [ pattern { ',' pattern } ] [ ',' '..' identifier ] ']' ;

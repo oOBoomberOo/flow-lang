@@ -494,19 +494,50 @@ function completion(file: string, pos: Position) {
   const prefixMatch = /[A-Za-z0-9_']*$/.exec(before);
   const prefix = prefixMatch ? prefixMatch[0] : "";
 
-  // Module members: `std::list::map`
+  // Module members: `std::list::map`, and modules after `std::`
   if (qualifier) {
     const q = qualifier[1]!;
-    const items = (lastAnalysis?.symbols ?? [])
-      .filter((s) => s.display.startsWith(q))
-      .map((s) => ({
+    const a = lastAnalysis;
+    const prefixLower = prefix.toLowerCase();
+
+    const modules = new Map<string, string>();
+    for (const u of a?.units ?? []) {
+      if (!u.id.startsWith(q) || u.id === q) continue;
+      const rest = u.id.slice(q.length);
+      if (!rest) continue;
+      const cut = rest.indexOf("::");
+      const seg = cut >= 0 ? rest.slice(0, cut) : rest;
+      if (seg) modules.set(seg, cut >= 0 ? `${q}${seg}` : u.id);
+    }
+    const moduleItems = [...modules]
+      .filter(([name]) => !prefix || name.toLowerCase().startsWith(prefixLower))
+      .map(([name, id]) => ({
+        label: name,
+        kind: 9,
+        detail: `module ${id}`,
+        documentation: { kind: "markdown", value: `\`${id}\` — complete the path or import a name from it` },
+        sortText: "0" + name,
+      }));
+
+    const seen = new Set<string>();
+    const memberItems: Record<string, unknown>[] = [];
+    for (const s of a?.symbols ?? []) {
+      if (!s.display.startsWith(q)) continue;
+      const rest = s.display.slice(q.length);
+      if (!rest || rest.includes("::")) continue;
+      if (prefix && !s.name.toLowerCase().startsWith(prefixLower)) continue;
+      const key = `${s.name}|${s.display}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      memberItems.push({
         label: s.name,
         kind: symbolKind(s.kind),
         detail: s.display,
-        documentation: `${s.kind} from ${s.display.split("::").slice(0, -1).join("::")}`,
-        sortText: "0" + s.name,
-      }));
-    return { isIncomplete: false, items };
+        documentation: { kind: "markdown", value: `\`${s.display}\`` },
+        sortText: "1" + s.name,
+      });
+    }
+    return { isIncomplete: false, items: [...moduleItems, ...memberItems] };
   }
 
   // Field access: `props.` / `cell.`
@@ -518,8 +549,10 @@ function completion(file: string, pos: Position) {
     const items = fields.map((f) => ({ label: f, kind: 5, detail: "field", sortText: "0" + f }));
     if (node?.cellElem) {
       items.unshift(
+        { label: "value", kind: 5, detail: node.cellElem, sortText: "0value" },
         { label: "get", kind: 2, detail: `() -> ${node.cellElem}`, sortText: "0get" },
         { label: "set", kind: 2, detail: `(${node.cellElem}) -> Unit`, sortText: "0set" },
+        { label: "update", kind: 2, detail: `((${node.cellElem}) -> ${node.cellElem}) -> Unit`, sortText: "0update" },
       );
     }
     return { isIncomplete: false, items };
@@ -577,16 +610,25 @@ function completion(file: string, pos: Position) {
   const curUnit = (lastAnalysis?.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
   const imported = lastAnalysis?.importedByFile?.get(path.resolve(file)) ?? new Set<string>();
   const lastUseLine = text.split("\n").reduce((acc, l, i) => (l.startsWith("use ") ? i : acc), -1);
+  const prefixLower = prefix.toLowerCase();
+  const seenSymbols = new Set<string>();
 
   for (const s of lastAnalysis?.symbols ?? []) {
-    if (prefix && !s.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    if (prefix) {
+      const name = s.name.toLowerCase();
+      if (!name.startsWith(prefixLower) && !name.includes(prefixLower)) continue;
+    }
+    const key = `${s.name}|${s.display}`;
+    if (seenSymbols.has(key)) continue;
+    seenSymbols.add(key);
     const inScope = s.unit === curUnit?.id || imported.has(s.finalName);
+    const prefixRank = s.name.toLowerCase().startsWith(prefixLower) ? "0" : "1";
     const item: Record<string, unknown> = {
       label: s.name,
       kind: symbolKind(s.kind),
       detail: inScope ? s.kind : `${s.kind} · ${s.display.split("::").slice(0, -1).join("::")}`,
       documentation: { kind: "markdown", value: `\`${s.display}\`` },
-      sortText: "1" + s.name,
+      sortText: (inScope ? "1" : "2") + prefixRank + s.name,
     };
     if (!inScope) {
       // completing a name from another module inserts its import

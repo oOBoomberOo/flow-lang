@@ -5,6 +5,8 @@
 
 export interface Span { start: number; end: number; line: number; col: number; file?: string }
 
+import type { FlowError } from "./lexer.ts";
+
 /* ---------- types (syntax) ---------- */
 
 export type TypeExpr =
@@ -102,4 +104,4 @@ export type Decl =
   | { k: "Extern"; sig: FnSig; target: "js"; implName: string; unsafe: true; pub: boolean; span: Span }
   | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
 
-export interface Program { decls: Decl[]; file: string }
+export interface Program { decls: Decl[]; file: string; errors?: FlowError[] }
