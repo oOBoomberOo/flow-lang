@@ -183,6 +183,16 @@ effect Audit {
 }
 ```
 
+An effect can pin its own placement, which is what the standard library does for
+the built-in capabilities (`std::prelude` declares `Server @ server`,
+`Client @ client`, `Store @ server`). A provider still wins when there is one:
+
+```flow
+effect Client @ client {
+  fn state<a>(init: a) -> Cell<a>
+}
+```
+
 Provide:
 
 ```flow

@@ -239,7 +239,7 @@ test("packages: manifest validation", () => {
 test("ffi: a std wrapper follows the placement of its call site", () => {
   const { entry } = packageWith({
     "main.flow": `use std::log::info
-effect Server { fn now() -> Int }
+effect Server @ server { fn now() -> Int }
 
 fn stamp() -> Int {
   info("stamping on the server");

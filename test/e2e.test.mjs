@@ -131,7 +131,7 @@ test("a server cut answers a subscription over the real transport", async () => 
 
 test("reactive cuts stream updates when their dependencies change", async () => {
   const src = `
-effect Server { fn now() -> Int }
+effect Server @ server { fn now() -> Int }
 fn main() -> Html {
   let t = Server.now();
   html { <p>{t}</p> }

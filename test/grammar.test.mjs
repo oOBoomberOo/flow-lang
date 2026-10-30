@@ -102,14 +102,14 @@ test("decl: generic impl", () => {
 });
 
 test("decl: effect declaration", () => {
-  D(`effect Server {
+  D(`effect Server @ server {
        fn now() -> Int
        fn secret(name: Str) -> Str
      }`);
 });
 
 test("decl: polymorphic effect operation", () => {
-  D(`effect Client { fn state<a>(init: a) -> Cell<a> }`);
+  D(`effect Client @ client { fn state<a>(init: a) -> Cell<a> }`);
 });
 
 test("decl: provide with implementation", () => {

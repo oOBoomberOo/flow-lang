@@ -94,8 +94,8 @@ function tmpFlow(src) {
 
 const uri = (file) => `file:///${path.resolve(file).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
-const GOOD = `effect Server { fn secret(k: Str) -> Str }
-effect Client { fn state<a>(init: a) -> Cell<a> }
+const GOOD = `effect Server @ server { fn secret(k: Str) -> Str }
+effect Client @ client { fn state<a>(init: a) -> Cell<a> }
 
 fn main() -> Html {
   let n = Client.state(0);

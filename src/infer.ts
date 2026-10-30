@@ -149,7 +149,7 @@ export class Infer {
     // where the calls are placed. Run both to a fixpoint.
     this.checkProvides(prog);
     for (const d of prog.decls) if (d.k === "Provide") this.registerProvide(d);
-    for (const e of this.mod.effects.values()) e.place = this.effectPlace(e.name);
+    this.applyProviderPlaces();
 
     for (let pass = 0; pass < 8; pass++) {
       const before = this.placementFingerprint();
@@ -157,7 +157,7 @@ export class Infer {
       for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.checkImplBodies(d));
       this.collect(() => this.checkProvides(prog));
       for (const d of prog.decls) if (d.k === "Provide") this.registerProvide(d);
-      for (const e of this.mod.effects.values()) e.place = this.effectPlace(e.name);
+      this.applyProviderPlaces();
       if (this.placementFingerprint() === before) break;
     }
 
@@ -289,32 +289,16 @@ export class Infer {
   registerEffect(d: Decl & { k: "Effect" }) {
     const ops = new Map<string, { sig: FnSig; ty: Type }>();
     for (const o of d.ops) ops.set(o.name, { sig: o, ty: this.resolveSig(o, new Map()) });
-    this.mod.effects.set(d.name, { name: d.name, ops, place: this.effectPlace(d.name) });
+    this.mod.effects.set(d.name, { name: d.name, ops, place: d.place ?? "server" });
   }
 
-  /** Capabilities the runtime always installs. */
-  private registerBuiltinEffect(name: string) {
-    const ZERO = { start: 0, end: 0, line: 1, col: 1 };
-    const ops = new Map<string, { sig: FnSig; ty: Type }>();
-    const add = (op: string, ty: Type) =>
-      ops.set(op, { sig: { name: op, typeParams: [], params: [], span: ZERO }, ty });
-
-    if (name === "Server") {
-      add("now", fnT([], INT));
-      add("secret", fnT([STR], STR));
-      add("log", fnT([STR], UNIT));
-      add("random", fnT([], FLOAT));
-    } else if (name === "Client") {
-      const a = fresh(0);
-      a.generic = true;
-      add("now", fnT([], INT));
-      add("state", fnT([a], cellOf(a)));
-      add("log", fnT([STR], UNIT));
-    } else {
-      add("get", fnT([STR], optionOf(STR)));
-      add("set", fnT([STR, STR], UNIT));
+  /** A provider decides where its effect runs; otherwise the declaration's
+   *  `@ client` / `@ server` annotation stands. */
+  private applyProviderPlaces() {
+    for (const e of this.mod.effects.values()) {
+      const p = this.mod.provides.get(e.name);
+      if (p) e.place = p.place;
     }
-    this.mod.effects.set(name, { name, ops, place: this.effectPlace(name) });
   }
 
   registerImpl(d: Decl & { k: "Impl" }) {
@@ -383,15 +367,6 @@ export class Infer {
       ops.set(o.name, o.fn);
     }
     this.mod.provides.set(d.effect, { effect: d.effect, ops, target: d.target, place });
-  }
-
-  effectPlace(name: string): Place {
-    const p = this.mod.provides.get(name);
-    if (p) return p.place;
-    // Capabilities that the runtime installs natively.
-    if (name === "Client") return "client";
-    if (name === "Server" || name === "Store") return "server";
-    return "server";
   }
 
   declareFn(d: Decl & { k: "Fn" }) {

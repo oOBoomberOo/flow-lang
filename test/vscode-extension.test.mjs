@@ -148,8 +148,8 @@ function loadExtension(env) {
   return { ext, restore: () => { Module._load = origLoad; } };
 }
 
-const SRC = `effect Server { fn secret(k: Str) -> Str }
-effect Client { fn state<a>(init: a) -> Cell<a> }
+const SRC = `effect Server @ server { fn secret(k: Str) -> Str }
+effect Client @ client { fn state<a>(init: a) -> Cell<a> }
 
 fn main() -> Html {
   let n = Client.state(0);

@@ -270,6 +270,12 @@ export class Parser {
   parseEffect(start: Token, pub = false): Decl {
     this.expectKw("effect");
     const name = this.expect("Con").value;
+    let place: Place | undefined;
+    if (this.eatSym("@")) {
+      const p = this.word();
+      if (p !== "client" && p !== "server") this.err(`unknown placement '${p}' (expected client|server)`);
+      place = p as Place;
+    }
     this.expectSym("{");
     const ops: FnSig[] = [];
     while (!this.atSym("}")) {
@@ -280,7 +286,7 @@ export class Parser {
       ops.push({ ...sig, span: this.spanFrom(t) });
     }
     this.expectSym("}");
-    return { k: "Effect", name, ops, pub, span: this.spanFrom(start) };
+    return { k: "Effect", name, ops, pub, place, span: this.spanFrom(start) };
   }
 
   parseProvide(start: Token): Decl {

@@ -5,11 +5,11 @@ effect Audit {
   fn record(msg: Str) -> Unit
 }
 
-effect Server {
+effect Server @ server {
   fn log(msg: Str) -> Unit
 }
 
-effect Client {
+effect Client @ client {
   fn state<a>(init: a) -> Cell<a>
 }
 

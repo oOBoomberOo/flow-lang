@@ -1,4 +1,4 @@
-effect Client {
+effect Client @ client {
   fn state<a>(init: a) -> Cell<a>
 }
 

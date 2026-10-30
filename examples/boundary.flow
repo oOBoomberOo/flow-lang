@@ -1,9 +1,9 @@
-effect Server {
+effect Server @ server {
   fn secret(name: Str) -> Str
   fn now() -> Int
 }
 
-effect Client {
+effect Client @ client {
   fn state<a>(init: a) -> Cell<a>
   fn now() -> Int
 }

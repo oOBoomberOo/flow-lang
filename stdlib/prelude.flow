@@ -13,20 +13,20 @@
 // ---------------------------------------------------------------- effects
 // Client/server authority is declared here, not injected by the compiler.
 
-pub effect Server {
+pub effect Server @ server {
   fn now() -> Int
   fn secret(name: Str) -> Str
   fn log(msg: Str) -> Unit
   fn random() -> Float
 }
 
-pub effect Client {
+pub effect Client @ client {
   fn now() -> Int
   fn state<a>(init: a) -> Cell<a>
   fn log(msg: Str) -> Unit
 }
 
-pub effect Store {
+pub effect Store @ server {
   fn get(key: Str) -> Option<Str>
   fn set(key: Str, value: Str) -> Unit
 }

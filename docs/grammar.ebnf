@@ -170,7 +170,7 @@ trait-decl      = 'trait' constructor [ type-params ] '{' { fn-signature [ ';' ]
 impl-decl       = 'impl' constructor [ type-args ] 'for' type '{' { impl-method } '}' ;
 impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
 
-effect-decl     = 'effect' constructor '{' { fn-signature [ ';' ] } '}' ;
+effect-decl     = 'effect' constructor [ '@' placement ] '{' { fn-signature [ ';' ] } '}' ;
 
 provide-decl    = 'provide' constructor [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
 provide-op      = identifier '=' expr [ ',' | ';' ] ;

@@ -116,7 +116,7 @@ ${page(`<p>{Show.show([1,2,3])}</p>`)}`);
 
 test("declared effect row must cover inferred effects", () => {
   bad(`
-effect Server { fn now() -> Int }
+effect Server @ server { fn now() -> Int }
 fn f() -> Int ! {} { Server.now() }
 ${page(`<p>{f()}</p>`)}`, /unhandled effect\(s\) \{Server\}/);
 });
@@ -144,7 +144,7 @@ test("a pure program is single-tier", () => {
 
 test("client state never crosses", () => {
   const r = ok(`
-effect Client { fn state<a>(init: a) -> Cell<a> }
+effect Client @ client { fn state<a>(init: a) -> Cell<a> }
 fn main() -> Html {
   let n = Client.state(0);
   html { <div>{if (n.get() > 0) { <b>{"hot"}</b> } else { <i>{"cold"}</i> }}</div> }
@@ -154,7 +154,7 @@ fn main() -> Html {
 
 test("server authority creates a server-side cut", () => {
   const r = ok(`
-effect Server { fn secret(k: Str) -> Str }
+effect Server @ server { fn secret(k: Str) -> Str }
 ${page(`<p>{Server.secret("k")}</p>`)}`);
   assert.equal(r.diagnostics.length, 1);
   assert.match(r.diagnostics[0], /server-side block/);
@@ -164,8 +164,8 @@ ${page(`<p>{Server.secret("k")}</p>`)}`);
 
 test("client code calling a server op inside an if keeps the if on the client", () => {
   const r = ok(`
-effect Server { fn secret(k: Str) -> Str }
-effect Client { fn state<a>(init: a) -> Cell<a> }
+effect Server @ server { fn secret(k: Str) -> Str }
+effect Client @ client { fn state<a>(init: a) -> Cell<a> }
 fn main() -> Html {
   let on = Client.state(false);
   html { <div>{if (on.get()) { <p>{Server.secret("k")}</p> } else { <p>{"no"}</p> }}</div> }
@@ -177,8 +177,8 @@ fn main() -> Html {
 
 test("server code can consume a client value (uplink)", () => {
   const r = ok(`
-effect Server { fn now() -> Int }
-effect Client { fn now() -> Int }
+effect Server @ server { fn now() -> Int }
+effect Client @ client { fn now() -> Int }
 ${page(`<p>{Server.now() - Client.now()}</p>`)}`);
   assert.equal(r.diagnostics.length, 2);
   assert.ok(r.diagnostics.some((d) => /client-side block/.test(d)));
@@ -188,7 +188,7 @@ ${page(`<p>{Server.now() - Client.now()}</p>`)}`);
 
 test("server value used in client arithmetic is cut only once", () => {
   const r = ok(`
-effect Server { fn now() -> Int }
+effect Server @ server { fn now() -> Int }
 fn main() -> Html {
   let t = Server.now();
   html { <p>{"a"}{t}</p> }
@@ -198,7 +198,7 @@ fn main() -> Html {
 
 test("a non-serializable value cannot cross", () => {
   bad(`
-effect Server { fn log(m: Str) -> Unit }
+effect Server @ server { fn log(m: Str) -> Unit }
 fn main() -> Html {
   let f = fn(x: Int) -> Int { x };
   html { <p>{Server.log(str(f))}</p> }
