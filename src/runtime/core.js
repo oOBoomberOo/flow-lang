@@ -316,6 +316,7 @@ export function createRuntime() {
   // The host surface reachable from `unsafe extern js` bindings.
   globalThis.__flow = {
     show: (x) => R.show(x),
+    eq: (a, b) => R.eq(a, b),
     get: (x) => R.get(x),
     set: (x, v) => R.set(x, v),
   };

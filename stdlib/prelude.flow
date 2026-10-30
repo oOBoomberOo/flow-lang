@@ -34,6 +34,7 @@ pub effect Store @ server {
 // ---------------------------------------------------------------- host access
 
 unsafe extern js fn host_show<a>(x: a) -> Str = "__flow.show"
+unsafe extern js fn host_eq<a>(x: a, y: a) -> Bool = "__flow.eq"
 unsafe extern js fn host_parse_int(s: Str) -> Int = "parseInt"
 unsafe extern js fn host_parse_float(s: Str) -> Float = "parseFloat"
 
@@ -100,5 +101,7 @@ fn charsFrom(s: Str, i: Int, n: Int, acc: List<Str>) -> List<Str> {
 // ---------------------------------------------------------------- conversions
 
 pub fn str<a>(x: a) -> Str { host_show(x) }
+pub fn eq<a>(x: a, y: a) -> Bool { host_eq(x, y) }
+pub fn neq<a>(x: a, y: a) -> Bool { not host_eq(x, y) }
 pub fn int(s: Str) -> Int { host_parse_int(s) }
 pub fn float(s: Str) -> Float { host_parse_float(s) }

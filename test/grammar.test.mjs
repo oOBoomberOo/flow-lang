@@ -295,3 +295,8 @@ test("errors carry line and column", () => {
     assert.ok(e.col >= 1);
   }
 });
+
+test("lexer: unsafe and extern are keywords", () => {
+  const kinds = lex("unsafe extern js").slice(0, 3).map((t) => t.kind);
+  assert.deepEqual(kinds, ["kw", "kw", "id"]);
+});

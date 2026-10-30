@@ -257,3 +257,12 @@ fn main() -> Html {
   assert.match(r.server, /R\.ffiCall\("console\.log"/);
   assert.equal(r.diagnostics.filter((d) => /server-side/.test(d)).length, 1);
 });
+
+test("ffi: equality is a std-level FFI primitive", () => {
+  const { entry } = packageWith({
+    "main.flow": `fn main() -> Html { html { <p>{str(1 == 1)}{str([1] == [1])}</p> } }\n`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /R\.ffiCall\("__flow\.eq"/);
+  assert.ok(!r.client.includes("R.eq("), "the compiler no longer emits R.eq");
+});

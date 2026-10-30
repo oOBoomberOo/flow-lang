@@ -413,8 +413,9 @@ export class Codegen {
   private emitBinary(e: Expr & { k: "Binary" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     const l = this.val(e.l, side, ctxHome, env);
     const r = this.val(e.r, side, ctxHome, env);
-    if (e.op === "==") return `R.eq(${l}, ${r})`;
-    if (e.op === "!=") return `(!R.eq(${l}, ${r}))`;
+    // Equality is a std-level primitive now: the host provides it through the FFI.
+    if (e.op === "==") return `R.ffiCall("__flow.eq", [${l}, ${r}])`;
+    if (e.op === "!=") return `(!R.ffiCall("__flow.eq", [${l}, ${r}]))`;
     if (e.op === "/") {
       const t = prune(this.mod.info.get(e)?.ty ?? { k: "var", id: -1, level: 0 });
       // Int / Int is integer division; the host provides the truncation.

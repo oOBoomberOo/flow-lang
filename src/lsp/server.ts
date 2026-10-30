@@ -392,7 +392,8 @@ function semanticTokens(uri: string): { data: number[] } {
 
 const KEYWORDS = [
   "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect",
-  "provide", "with", "use", "pub", "html", "true", "false", "and", "or", "not",
+  "provide", "with", "use", "pub", "unsafe", "extern", "html", "true", "false",
+  "and", "or", "not",
 ];
 
 const HTML_TAGS = [
@@ -450,8 +451,9 @@ const KEYWORD_SNIPPETS: Record<string, string> = {
   html: "html {\n\t${0}\n}",
   type: "type ${1:Name} =\n  | ${2:Variant}",
   trait: "trait ${1:Name}<a> {\n\tfn ${2:method}(x: a) -> ${3:Type}\n}",
-  effect: "effect ${1:Name} {\n\tfn ${2:op}() -> ${3:Type}\n}",
+  effect: "effect ${1:Name} @ ${2|client,server|} {\n\tfn ${3:op}() -> ${4:Type}\n}",
   provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
+  unsafe: "unsafe extern js fn ${1:name}(${2}) -> ${3:Type} = \"${4:Math.floor}\"",
   use: "use ${1:pkg}::${2:module}::{${3:name}}",
 };
 
