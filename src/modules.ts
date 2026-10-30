@@ -393,8 +393,13 @@ export class Linker {
     const out: { unit: SourceUnit }[] = [];
     for (const d of unit.program.decls) {
       if (d.k !== "Use") continue;
-      for (const ref of this.resolveUse(pkg, unit, d)) {
-        out.push({ unit: this.loadUnit(ref.pkg, ref.modulePath) });
+      try {
+        for (const ref of this.resolveUse(pkg, unit, d)) {
+          out.push({ unit: this.loadUnit(ref.pkg, ref.modulePath) });
+        }
+      } catch (e) {
+        if (this.recover && e instanceof FlowError) this.errors.push(e);
+        else throw e;
       }
     }
     return out;

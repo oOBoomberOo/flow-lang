@@ -199,6 +199,23 @@ fn main() -> Html { html { <p>{str(good())}{str(bad())}</p> } }
   } finally { c.proc.kill(); }
 });
 
+test("lsp: a broken import keeps the file analysable", async () => {
+  const text = `use nope::missing::{x}
+fn good() -> Int { 2 }
+fn main() -> Html { html { <p>{str(good())}</p> } }
+`;
+  const file = fileWith(text);
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, file, text);
+    const syms = await c.request("textDocument/documentSymbol", { textDocument: { uri: uri(file) } });
+    const names = syms.map((s) => s.name);
+    assert.ok(names.includes("good"));
+    assert.ok(names.includes("main"));
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: cell dot completion offers value/get/set/update", async () => {
   const text = `fn main() -> Html {
   let c = Client.state(0);
