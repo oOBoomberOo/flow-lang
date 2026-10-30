@@ -319,7 +319,7 @@ test("lsp: every type error is reported, not just the first", async () => {
     c.notify("textDocument/didOpen", { textDocument: { uri: uri(file), languageId: "flow", version: 1, text } });
     const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
     assert.equal(note.params.diagnostics.length, 2, `expected 2 diagnostics, got ${note.params.diagnostics.length}`);
-    assert.ok(note.params.diagnostics.some((d) => /type mismatch/.test(d.message)));
+    assert.ok(note.params.diagnostics.some((d) => /(left|right) operand of '\+'/.test(d.message)));
   } finally { c.proc.kill(); }
 });
 

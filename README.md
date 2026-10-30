@@ -80,7 +80,7 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **170 tests** across grammar, types, boundaries, modules, packages,
+Tests: `npm test` — **189 tests** across grammar, types, boundaries, modules, packages,
 the language server, HTTP capabilities, network capabilities, filesystem capabilities,
 algebraic effects, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 

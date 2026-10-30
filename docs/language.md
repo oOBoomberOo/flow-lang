@@ -543,7 +543,14 @@ bad.flow:12:14 — [E_TYPE] non-exhaustive match on Shape: missing Triangle
   in fn area
 
 $ flow check bad.flow
-bad.flow:9:20 — [E_TYPE] type mismatch: Int vs Str
+bad.flow:5:17 — [E_TYPE] return type mismatch in fn f: expected Str, got Int
+  in fn f
+
+$ flow check bad.flow
+bad.flow:1:11 — [E_TYPE] unknown type 'str' — 'str' is a value, not a type; did you mean 'Str'?
+
+$ flow check bad.flow
+bad.flow:9:20 — [E_TYPE] right operand of '+' (left is Int): expected Int, got Str
   in argument 1
   in fn main
 
@@ -553,6 +560,21 @@ boundary: functions are not serializable across the boundary
 ```
 
 Error codes: `E_LEX`, `E_PARSE`, `E_TYPE`, `E_SPLIT`, `E_ENTRY`.
+
+Diagnostics point at the expression that is wrong, not at the enclosing function:
+
+* a returned value is checked against the declared return type at the **tail
+  expression** (`return type mismatch …`);
+* `if` branches report the offending `else`, match arms the offending arm, call
+  arguments the argument (with `in argument N`), and `let` annotations the value;
+* an undeclared lowercase type name is an error (`unknown type 'str'` with a
+  suggested fix) instead of silently becoming a fresh type variable — type
+  parameters must be declared (`fn f<a>(x: a)`);
+* unknown effect labels and trait bounds, effect row variables, duplicate
+  declarations/parameters/fields/impls, wrong builtin type arity, and impl methods
+  that do not exist or do not match the trait signature are rejected;
+* errors raised inside a function keep their original line/column (the
+  `in fn …` wrapper only adds context).
 
 `flow explain` reports, for every function, its inferred placement and effect row, plus every
 cut with its mode, line, dependencies and type.

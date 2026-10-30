@@ -412,21 +412,34 @@ export class Parser {
   parseEffRow(): EffRow {
     const start = this.tok;
     const effects: string[] = [];
+    const spans: { name: string; span: Span }[] = [];
     let rowVar: string | undefined;
+    let varSpan: Span | undefined;
     if (this.eatSym("{")) {
       if (!this.atSym("}")) {
         do {
-          if (this.tok.kind === "id") { rowVar = this.next().value; break; }
-          effects.push(this.expect("Con").value);
+          if (this.tok.kind === "id") {
+            const tv = this.tok;
+            rowVar = this.next().value;
+            varSpan = this.spanFrom(tv);
+            break;
+          }
+          const t = this.tok;
+          const name = this.expect("Con").value;
+          effects.push(name);
+          spans.push({ name, span: this.spanFrom(t) });
         } while (this.eatSym(","));
       }
       this.expectSym("}");
     } else {
       // bare effect:  ! Server
-      effects.push(this.expect("Con").value);
+      const t = this.tok;
+      const name = this.expect("Con").value;
+      effects.push(name);
+      spans.push({ name, span: this.spanFrom(t) });
     }
     void start;
-    return { effects, var: rowVar };
+    return { effects, var: rowVar, varSpan, spans };
   }
 
   parseType(): TypeExpr {

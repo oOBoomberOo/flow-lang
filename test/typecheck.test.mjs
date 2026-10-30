@@ -18,7 +18,7 @@ test("string concatenation", () => {
 });
 
 test("arithmetic on a string is a type error", () => {
-  bad(page(`<p>{1 + "a"}</p>`), /type mismatch: (Int vs Str|Str vs Int)/);
+  bad(page(`<p>{1 + "a"}</p>`), /right operand of '\+' \(left is Int\): expected Int, got Str/);
 });
 
 test("condition must be Bool", () => {
@@ -55,7 +55,7 @@ test("match arms must agree on a type", () => {
   bad(`
 type C = A | B
 fn f(c: C) -> Str { match c { A => "a", B => 1 } }
-${page(`<p>{f(A)}</p>`)}`, /type mismatch/);
+${page(`<p>{f(A)}</p>`)}`, /match arm returns Int, but the other arms return Str/);
 });
 
 test("list patterns bind head and tail", () => {
@@ -217,7 +217,7 @@ ${page(`<Card title={"t"}><p>{"body"}</p></Card>`)}`);
 });
 
 test("event handlers must take an Event", () => {
-  bad(page(`<button onClick={fn(x: Int) { 1 }}>{"x"}</button>`), /type mismatch/);
+  bad(page(`<button onClick={fn(x: Int) { 1 }}>{"x"}</button>`), /event handler 'onClick': expected \(Event\) -> Unit, got \(Int\) -> Int/);
 });
 
 test("adt values in html holes render structurally", () => {

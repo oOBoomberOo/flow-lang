@@ -12,7 +12,7 @@
 
 import { FlowError } from "./lexer.ts";
 import type {
-  Decl, Expr, FnSig, HtmlNode, Param, Pattern, Program, TypeExpr, EffRow, Place,
+  Decl, Expr, FnSig, HtmlNode, Param, Pattern, Program, TypeExpr, EffRow, Place, Span,
 } from "./ast.ts";
 import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
@@ -32,6 +32,8 @@ export interface TraitInfo {
   name: string; params: string[];
   /** type parameters used as type constructors (`f<a>`) */
   ctorParams: Set<string>;
+  /** the trait's parameter variables, as they appear in method signatures */
+  paramVars: Map<string, Type>;
   methods: Map<string, { sig: FnSig; ty: Type }>;
 }
 
@@ -71,6 +73,8 @@ export function annotatedPlace(te: TypeExpr | undefined): AnnPlace | undefined {
 export interface FnInfo {
   name: string; scheme: Type; params: Param[]; ret?: TypeExpr;
   eff?: EffRow; body?: Expr; pub: boolean; synthetic?: boolean;
+  /** declared type parameters, resolved to their scheme variables */
+  typeParams?: Map<string, Type>;
   /** top-level placement annotations on the signature, if written */
   paramPlaces?: (AnnPlace | undefined)[];
   retPlace?: AnnPlace;
@@ -131,6 +135,8 @@ const BUILTIN_TYPES = new Set([
 export class Infer {
   mod: Module;
   env = new Map<string, EnvEntry>();
+  /** type parameters of the declaration whose body is being checked */
+  typeParams = new Map<string, Type>();
   /** type-variable id -> dictionary parameter name while checking a body */
   currentDicts = new Map<number, string>();
 
@@ -176,11 +182,13 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   run(prog: Program): Module {
+    this.checkDuplicateDeclarations(prog);
     for (const d of prog.decls) {
       if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") this.registerType(d);
       if (d.k === "Trait") this.registerTrait(d);
       if (d.k === "Effect") this.registerEffect(d);
     }
+    this.checkDeclaredRows(prog);
     for (const d of prog.decls) if (d.k === "Adt") this.registerCtors(d);
     for (const d of prog.decls) if (d.k === "Impl") this.registerImpl(d);
     for (const d of prog.decls) if (d.k === "Fn") this.declareFn(d);
@@ -273,6 +281,169 @@ export class Infer {
   /* declarations                                                     */
   /* ---------------------------------------------------------------- */
 
+  /** Two declarations of the same name in one file are always a mistake; the
+   *  linker renames across modules, so equal names here mean one file. */
+  private checkDuplicateDeclarations(prog: Program) {
+    const seen = new Map<string, Decl>();
+    for (const d of prog.decls) {
+      let name: string | null = null;
+      if (d.k === "Fn" || d.k === "Adt" || d.k === "RecordType" || d.k === "Alias" || d.k === "Trait" || d.k === "Effect") name = d.name;
+      if (d.k === "Extern") name = d.sig.name;
+      if (!name || d.k === "Effect") continue; // effect declarations merge
+      const key = `${d.span?.file ?? prog.file}\u0000${name}`;
+      const prev = seen.get(key);
+      if (prev) {
+        this.fail(`duplicate declaration '${name}' (first declared at line ${prev.span?.line ?? "?"})`, d.span);
+      }
+      seen.set(key, d);
+    }
+  }
+
+  /** Validate rows and signatures once every effect and trait is known. */
+  private checkDeclaredRows(prog: Program) {
+    for (const d of prog.decls) {
+      switch (d.k) {
+        case "Fn":
+          this.checkSigRows(d);
+          break;
+        case "Extern":
+          this.checkSigRows(d.sig);
+          break;
+        case "Effect":
+          for (const op of d.ops) this.checkSigRows(op);
+          break;
+        case "Trait":
+          this.checkBounds(d.params, d.paramBounds, d.span);
+          for (const m of d.methods) this.checkSigRows(m);
+          break;
+        case "Impl": {
+          const names = new Set<string>();
+          for (const w of d.where ?? []) {
+            if (names.has(w.name)) this.fail(`duplicate impl parameter '${w.name}'`, d.span);
+            names.add(w.name);
+            for (const b of w.bounds) {
+              if (!this.mod.traits.has(b)) this.fail(`unknown trait '${b}' in the bounds of '${w.name}'${this.traitHint(b)}`, d.span);
+            }
+          }
+          for (const m of d.methods) this.checkSigRows(m);
+          break;
+        }
+        case "Adt":
+          this.checkBounds(d.params, d.paramBounds, d.span);
+          for (const v of d.variants) for (const a of v.args) this.checkTypeRows(a);
+          break;
+        case "RecordType": {
+          this.checkBounds(d.params, d.paramBounds, d.span);
+          const params = new Map<string, Type>();
+          for (const p of d.params) { const v = fresh(0); v.generic = true; params.set(p, v); }
+          const seenFields = new Set<string>();
+          for (const f of d.fields) {
+            if (seenFields.has(f.name)) this.fail(`duplicate field '${f.name}' in record type ${d.name}`, f.type.span);
+            seenFields.add(f.name);
+            this.checkTypeRows(f.type);
+            this.resolveType(f.type, params);
+          }
+          break;
+        }
+        case "Alias": {
+          this.checkBounds(d.params, d.paramBounds, d.span);
+          const params = new Map<string, Type>();
+          for (const p of d.params) { const v = fresh(0); v.generic = true; params.set(p, v); }
+          this.checkTypeRows(d.type);
+          this.resolveType(d.type, params);
+          break;
+        }
+        case "Provide":
+          if (d.target) this.resolveType(d.target, new Map());
+          break;
+      }
+    }
+  }
+
+  private checkSigRows(s: FnSig) {
+    this.checkBounds(s.typeParams, s.paramBounds, s.span);
+    const typeParams = new Set<string>();
+    for (const tp of s.typeParams ?? []) {
+      if (typeParams.has(tp)) this.fail(`duplicate type parameter '${tp}'`, s.span);
+      typeParams.add(tp);
+    }
+    const names = new Set<string>();
+    for (const p of s.params) {
+      if (names.has(p.name)) this.fail(`duplicate parameter '${p.name}' in '${s.name}'`, p.span);
+      names.add(p.name);
+      this.checkTypeRows(p.type);
+    }
+    this.checkTypeRows(s.ret);
+    this.checkEffectRow(s.eff, s.span);
+  }
+
+  private checkTypeRows(te: TypeExpr | undefined) {
+    if (!te) return;
+    switch (te.k) {
+      case "TVar": return;
+      case "TCon": for (const a of te.args) this.checkTypeRows(a); return;
+      case "TFun":
+        for (const p of te.params) this.checkTypeRows(p);
+        this.checkTypeRows(te.ret);
+        this.checkEffectRow(te.eff, te.span);
+        return;
+      case "TRecord":
+        for (const f of te.fields) this.checkTypeRows(f.type);
+        return;
+      case "TTuple": for (const i of te.items) this.checkTypeRows(i); return;
+      case "TPlaced": this.checkTypeRows(te.inner); return;
+    }
+  }
+
+  private checkEffectRow(row: EffRow | undefined, span: Span) {
+    if (row?.var) {
+      this.fail(
+        `effect row variables are not supported (found '${row.var}'): list the effects explicitly`,
+        row.varSpan ?? span,
+      );
+    }
+    for (const label of row?.effects ?? []) {
+      if (!this.mod.effects.has(label)) {
+        const at = row?.spans?.find((s) => s.name === label)?.span ?? span;
+        this.fail(`unknown effect '${label}'${this.effectHint(label)}`, at);
+      }
+    }
+  }
+
+  private checkBounds(params: string[] | undefined, bounds: Record<string, string[]> | undefined, span: Span) {
+    this.checkParamList(params, span);
+    if (!bounds) return;
+    const declared = new Set(params ?? []);
+    for (const [param, list] of Object.entries(bounds)) {
+      if (!declared.has(param)) this.fail(`bound on undeclared type parameter '${param}'`, span);
+      for (const b of list) {
+        if (!this.mod.traits.has(b)) this.fail(`unknown trait '${b}' in the bounds of '${param}'${this.traitHint(b)}`, span);
+      }
+    }
+  }
+
+  private checkParamList(params: string[] | undefined, span: Span) {
+    const seen = new Set<string>();
+    for (const p of params ?? []) {
+      if (seen.has(p)) this.fail(`duplicate type parameter '${p}'`, span);
+      seen.add(p);
+    }
+  }
+
+  private effectHint(name: string): string {
+    const lower = name.toLowerCase();
+    const near = [...this.mod.effects.keys()].find((k) => k.toLowerCase() === lower) ??
+      [...this.mod.effects.keys()].find((k) => editDistance(k.toLowerCase(), lower) <= 2);
+    return near ? ` — did you mean '${near}'?` : "";
+  }
+
+  private traitHint(name: string): string {
+    const lower = name.toLowerCase();
+    const near = [...this.mod.traits.keys()].find((k) => k.toLowerCase() === lower) ??
+      [...this.mod.traits.keys()].find((k) => editDistance(k.toLowerCase(), lower) <= 2);
+    return near ? ` — did you mean '${near}'?` : "";
+  }
+
   registerType(d: Decl) {
     if (d.k === "Adt") this.mod.typeDefs.set(d.name, { params: d.params, kind: "adt", decl: d });
     if (d.k === "RecordType") this.mod.typeDefs.set(d.name, { params: d.params, kind: "record", decl: d });
@@ -280,7 +451,11 @@ export class Infer {
   }
 
   registerCtors(d: Decl & { k: "Adt" }) {
+    const variants = new Set<string>();
     for (const v of d.variants) {
+      if (variants.has(v.name)) this.fail(`duplicate constructor '${v.name}' in type ${d.name}`, v.span);
+      variants.add(v.name);
+      if (this.mod.ctors.has(v.name)) this.fail(`duplicate constructor '${v.name}' (already declared)`, v.span);
       const params = new Map<string, Type>();
       for (const p of d.params) { const tv = fresh(0); tv.generic = true; params.set(p, tv); }
       const argTypes = v.args.map((a) => this.resolveType(a, params));
@@ -329,7 +504,7 @@ export class Infer {
       methods.set(m.name, { sig: m, ty });
       this.mod.methodIndex.set(m.name, d.name);
     }
-    this.mod.traits.set(d.name, { name: d.name, params: d.params, ctorParams, methods });
+    this.mod.traits.set(d.name, { name: d.name, params: d.params, ctorParams, paramVars: params, methods });
   }
 
   registerEffect(d: Decl & { k: "Effect" }) {
@@ -367,11 +542,19 @@ export class Infer {
     const implParams = new Map<string, Type>();
     const dicts: DictParam[] = [];
 
-    // `where a: Trait` gives the impl's type variables their dictionaries.
-    for (const w of d.where ?? []) {
+    // 1. the trait's type parameters, so method signatures can name them
+    const traitInfo = this.mod.traits.get(d.trait);
+    for (const p of traitInfo?.params ?? []) {
       const v = fresh(0);
       v.generic = true;
-      v.bounds = [...w.bounds];
+      implParams.set(p, v);
+    }
+
+    // 2. `where a: Trait` gives the impl's type variables their dictionaries.
+    for (const w of d.where ?? []) {
+      const v = implParams.get(w.name) ?? fresh(0);
+      v.generic = true;
+      v.bounds = [...new Set([...(v.bounds ?? []), ...w.bounds])];
       implParams.set(w.name, v);
       for (const b of w.bounds) {
         dicts.push({ trait: b, typeParam: w.name, name: dictParamName(b, w.name), varId: v.id });
@@ -381,10 +564,68 @@ export class Infer {
     const targetType = this.resolveType(d.target, implParams);
     for (const v of implParams.values()) if (v.k === "var") v.generic = true;
 
+    const clash = this.mod.impls.find((im) =>
+      im.trait === d.trait && im.targetType && typeStr(im.targetType) === typeStr(targetType));
+    if (clash) {
+      this.fail(`duplicate impl of ${d.trait} for ${typeStr(targetType)}`, d.span);
+    }
+
+    const implNames = new Set(d.methods.map((m) => m.name));
+    if (!traitInfo) this.fail(`impl for unknown trait '${d.trait}'`, d.span);
+    for (const m of d.methods) {
+      if (traitInfo && !traitInfo.methods.has(m.name)) {
+        this.fail(`trait ${d.trait} has no method '${m.name}'`, m.span);
+      }
+    }
+    if (traitInfo) {
+      const missing = [...traitInfo.methods.keys()].filter((name) => !implNames.has(name));
+      if (missing.length) {
+        this.fail(
+          `impl ${d.trait} for ${typeStr(targetType)} is missing method(s) ${missing.sort().join(", ")}`,
+          d.span,
+        );
+      }
+    }
+
     for (const m of d.methods) {
       const fname = implFnName(d.trait, index, m.name);
       const scheme = this.resolveSig(m, implParams);
       markGeneric(scheme);
+      const traitMethod = traitInfo?.methods.get(m.name);
+      if (traitMethod) {
+        const before = snapshotSubst();
+        try {
+          // Split the impl's type parameters the same way dispatch does: the
+          // impl target must be the trait method's receiver. Then the rest of
+          // the signature has to line up exactly.
+          if (traitInfo) {
+            if (d.traitArgs.length && d.traitArgs.length !== traitInfo.params.length) {
+              this.fail(
+                `impl ${d.trait} expects ${traitInfo.params.length} trait argument(s), got ${d.traitArgs.length}`,
+                d.span,
+              );
+            }
+            const tm = traitMethod.ty;
+            if (tm.k === "fun" && tm.params.length > 0) {
+              const receiver = traitInfo.ctorParams.size > 0
+                ? headConstructor(tm.params[0]!)
+                : tm.params[0]!;
+              unify(targetType, receiver);
+            }
+          }
+          unify(scheme, traitMethod.ty);
+        } catch (err) {
+          restoreSubst(before);
+          if (err instanceof FlowError) {
+            this.fail(
+              `impl ${d.trait}.${m.name} does not match the trait signature: ${err.message}`,
+              m.span,
+            );
+          }
+          throw err;
+        }
+        restoreSubst(before);
+      }
       mangled.set(m.name, fname);
       methods.set(m.name, { params: m.params, ret: m.ret, eff: m.eff, body: m.body });
       this.mod.fns.set(fname, {
@@ -393,6 +634,7 @@ export class Infer {
         paramPlaces: m.params.map((p) => annotatedPlace(p.type)),
         retPlace: annotatedPlace(m.ret),
         dicts,
+        typeParams: implParams,
       });
     }
     this.mod.impls.push({
@@ -482,6 +724,7 @@ export class Infer {
       paramPlaces: d.params.map((p) => annotatedPlace(p.type)),
       retPlace: annotatedPlace(d.ret),
       dicts,
+      typeParams: params,
     });
   }
 
@@ -553,8 +796,10 @@ export class Infer {
 
     const saved = this.env;
     const savedDicts = this.currentDicts;
+    const savedTypeParams = this.typeParams;
     this.env = new Map(saved);
     this.currentDicts = new Map((info.dicts ?? []).map((d) => [d.varId, d.name]));
+    this.typeParams = info.typeParams ?? new Map();
     for (let i = 0; i < params.length; i++) {
       const p = params[i]!;
       this.env.set(p.name, { ty: t.params[i]!, envVars: new Set(), place: "neutral" });
@@ -565,13 +810,37 @@ export class Infer {
     } catch (e) {
       this.env = saved;
       this.currentDicts = savedDicts;
-      if (e instanceof FlowError) this.fail(`${e.message}\n  in fn ${name}`, e.span ? { line: e.span.line, col: e.span.col } : undefined);
+      this.typeParams = savedTypeParams;
+      if (e instanceof FlowError) {
+        this.fail(
+          `${e.message}\n  in fn ${name}`,
+          e.line != null ? { line: e.line, col: e.col ?? 1, file: e.file } : undefined,
+        );
+      }
       throw e;
     }
     this.currentDicts = savedDicts;
     this.checkPlacement(info.retPlace, r.place, body.span, `fn ${name}`);
+
+    // The return type is checked against the *tail* expression, not the whole
+    // function body: a wrong literal should be underlined where it is written.
+    const before = snapshotSubst();
     try {
       unify(r.ty, t.ret);
+    } catch (e) {
+      restoreSubst(before);
+      this.env = saved;
+      this.typeParams = savedTypeParams;
+      if (e instanceof FlowError) {
+        this.fail(
+          `return type mismatch in fn ${name}: expected ${typeStr(t.ret)}, got ${typeStr(r.ty)}`,
+          tailSpan(body),
+        );
+      }
+      throw e;
+    }
+
+    try {
       if (declaredEff) {
         const declared = new Set(declaredEff.effects);
         const extra = [...r.eff.labels].filter((l) => !declared.has(l));
@@ -587,10 +856,12 @@ export class Infer {
       }
     } catch (e) {
       this.env = saved;
-      if (e instanceof FlowError) this.fail(`${e.message}\n  in fn ${name}`, body.span);
+      this.currentDicts = savedDicts;
+      this.typeParams = savedTypeParams;
       throw e;
     }
     this.env = saved;
+    this.typeParams = savedTypeParams;
     this.mod.info.set(body, r);
   }
 
@@ -613,13 +884,28 @@ export class Infer {
     return fnT(ps, ret, eff);
   }
 
+  /** A type name that is not declared: suggest a case fix and note value/type confusion. */
+  private typeHint(name: string): string {
+    const known = [...BUILTIN_TYPES, ...this.mod.typeDefs.keys(), ...this.mod.traits.keys()];
+    const lower = name.toLowerCase();
+    const near = known.find((k) => k.toLowerCase() === lower) ??
+      known.find((k) => editDistance(k.toLowerCase(), lower) <= 2);
+    const isValue = this.mod.fns.has(name) || this.mod.ctors.has(name);
+    const parts: string[] = [];
+    if (isValue) parts.push(`'${name}' is a value, not a type`);
+    if (near) parts.push(`did you mean '${near}'?`);
+    return parts.length ? ` — ${parts.join("; ")}` : "";
+  }
+
   resolveType(te: TypeExpr, params: Map<string, Type>): Type {
     switch (te.k) {
       case "TVar": {
         if (params.has(te.name)) return params.get(te.name)!;
-        const t = fresh(0);
-        params.set(te.name, t);
-        return t;
+        // Lowercase names in type position are type variables, but only if they
+        // were declared (`fn f<a>(x: a)`). Otherwise `fn f() -> str` would
+        // silently quantify a fresh variable instead of reporting a misspelling.
+        if (this.typeParams.has(te.name)) return this.typeParams.get(te.name)!;
+        this.fail(`unknown type '${te.name}'${this.typeHint(te.name)}`, te.span);
       }
       case "TCon": {
         // A type parameter applied to arguments is a higher-kinded application:
@@ -631,12 +917,17 @@ export class Infer {
         }
         const def = this.mod.typeDefs.get(te.name);
         if (te.name === "List") {
+          if (te.args.length > 1) this.fail(`type 'List' expects 1 type argument, got ${te.args.length}`, te.span);
           return te.args.length ? listOf(this.resolveType(te.args[0]!, params)) : con("List");
         }
         if (te.name === "Cell") {
+          if (te.args.length > 1) this.fail(`type 'Cell' expects 1 type argument, got ${te.args.length}`, te.span);
           return te.args.length ? cellOf(this.resolveType(te.args[0]!, params)) : con("Cell");
         }
-        if (te.name === "Event") return con("Event");
+        if (te.name === "Event") {
+          if (te.args.length) this.fail(`type 'Event' takes no type arguments`, te.span);
+          return con("Event");
+        }
         if (def && def.kind === "alias") {
           const d = def.decl as Decl & { k: "Alias" };
           const inner = new Map<string, Type>();
@@ -655,7 +946,11 @@ export class Infer {
           this.fail(`${te.name} expects ${def.params.length} type argument(s)`);
         }
         if (!def && !BUILTIN_TYPES.has(te.name)) {
-          this.fail(`unknown type '${te.name}'`);
+          this.fail(`unknown type '${te.name}'${this.typeHint(te.name)}`, te.span);
+        }
+        if (te.name === "Int" || te.name === "Float" || te.name === "Str" || te.name === "Bool" ||
+            te.name === "Unit" || te.name === "Html" || te.name === "Dom") {
+          if (te.args.length) this.fail(`type '${te.name}' takes no type arguments`, te.span);
         }
         return con(te.name, ...te.args.map((a) => this.resolveType(a, params)));
       }
@@ -667,7 +962,12 @@ export class Infer {
         );
       case "TRecord": {
         const fields: Record<string, Type> = {};
-        for (const f of te.fields) fields[f.name] = this.resolveType(f.type, params);
+        const seen = new Set<string>();
+        for (const f of te.fields) {
+          if (seen.has(f.name)) this.fail(`duplicate field '${f.name}' in record type`, te.span);
+          seen.add(f.name);
+          fields[f.name] = this.resolveType(f.type, params);
+        }
         return { k: "rec", fields };
       }
       case "TTuple":
@@ -715,14 +1015,18 @@ export class Infer {
       case "Lam": {
         const saved = this.env;
         this.env = new Map(saved);
+        const seenParams = new Set<string>();
         const paramTypes = e.params.map((p) => {
-          const t = this.resolveType(p.type, new Map());
+          if (seenParams.has(p.name)) this.fail(`duplicate parameter '${p.name}'`, p.span);
+          seenParams.add(p.name);
+          const t = this.resolveType(p.type, this.typeParams);
           this.env.set(p.name, { ty: t, envVars: new Set(), place: "neutral" });
           return t;
         });
+        this.checkEffectRow(e.eff, e.span);
         const body = this.infer(e.body);
         this.env = saved;
-        const ret = e.ret ? this.resolveType(e.ret, new Map()) : body.ty;
+        const ret = e.ret ? this.resolveType(e.ret, this.typeParams) : body.ty;
         const eff: Eff = { labels: new Set(body.eff.labels) };
         if (e.eff) for (const l of e.eff.effects) eff.labels.add(l);
         return { ty: fnT(paramTypes, ret, eff), place: body.place, eff: { labels: new Set() } };
@@ -735,7 +1039,18 @@ export class Infer {
         this.expectType(c.ty, BOOL, e.cond, "if condition");
         const t = this.infer(e.then);
         const f = this.infer(e.else);
-        unify(t.ty, f.ty);
+        const before = snapshotSubst();
+        try { unify(t.ty, f.ty); }
+        catch (err) {
+          restoreSubst(before);
+          if (err instanceof FlowError) {
+            this.fail(
+              `if branches have different types: then is ${typeStr(t.ty)}, else is ${typeStr(f.ty)}`,
+              tailSpan(e.else),
+            );
+          }
+          throw err;
+        }
         return { ty: t.ty, place: joinPlace(joinPlace(c.place, t.place), f.place), eff: mergeEff(c.eff, t.eff, f.eff) };
       }
 
@@ -744,7 +1059,7 @@ export class Infer {
       case "Let": {
         const v = this.infer(e.value);
         if (e.ann) {
-          unify(v.ty, this.resolveType(e.ann, new Map()));
+          this.checkAnnotation(v.ty, this.resolveType(e.ann, this.typeParams), e.name, e.value.span);
           this.checkPlacement(annotatedPlace(e.ann), v.place, e.ann.span, `'${e.name}'`);
         }
         const envVars = new Set<number>();
@@ -760,9 +1075,12 @@ export class Infer {
 
       case "Record": {
         const fields: Record<string, Type> = {};
+        const seenFields = new Set<string>();
         let place: Place = "neutral";
         let eff = emptyEff();
         for (const f of e.fields) {
+          if (seenFields.has(f.name)) this.fail(`duplicate field '${f.name}' in record literal`, f.value.span);
+          seenFields.add(f.name);
           const r = this.infer(f.value);
           fields[f.name] = r.ty;
           place = joinPlace(place, r.place);
@@ -815,7 +1133,7 @@ export class Infer {
         let eff = emptyEff();
         for (const i of e.items) {
           const r = this.infer(i);
-          unify(r.ty, el);
+          this.unifyArg(r.ty, el, i.span, "list elements must share a type");
           place = joinPlace(place, r.place);
           eff = mergeEff(eff, r.eff);
         }
@@ -833,7 +1151,7 @@ export class Infer {
           if (inst.k === "fun") {
             e.args.forEach((a, i) => {
               const r = this.infer(a);
-              unify(r.ty, inst.params[i]!);
+              this.unifyArg(r.ty, inst.params[i]!, a.span, `constructor ${e.name} argument ${i + 1}`);
               place = joinPlace(place, r.place);
               eff = mergeEff(eff, r.eff);
             });
@@ -877,7 +1195,7 @@ export class Infer {
           if (s.k === "LetStmt") {
             const v = this.infer(s.value);
             if (s.ann) {
-              unify(v.ty, this.resolveType(s.ann, new Map()));
+              this.checkAnnotation(v.ty, this.resolveType(s.ann, this.typeParams), s.name, s.value.span);
               this.checkPlacement(annotatedPlace(s.ann), v.place, s.ann.span, `'${s.name}'`);
             }
             this.env.set(s.name, { ty: v.ty, envVars: new Set(), place: v.place });
@@ -1103,7 +1421,7 @@ export class Infer {
         let argEff = emptyEff();
         e.args.forEach((a, i) => {
           const r = this.infer(a);
-          unify(r.ty, inst.params[i]!);
+          this.unifyArg(r.ty, inst.params[i]!, a.span, `${qual}.${op} argument ${i + 1}`);
           place = joinPlace(place, r.place);
           argEff = mergeEff(argEff, r.eff);
         });
@@ -1209,7 +1527,7 @@ export class Infer {
     let eff: Eff = { labels: new Set(inst.eff.labels) };
     args.forEach((a, i) => {
       const r = this.infer(a);
-      unify(r.ty, inst.params[i]!);
+      this.unifyArg(r.ty, inst.params[i]!, a.span, `${traitName}.${method} argument ${i + 1}`);
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
@@ -1298,7 +1616,18 @@ export class Infer {
         place = joinPlace(place, g.place);
       }
       const b = this.infer(arm.body);
-      unify(b.ty, result);
+      const beforeArm = snapshotSubst();
+      try { unify(b.ty, result); }
+      catch (err) {
+        restoreSubst(beforeArm);
+        if (err instanceof FlowError) {
+          this.fail(
+            `match arm returns ${typeStr(b.ty)}, but the other arms return ${typeStr(result)}`,
+            tailSpan(arm.body),
+          );
+        }
+        throw err;
+      }
       place = joinPlace(place, b.place);
       eff = mergeEff(eff, b.eff);
       this.env = saved;
@@ -1325,24 +1654,24 @@ export class Infer {
       case "PVar": this.env.set(p.name, { ty, envVars: new Set(), place: "neutral" }); return;
       case "PLit": {
         const lt = p.lit.k === "Int" ? INT : p.lit.k === "Str" ? STR : BOOL;
-        unify(ty, lt); return;
+        this.unifyArg(ty, lt, p.span, "pattern does not match the scrutinee"); return;
       }
       case "PTuple": {
         const items = p.items.map(() => fresh(0));
-        unify(ty, { k: "tuple", items });
+        this.unifyArg(ty, { k: "tuple", items }, p.span, "tuple pattern does not match the scrutinee");
         p.items.forEach((q, i) => this.bindPattern(q, items[i]!, seen));
         return;
       }
       case "PRecord": {
         const fields: Record<string, Type> = {};
         for (const f of p.fields) fields[f.name] = fresh(0);
-        unify(ty, { k: "rec", fields, open: true });
+        this.unifyArg(ty, { k: "rec", fields, open: true }, p.span, "record pattern does not match the scrutinee");
         for (const f of p.fields) this.bindPattern(f.pat, fields[f.name]!, seen);
         return;
       }
       case "PList": {
         const el = fresh(0);
-        unify(ty, listOf(el));
+        this.unifyArg(ty, listOf(el), p.span, "list pattern does not match the scrutinee");
         for (const q of p.items) this.bindPattern(q, el, seen);
         if (p.rest) this.env.set(p.rest, { ty: listOf(el), envVars: new Set(), place: "neutral" });
         return;
@@ -1354,7 +1683,7 @@ export class Infer {
         const inst = instantiate(c.scheme, 0);
         const result = inst.k === "fun" ? inst.ret : inst;
         const argTypes = inst.k === "fun" ? inst.params : [];
-        unify(ty, result);
+        this.unifyArg(ty, result, p.span, `pattern ${p.name} does not match the scrutinee`);
         if (p.args.length !== argTypes.length) this.fail(`constructor ${p.name} expects ${argTypes.length} pattern argument(s)`, p.span);
         p.args.forEach((q, i) => this.bindPattern(q, argTypes[i]!, seen));
         return;
@@ -1368,6 +1697,8 @@ export class Infer {
     const op = e.op;
     const place = joinPlace(l.place, r.place);
     const eff = mergeEff(l.eff, r.eff);
+    const left = () => typeStr(l.ty);
+    const right = () => typeStr(r.ty);
 
     if (op === "and" || op === "or" || op === "&&" || op === "||") {
       this.expectType(l.ty, BOOL, e.l, `operand of ${op}`);
@@ -1375,27 +1706,32 @@ export class Infer {
       return { ty: BOOL, place, eff };
     }
     if (op === "==" || op === "!=") {
-      unify(l.ty, r.ty);
+      this.unifyArg(l.ty, r.ty, e.r.span, `operands of '${op}' must share a type (left is ${left()}, right is ${right()})`);
       return { ty: BOOL, place, eff };
     }
     if (["<", "<=", ">", ">="].includes(op)) {
       const lt = prune(l.ty);
-      if (lt.k === "con" && lt.name === "Float") unify(r.ty, FLOAT);
-      else if (lt.k === "con" && lt.name === "Str") unify(r.ty, STR);
-      else { unify(l.ty, INT); unify(r.ty, INT); }
+      if (lt.k === "con" && lt.name === "Float") this.unifyArg(r.ty, FLOAT, e.r.span, `right operand of '${op}'`);
+      else if (lt.k === "con" && lt.name === "Str") this.unifyArg(r.ty, STR, e.r.span, `right operand of '${op}'`);
+      else {
+        this.unifyArg(l.ty, INT, e.l.span, `left operand of '${op}'`);
+        this.unifyArg(r.ty, INT, e.r.span, `right operand of '${op}'`);
+      }
       return { ty: BOOL, place, eff };
     }
     if (op === "+") {
       const lt = prune(l.ty);
-      if (lt.k === "con" && lt.name === "Str") { unify(r.ty, STR); return { ty: STR, place, eff }; }
-      if (lt.k === "con" && lt.name === "Float") { unify(r.ty, FLOAT); return { ty: FLOAT, place, eff }; }
-      unify(l.ty, INT); unify(r.ty, INT);
+      if (lt.k === "con" && lt.name === "Str") { this.unifyArg(r.ty, STR, e.r.span, `right operand of '+' (left is Str)`); return { ty: STR, place, eff }; }
+      if (lt.k === "con" && lt.name === "Float") { this.unifyArg(r.ty, FLOAT, e.r.span, `right operand of '+' (left is Float)`); return { ty: FLOAT, place, eff }; }
+      this.unifyArg(l.ty, INT, e.l.span, `left operand of '+'`);
+      this.unifyArg(r.ty, INT, e.r.span, `right operand of '+' (left is Int)`);
       return { ty: INT, place, eff };
     }
     if (["-", "*", "/", "%"].includes(op)) {
       const lt = prune(l.ty);
-      if (lt.k === "con" && lt.name === "Float") { unify(r.ty, FLOAT); return { ty: FLOAT, place, eff }; }
-      unify(l.ty, INT); unify(r.ty, INT);
+      if (lt.k === "con" && lt.name === "Float") { this.unifyArg(r.ty, FLOAT, e.r.span, `right operand of '${op}' (left is Float)`); return { ty: FLOAT, place, eff }; }
+      this.unifyArg(l.ty, INT, e.l.span, `left operand of '${op}'`);
+      this.unifyArg(r.ty, INT, e.r.span, `right operand of '${op}'`);
       return { ty: INT, place, eff };
     }
     this.fail(`unknown operator '${op}'`, e.span);
@@ -1420,13 +1756,12 @@ export class Infer {
           if (a.value.k === "expr") {
             const r = this.infer(a.value.e);
             if (a.name.startsWith("on")) {
-              unify(r.ty, fnT([con("Event")], UNIT));
+              this.unifyArg(r.ty, fnT([con("Event")], UNIT), a.value.e.span, `event handler '${a.name}'`);
             } else if (a.name === "class" || a.name === "style" || a.name === "id" || a.name === "type" ||
                        a.name === "placeholder" || a.name === "href" || a.name === "value" || a.name === "title") {
-              unify(r.ty, STR);
+              this.unifyArg(r.ty, STR, a.value.e.span, `attribute '${a.name}'`);
             } else {
-              unify(prune(r.ty).k === "con" && prune(r.ty).name === "Bool" ? r.ty : STR, r.ty);
-              unify(r.ty, STR);
+              this.unifyArg(r.ty, STR, a.value.e.span, `attribute '${a.name}'`);
             }
             place = joinPlace(place, r.place);
             eff = mergeEff(eff, r.eff);
@@ -1478,6 +1813,34 @@ export class Infer {
     }
   }
 
+  /** Unify an argument/value with an expected type, reporting at its span. */
+  private unifyArg(got: Type, want: Type, span: { line: number; col: number; file?: string }, what: string) {
+    const before = snapshotSubst();
+    const gotText = typeStr(got);
+    const wantText = typeStr(want);
+    try {
+      unify(got, want);
+    } catch (err) {
+      restoreSubst(before);
+      if (err instanceof FlowError) this.fail(`${what}: expected ${wantText}, got ${gotText}`, span);
+      throw err;
+    }
+  }
+
+  /** A `let x: T = value` annotation: report both types at the value. */
+  private checkAnnotation(got: Type, want: Type, name: string, span: { line: number; col: number; file?: string }) {
+    const before = snapshotSubst();
+    try {
+      unify(got, want);
+    } catch (err) {
+      restoreSubst(before);
+      if (err instanceof FlowError) {
+        this.fail(`'${name}' is annotated ${typeStr(want)}, but its value is ${typeStr(got)}`, span);
+      }
+      throw err;
+    }
+  }
+
   expectType(got: Type, want: Type, node: Expr, what: string) {
     try { unify(got, want); }
     catch (err) {
@@ -1487,10 +1850,38 @@ export class Infer {
   }
 }
 
+/** The expression that actually produces a body's value (the tail of a block). */
+function tailSpan(body: Expr): { line: number; col: number; file?: string } {
+  if (body.k === "Block") {
+    if (body.value) return body.value.span;
+    for (let i = body.stmts.length - 1; i >= 0; i--) {
+      const s = body.stmts[i]!;
+      if (s.k === "ExprStmt") return s.span;
+    }
+  }
+  return body.span;
+}
+
 export function mergeEff(...rows: Eff[]): Eff {
   const out: Eff = { labels: new Set() };
   for (const r of rows) for (const l of r.labels) out.labels.add(l);
   return out;
+}
+
+/** Levenshtein distance, for "did you mean" hints. */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0]!;
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j]!;
+      prev[j] = Math.min(prev[j]! + 1, prev[j - 1]! + 1, last + (a[i - 1] === b[j - 1] ? 0 : 1));
+      last = tmp;
+    }
+  }
+  return prev[b.length]!;
 }
 
 /** The head constructor of a type, for traits parameterised by a type

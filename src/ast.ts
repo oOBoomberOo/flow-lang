@@ -17,7 +17,7 @@ export type TypeExpr =
 
 export type Place = "client" | "server" | "neutral";
 
-export interface EffRow { effects: string[]; var?: string }
+export interface EffRow { effects: string[]; var?: string; varSpan?: Span; spans?: { name: string; span: Span }[] }
 
 /* ---------- expressions ---------- */
 

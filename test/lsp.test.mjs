@@ -137,7 +137,7 @@ test("lsp: diagnostics are published for a type error", async () => {
     const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
     assert.equal(note.params.uri, uri(file));
     assert.equal(note.params.diagnostics.length, 1);
-    assert.match(note.params.diagnostics[0].message, /type mismatch/);
+    assert.match(note.params.diagnostics[0].message, /right operand of '\+' \(left is Int\): expected Int, got Str/);
     assert.equal(note.params.diagnostics[0].severity, 1);
     assert.equal(note.params.diagnostics[0].source, "flow");
   } finally { c.proc.kill(); }
@@ -239,6 +239,6 @@ test("lsp: incremental edits re-diagnose", async () => {
       }],
     });
     const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics" && m.params.diagnostics.length > 0);
-    assert.match(note.params.diagnostics[0].message, /type mismatch/);
+    assert.match(note.params.diagnostics[0].message, /right operand of '\+'/);
   } finally { c.proc.kill(); }
 });
