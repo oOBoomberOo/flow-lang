@@ -119,6 +119,7 @@ imports take precedence over the prelude.
 |---|---|
 | types | `Option<a> = None \| Some(a)` - a plain ADT declared in Flow, not a compiler builtin |
 | effects | `Server`, `Client`, `Store` - declared **and provided** here, not by the compiler; the runtime only exposes raw host primitives |
+| cells | `CellOps.get` / `CellOps.set` - std trait methods over the host's `__flow.get` / `__flow.set` primitives, declaring the `Client` effect |
 | lists | `len`, `isEmpty`, `push`, `head`, `tail`, `concat`, `reverse` |
 | strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars`, `strLen` |
 | numbers | `int`, `float`, `eq`, `neq` |

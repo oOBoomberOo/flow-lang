@@ -339,7 +339,6 @@ export class Codegen {
         return `({ ${e.fields.map((f) => `${ev(f.name)}: ${this.emitExpr(f.value, side, ctxHome, env)}`).join(", ")} })`;
       case "Field":
         if (/^\d+$/.test(e.name)) return `${this.emitExpr(e.target, side, ctxHome, env)}[${e.name}]`;
-        if (e.name === "get") return `R.get(${this.emitExpr(e.target, side, ctxHome, env)})`;
         return `R.v(${this.emitExpr(e.target, side, ctxHome, env)}).${e.name}`;
       case "Tuple": return `[${e.items.map((i) => this.emitExpr(i, side, ctxHome, env)).join(", ")}]`;
       case "List": return `[${e.items.map((i) => this.emitExpr(i, side, ctxHome, env)).join(", ")}]`;
