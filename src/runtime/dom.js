@@ -1,0 +1,96 @@
+/**
+ * Flow DOM layer — turns the compiler's `R.el / R.text / R.hole` calls into a
+ * live DOM whose dynamic parts are dependency-tracked nodes.
+ */
+
+export function installDom(R) {
+  const Node = R.Node;
+
+  function toNodes(v) {
+    if (v == null || v === false) return [];
+    if (typeof DocumentFragment !== "undefined" && v instanceof DocumentFragment) return [...v.childNodes];
+    if (typeof window !== "undefined" && v instanceof window.Node) return [v];
+    if (Array.isArray(v)) {
+      // a list of markup renders as markup; a list of values renders structurally
+      return v.some((x) => x && typeof x === "object" && "nodeType" in x)
+        ? v.flatMap(toNodes)
+        : [document.createTextNode(R.show(v))];
+    }
+    if (typeof v === "object") return [document.createTextNode(R.show(v))];
+    return [document.createTextNode(String(v))];
+  }
+
+  function newElem(tag) {
+    const e = document.createElement(tag);
+    e.setAttribute("data-flow", "");
+    return e;
+  }
+
+  /** Run `compute` reactively; call `apply` with its value initially and on change. */
+  function reactive(compute, apply) {
+    const n = new Node(compute);
+    n.watch((v) => apply(v));
+    apply(n.get());
+    return n;
+  }
+
+  const D = {
+    el(tag, attrs, children) {
+      const e = newElem(tag);
+      for (const [k, v] of Object.entries(attrs ?? {})) {
+        if (k.startsWith("on:")) {
+          const name = k.slice(3);
+          e.addEventListener(name, v);
+          continue;
+        }
+        if (v && v.__attr) {
+          reactive(() => R.v(v.fn()), (val) => setAttr(e, k, val));
+          continue;
+        }
+        e.setAttribute(k, String(v));
+      }
+      for (const c of children ?? []) {
+        for (const n of toNodes(c)) e.appendChild(n);
+      }
+      return e;
+    },
+
+    text(s) { return document.createTextNode(String(s ?? "")); },
+
+    /** A hole is a `span` with display:contents that hosts any value. */
+    hole(thunk) {
+      const host = newElem("flow-hole");
+      host.style.display = "contents";
+      reactive(() => R.v(thunk()), (v) => { host.replaceChildren(...toNodes(v)); });
+      return host;
+    },
+
+    frag(children) {
+      const f = document.createDocumentFragment();
+      for (const c of children ?? []) for (const n of toNodes(c)) f.appendChild(n);
+      return f;
+    },
+
+    attr(fn) { return { __attr: true, fn }; },
+
+    mount(root, build) {
+      const v = build();
+      root.replaceChildren(...toNodes(v));
+      return root;
+    },
+
+    /** Render a standalone Html value into a container. */
+    render(root, value) { root.replaceChildren(...toNodes(value)); },
+
+    _toNodes: toNodes,
+  };
+
+  Object.assign(R, D);
+  return R;
+}
+
+function setAttr(e, name, val) {
+  if (val === true) e.setAttribute(name, "");
+  else if (val === false || val == null) e.removeAttribute(name);
+  else e.setAttribute(name, String(val));
+}
