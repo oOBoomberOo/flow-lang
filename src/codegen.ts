@@ -403,12 +403,8 @@ export class Codegen {
     }
     if (e.fn.k === "Var") {
       const qual = this.effectOfOp(e.fn.name);
-      if (qual && !env.has(e.fn.name) && !this.mod.fns.has(e.fn.name) && !this.inf.builtins.has(e.fn.name)) {
+      if (qual && !env.has(e.fn.name) && !this.mod.fns.has(e.fn.name)) {
         return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
-      }
-      const bi = this.inf.builtins.get(e.fn.name);
-      if (bi && !env.has(e.fn.name) && !this.mod.fns.has(e.fn.name)) {
-        return `R.builtin(${ev(bi.emit)})(${args})`;
       }
     }
     return `${this.emitExpr(e.fn, side, ctxHome, env)}(${args})`;

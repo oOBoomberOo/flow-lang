@@ -156,32 +156,6 @@ export function createRuntime() {
       return String(v);
     },
 
-    builtin(name) {
-      const B = {
-        show: (x) => R.show(x),
-        toInt: (s) => parseInt(String(s), 10),
-        toFloat: (s) => parseFloat(String(s)),
-        len: (l) => (l ? l.length : 0),
-        push: (l, x) => [...(l ?? []), x],
-        head: (l) => (l && l.length ? R.ctor("Some", [l[0]]) : R.ctor("None", [])),
-        tail: (l) => (l && l.length ? l.slice(1) : []),
-        isEmpty: (l) => !l || l.length === 0,
-        concat: (a, b) => [...(a ?? []), ...(b ?? [])],
-        reverse: (l) => [...(l ?? [])].reverse(),
-        chars: (s) => [...String(s)].map((c) => c),
-        join: (l, sep) => (l ?? []).join(sep),
-        trim: (s) => String(s).trim(),
-        upper: (s) => String(s).toUpperCase(),
-        lower: (s) => String(s).toLowerCase(),
-        split: (s, sep) => String(s).split(sep),
-        replace: (s, from, to) => String(s).split(from).join(to),
-        contains: (s, sub) => String(s).includes(sub),
-      };
-      const f = B[name];
-      if (!f) throw new Error(`flow: unknown builtin '${name}'`);
-      return f;
-    },
-
     /**
      * `unsafe extern js fn …= "target"` — raw access to the host.
      *
