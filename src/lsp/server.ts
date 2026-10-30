@@ -329,10 +329,26 @@ const TOKEN_MODIFIERS = ["client", "server", "cut", "boundary"];
 
 function inRegion(regions: Region[], line: number, character: number): Region | null {
   let best: Region | null = null;
+  const rank = (r: Region) => r.kind === "cut" ? 2 : r.kind === "crossing" ? 1 : 0;
   for (const r of regions) {
     const after = line > r.range.start.line || (line === r.range.start.line && character >= r.range.start.character);
     const before = line < r.range.end.line || (line === r.range.end.line && character <= r.range.end.character);
-    if (after && before && (!best || r.kind === "cut")) best = r;
+    if (after && before && (!best || rank(r) > rank(best))) best = r;
+  }
+  return best;
+}
+
+/** The innermost cut/crossing region at a position, if any. */
+function boundaryAt(file: string, pos: Position): Region | null {
+  const regions = (lastAnalysis?.regions ?? []).filter((r) =>
+    path.resolve(r.file) === path.resolve(file) && (r.kind === "cut" || r.kind === "crossing"));
+  let best: Region | null = null;
+  const size = (r: Region) =>
+    (r.range.end.line - r.range.start.line) * 10000 + (r.range.end.character - r.range.start.character);
+  for (const r of regions) {
+    const after = pos.line > r.range.start.line || (pos.line === r.range.start.line && pos.character >= r.range.start.character);
+    const before = pos.line < r.range.end.line || (pos.line === r.range.end.line && pos.character <= r.range.end.character);
+    if (after && before && (!best || size(r) < size(best))) best = r;
   }
   return best;
 }
@@ -367,6 +383,7 @@ function semanticTokens(uri: string): { data: number[] } {
       if (region.side === "client") mods |= 1;
       if (region.side === "server") mods |= 2;
       if (region.kind === "cut") mods |= 12;
+      else if (region.kind === "crossing") mods |= 8;
     }
     toks.push({ line: t.line - 1, char: t.col - 1, len: t.value.length, type, mods });
   }
@@ -650,6 +667,20 @@ function inlayHints(file: string): unknown[] {
     });
   }
 
+  // cut markers: one inline hint at the end of every inferred cut
+  for (const r of a.regions) {
+    if (r.kind !== "cut") continue;
+    if (path.resolve(r.file) !== f) continue;
+    hints.push({
+      position: r.range.end,
+      label: ` ${r.cutId ?? "cut"}→${r.side}`,
+      kind: 1,
+      paddingLeft: true,
+      paddingRight: false,
+      tooltip: r.label,
+    });
+  }
+
   // inferred types for unannotated `let` bindings
   const addBinding = (
     name: string,
@@ -884,7 +915,12 @@ function codeLens(file: string) {
     const cuts = a.regions.filter((r) => r.kind === "cut"
       && r.range.start.line >= sym.range.start.line
       && r.range.start.line <= (a.regions.find((x) => x.kind === "function" && x.range.start.line === sym.range.start.line)?.range.end.line ?? sym.range.end.line));
-    const title = region ? `${region.side} · ${cuts.length} cut${cuts.length === 1 ? "" : "s"}` : `${cuts.length} cut${cuts.length === 1 ? "" : "s"}`;
+    const crossings = a.regions.filter((r) => r.kind === "crossing"
+      && r.range.start.line >= sym.range.start.line
+      && r.range.start.line <= (a.regions.find((x) => x.kind === "function" && x.range.start.line === sym.range.start.line)?.range.end.line ?? sym.range.end.line));
+    const cutsText = `${cuts.length} cut${cuts.length === 1 ? "" : "s"}`;
+    const crossText = crossings.length ? ` · ${crossings.length} crossing${crossings.length === 1 ? "" : "s"}` : "";
+    const title = `${region ? `${region.side} · ` : ""}${cutsText}${crossText}`;
     lenses.push({
       range: sym.range,
       command: { title, command: "flow.cutInfo", arguments: [sym.display ?? sym.name] },
@@ -965,7 +1001,7 @@ function typeDefinition(file: string, pos: Position) {
 
 function boundary(uri?: string) {
   const a = lastAnalysis;
-  if (!a) return { regions: [], summary: { client: 0, server: 0, cuts: 0 } };
+  if (!a) return { regions: [], summary: { client: 0, server: 0, cuts: 0, crossings: 0 } };
   const regions = a.regions.map((r) => ({ ...r, fileUri: pathToUri(r.file) }));
   void uri;
   return {
@@ -974,6 +1010,7 @@ function boundary(uri?: string) {
       client: regions.filter((r) => r.side === "client" && r.kind === "function").length,
       server: regions.filter((r) => r.side === "server" && r.kind === "function").length,
       cuts: regions.filter((r) => r.kind === "cut").length,
+      crossings: regions.filter((r) => r.kind === "crossing").length,
     },
   };
 }
@@ -1065,6 +1102,28 @@ reader.onMessage((msg) => {
     case "textDocument/hover": {
       if (!lastAnalysis) reanalyze();
       const file = path.resolve(uriToPath(docUri!));
+      const boundaryRegion = boundaryAt(file, p.position as Position);
+      if (boundaryRegion) {
+        const b = boundaryRegion;
+        const lines = [
+          `**${b.kind === "cut" ? "Inferred cut" : "Cross-tier expression"}**`,
+          "",
+          `- boundary: \`${b.direction ?? b.side}\``,
+        ];
+        if (b.cutId) lines.push(`- cut: \`${b.cutId}\``);
+        if (b.mode) lines.push(`- mode: \`${b.mode}\``);
+        if (b.parent) lines.push(`- in: \`${b.parent}\``);
+        if (b.deps?.length) lines.push(`- deps: \`${b.deps.join(", ")}\``);
+        if (b.type) lines.push(`- type: \`${b.type}\``);
+        lines.push(
+          "",
+          b.kind === "cut"
+            ? "This block runs on the other tier; the compiler splits it out and moves the value across."
+            : "This value mixes client and server authority; the compiler resolves it to one side.",
+        );
+        reply(id, { contents: { kind: "markdown", value: lines.join("\n") }, range: b.range });
+        return;
+      }
       const node = nodeAt(file, p.position as Position);
       if (!node) {
         const imp = importTargetAt(file, p.position as Position);

@@ -129,7 +129,14 @@ function publishDiagnostics(params) {
 
 function makeDecorations() {
   const cfg = vscode.workspace.getConfiguration("flow");
-  if (deco) { deco.client.dispose(); deco.server.dispose(); deco.cut.dispose(); }
+  if (deco) {
+    deco.client.dispose();
+    deco.server.dispose();
+    deco.cutOut.dispose();
+    deco.cutIn.dispose();
+    deco.crossing.dispose();
+  }
+  const media = (name) => (extensionPath ? vscode.Uri.file(path.join(extensionPath, "media", name)) : undefined);
   deco = {
     client: vscode.window.createTextEditorDecorationType({
       backgroundColor: cfg.get("clientColor"),
@@ -143,11 +150,39 @@ function makeDecorations() {
       overviewRulerColor: cfg.get("serverColor"),
       overviewRulerLane: vscode.OverviewRulerLane.Right,
     }),
-    cut: vscode.window.createTextEditorDecorationType({
+    // A cut that sends work client→server, and one that pulls a server value back.
+    cutOut: vscode.window.createTextEditorDecorationType({
       textDecoration: "underline",
       borderWidth: "0 0 1px 0",
       borderStyle: "solid",
       borderColor: cfg.get("cutColor"),
+      overviewRulerColor: cfg.get("cutColor"),
+      overviewRulerLane: vscode.OverviewRulerLane.Center,
+      gutterIconPath: media("cut-out.svg"),
+      gutterIconSize: "contain",
+      after: { contentText: " → server", color: cfg.get("cutColor"), margin: "0 0 0 0.4em" },
+    }),
+    cutIn: vscode.window.createTextEditorDecorationType({
+      textDecoration: "underline",
+      borderWidth: "0 0 1px 0",
+      borderStyle: "solid",
+      borderColor: cfg.get("cutInColor"),
+      overviewRulerColor: cfg.get("cutInColor"),
+      overviewRulerLane: vscode.OverviewRulerLane.Center,
+      gutterIconPath: media("cut-in.svg"),
+      gutterIconSize: "contain",
+      after: { contentText: " → client", color: cfg.get("cutInColor"), margin: "0 0 0 0.4em" },
+    }),
+    // A cross-tier expression resolved without a whole cut.
+    crossing: vscode.window.createTextEditorDecorationType({
+      borderWidth: "0 0 1px 0",
+      borderStyle: "dotted",
+      borderColor: cfg.get("crossingColor"),
+      overviewRulerColor: cfg.get("crossingColor"),
+      overviewRulerLane: vscode.OverviewRulerLane.Full,
+      gutterIconPath: media("crossing.svg"),
+      gutterIconSize: "contain",
+      after: { contentText: " ⇄ mixed", color: cfg.get("crossingColor"), margin: "0 0 0 0.4em" },
     }),
   };
 }
@@ -155,21 +190,47 @@ function makeDecorations() {
 function applyBoundary(payload) {
   const uri = payload.uri || (payload.regions && payload.regions[0] && payload.regions[0].fileUri);
   const byFile = new Map();
+  const empty = () => ({ client: [], server: [], cutOut: [], cutIn: [], crossing: [] });
   for (const r of payload.regions || []) {
     const key = r.fileUri || uri;
     if (!key) continue;
-    if (!byFile.has(key)) byFile.set(key, { client: [], server: [], cut: [] });
+    if (!byFile.has(key)) byFile.set(key, empty());
     const bucket = byFile.get(key);
     const range = R(r.range);
-    if (r.kind === "cut") bucket.cut.push({ range, hoverMessage: r.label });
-    else if (r.side === "client") bucket.client.push({ range, hoverMessage: r.label });
+    const hover = detailMessage(r);
+    if (r.kind === "cut") {
+      (r.side === "server" ? bucket.cutOut : bucket.cutIn).push({ range, hoverMessage: hover });
+    } else if (r.kind === "crossing") {
+      bucket.crossing.push({ range, hoverMessage: hover });
+    } else if (r.side === "client") bucket.client.push({ range, hoverMessage: r.label });
     else if (r.side === "server") bucket.server.push({ range, hoverMessage: r.label });
   }
   regionCache = byFile;
   paintAll();
-  const s = payload.summary || { client: 0, server: 0, cuts: 0 };
-  statusBar.text = `$(radio-tower) Flow · client ${s.client} · server ${s.server} · cuts ${s.cuts}`;
+  const s = payload.summary || { client: 0, server: 0, cuts: 0, crossings: 0 };
+  const crossings = s.crossings ? ` · crossings ${s.crossings}` : "";
+  statusBar.text = `$(radio-tower) Flow · client ${s.client} · server ${s.server} · cuts ${s.cuts}${crossings}`;
   statusBar.tooltip = "Flow: inferred placement. Click to explain.";
+}
+
+/** Rich hover for a cut/crossing marker. */
+function detailMessage(r) {
+  const md = new vscode.MarkdownString();
+  md.isTrusted = false;
+  if (r.kind === "cut") {
+    md.appendMarkdown(`**Inferred cut${r.cutId ? ` \`${r.cutId}\`` : ""}** — \`${r.direction || r.side}\`\n\n`);
+    md.appendMarkdown(`- boundary: \`${r.direction || r.side}\`\n`);
+    if (r.mode) md.appendMarkdown(`- mode: \`${r.mode}\`\n`);
+    if (r.parent) md.appendMarkdown(`- in: \`${r.parent}\`\n`);
+    if (r.deps && r.deps.length) md.appendMarkdown(`- deps: \`${r.deps.join(", ")}\`\n`);
+    if (r.type) md.appendMarkdown(`- type: \`${r.type}\`\n`);
+    md.appendMarkdown("\nThis block runs on the other tier; the compiler splits it out and moves the value across.");
+  } else {
+    md.appendMarkdown(`**Cross-tier expression** — \`${r.direction || r.side}\`\n\n`);
+    if (r.type) md.appendMarkdown(`- type: \`${r.type}\`\n`);
+    md.appendMarkdown("\nThis value mixes client and server authority; the compiler resolves it to one side.");
+  }
+  return md;
 }
 
 function paint(editor) {
@@ -178,12 +239,16 @@ function paint(editor) {
   if (!enabled || !buckets) {
     editor.setDecorations(deco.client, []);
     editor.setDecorations(deco.server, []);
-    editor.setDecorations(deco.cut, []);
+    editor.setDecorations(deco.cutOut, []);
+    editor.setDecorations(deco.cutIn, []);
+    editor.setDecorations(deco.crossing, []);
     return;
   }
   editor.setDecorations(deco.client, buckets.client);
   editor.setDecorations(deco.server, buckets.server);
-  editor.setDecorations(deco.cut, buckets.cut);
+  editor.setDecorations(deco.cutOut, buckets.cutOut);
+  editor.setDecorations(deco.cutIn, buckets.cutIn);
+  editor.setDecorations(deco.crossing, buckets.crossing);
 }
 
 function paintAll() {
@@ -494,10 +559,14 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("flow.explain", () => explainCurrent()),
     vscode.commands.registerCommand("flow.cutInfo", (name) => {
-      const cuts = [...regionCache.entries()]
+      const buckets = [...regionCache.entries()]
         .filter(([uri]) => uri === vscode.window.activeTextEditor?.document.uri.toString())
-        .flatMap(([, b]) => b.cut);
-      vscode.window.showInformationMessage(`Flow: ${name ?? "this function"} — ${cuts.length} inferred cut(s) in this file.`);
+        .map(([, b]) => b);
+      const cuts = buckets.reduce((n, b) => n + b.cutOut.length + b.cutIn.length, 0);
+      const crossings = buckets.reduce((n, b) => n + b.crossing.length, 0);
+      vscode.window.showInformationMessage(
+        `Flow: ${name ?? "this function"} — ${cuts} inferred cut(s), ${crossings} crossing(s) in this file.`,
+      );
     }),
     vscode.commands.registerCommand("flow.toggleBoundary", () => {
       enabled = !enabled;

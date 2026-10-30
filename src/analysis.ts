@@ -22,7 +22,7 @@ export interface Range { start: Position; end: Position }
 
 export interface Diagnostic { file: string; range: Range; message: string; code: string; severity: 1 }
 
-export type RegionKind = "function" | "cut" | "expression";
+export type RegionKind = "function" | "cut" | "crossing" | "expression";
 
 export interface Region {
   file: string;
@@ -30,6 +30,18 @@ export interface Region {
   side: "client" | "server" | "neutral";
   kind: RegionKind;
   label: string;
+  /** For a cut/crossing: which way the tier boundary is crossed, e.g. `client→server`. */
+  direction?: string;
+  /** Cut identity, when this region is an inferred cut. */
+  cutId?: string;
+  /** How the cut is driven: a reactive edge or a request/response call. */
+  mode?: "reactive" | "call";
+  /** Free variables carried across the boundary. */
+  deps?: string[];
+  /** The boundary value's type, when known. */
+  type?: string;
+  /** The enclosing function's display name, for cuts. */
+  parent?: string;
 }
 
 export interface SignatureInfo {
@@ -207,6 +219,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
     }
 
     const regions: Region[] = [];
+    const fnRegions: Region[] = [];
     if (result.codegen) {
       for (const [name, fn] of result.mod.fns) {
         if (fn.synthetic) continue;
@@ -215,24 +228,87 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         const h = result.codegen.home(fn.body);
         if (h === "neutral") continue;
         const src = srcFor(fn.body.span.file ?? abs);
-        regions.push({
+        const region: Region = {
           file: fn.body.span.file ?? abs,
           range: spanRange(src, fn.span ?? fn.body.span),
           side: h,
           kind: "function",
           label: `${origin} runs on ${h}`,
-        });
+        };
+        regions.push(region);
+        fnRegions.push(region);
       }
+
+      const containsRange = (outer: Range, inner: Range) =>
+        (outer.start.line < inner.start.line ||
+          (outer.start.line === inner.start.line && outer.start.character <= inner.start.character)) &&
+        (outer.end.line > inner.end.line ||
+          (outer.end.line === inner.end.line && outer.end.character >= inner.end.character));
+
+      const cutKeys = new Set<string>();
       for (const cut of result.codegen.cutList) {
         const span = (cut.node as { span: Span }).span;
         if (!span?.file) continue;
         const src = srcFor(span.file);
+        const range = spanRange(src, span);
+        const parent = fnRegions
+          .filter((r) => containsRange(r.range, range))
+          .sort((a, b) =>
+            (a.range.end.line - a.range.start.line) - (b.range.end.line - b.range.start.line))[0];
+        const from = parent ? parent.side : "shared";
+        const direction = `${from}→${cut.home}`;
+        const ty = result.mod.info.get(cut.node)?.ty;
+        const type = ty ? typeStr(prune(ty)) : undefined;
+        const parentName = parent ? parent.label.replace(/ runs on .*$/, "") : undefined;
+        cutKeys.add(`${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`);
         regions.push({
           file: span.file,
-          range: spanRange(src, span),
+          range,
           side: cut.home,
           kind: "cut",
-          label: `${cut.mode} cut ${cut.id} → ${cut.home}` + (cut.deps.length ? ` (deps: ${cut.deps.join(", ")})` : ""),
+          direction,
+          cutId: cut.id,
+          mode: cut.mode,
+          deps: [...cut.deps],
+          type,
+          parent: parentName,
+          label:
+            `${direction} ${cut.mode} cut ${cut.id}` +
+            (parentName ? ` in ${parentName}` : "") +
+            ` → ${cut.home}` +
+            (cut.deps.length ? ` (deps: ${cut.deps.join(", ")})` : "") +
+            (type ? ` : ${type}` : ""),
+        });
+      }
+
+      // Cross-tier expressions: values that really mix both sides (an Int computed
+      // from a server call and a client cell). Html containers are skipped: their
+      // mixed children are already marked by the cuts inside them.
+      const crossingKeys = new Set<string>();
+      const crossingKinds = new Set(["Binary", "App", "If", "Match", "Ctor", "Field"]);
+      for (const [node, info] of result.mod.info) {
+        if (info.place !== "cross") continue;
+        const span = (node as { span?: Span }).span;
+        if (!span?.file) continue;
+        if (!crossingKinds.has((node as { k?: string }).k ?? "")) continue;
+        const ty = prune(info.ty);
+        if (ty.k === "fun") continue;
+        if (ty.k === "con" && (ty.name === "Html" || ty.name === "Cell" || ty.name === "Event")) continue;
+        const src = srcFor(span.file);
+        const range = spanRange(src, span);
+        const key = `${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`;
+        if (cutKeys.has(key) || crossingKeys.has(key)) continue;
+        crossingKeys.add(key);
+        const home = result.codegen.home(node);
+        const type = typeStr(ty);
+        regions.push({
+          file: span.file,
+          range,
+          side: home === "neutral" ? "neutral" : home,
+          kind: "crossing",
+          direction: `mixed→${home}`,
+          type,
+          label: `cross-tier expression mixes client and server: ${type} → ${home}`,
         });
       }
     }

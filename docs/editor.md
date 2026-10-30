@@ -23,7 +23,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 |---|---|
 | `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly** |
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus module/link errors, published per file |
-| `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` modifiers |
+| `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
 | `textDocument/completion` | keywords, locals in scope, every symbol in the package, **module members after `::`**, **fields and Cell members after `.`** |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
@@ -31,13 +31,13 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
 | `workspace/symbol` | search the whole package graph |
 | `textDocument/signatureHelp` | parameter list, return type, effect row, active parameter |
-| `textDocument/inlayHint` | **` client` / ` server` badge on every function**, plus inferred `: Type` on unannotated `let` bindings |
+| `textDocument/inlayHint` | **` client` / ` server` badge on every function**, ` cut1→server` on each cut, plus inferred `: Type` on unannotated `let` bindings |
 | `textDocument/foldingRange` | brace regions and block comments |
 | `textDocument/selectionRange` | the AST ancestor chain at the cursor |
 | `textDocument/documentHighlight` | occurrences of the symbol under the cursor |
 | `textDocument/formatting` | re-indent by nesting depth (idempotent) |
 | `textDocument/codeAction` | *Make 'f' public*, *Import 'x' from pkg::mod* |
-| `textDocument/codeLens` | `client · 2 cuts` above each function |
+| `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
 | `flow/boundary` | placement regions for the whole package, one entry per file |
 
@@ -48,14 +48,43 @@ thing worth seeing is a **region** — "these twelve lines run on the server".
 {
   "regions": [
     { "kind": "function", "side": "client", "range": {…}, "label": "app::main::main runs on client" },
-    { "kind": "cut", "side": "server", "range": {…}, "label": "reactive cut cut1 → server (deps: token)" }
+    {
+      "kind": "cut",
+      "side": "server",
+      "direction": "client→server",
+      "cutId": "cut1",
+      "mode": "reactive",
+      "deps": ["token"],
+      "type": "Str",
+      "parent": "app::main::main",
+      "range": {…},
+      "label": "client→server reactive cut cut1 in app::main::main → server (deps: token) : Str"
+    },
+    { "kind": "crossing", "side": "server", "direction": "mixed→server", "type": "Int", "range": {…}, "label": "…" }
   ],
-  "summary": { "client": 6, "server": 0, "cuts": 2 }
+  "summary": { "client": 6, "server": 0, "cuts": 2, "crossings": 1 }
 }
 ```
 
-Neutral functions (pure code duplicated on both sides) are not reported — there is
-nothing to colour.
+A **cut** is a node the compiler moved to the other tier; `direction` says which way the
+value now travels (`client→server` or `server→client`). A **crossing** is an expression
+whose value mixes both sides and is resolved without a whole cut (e.g. `Server.now() -
+Client.now()`), so it gets a lighter marker instead of an underline. Neutral functions
+(pure code duplicated on both sides) are not reported — there is nothing to colour.
+
+In the VS Code client:
+
+* a cut that runs work on the server gets a violet underline, a **→ gutter arrow**, a
+  centre overview-ruler mark and an inline ` → server` label;
+* a cut that pulls a value back to the client gets the blue **←** variant;
+* a crossing gets a dotted underline, a **⇄ gutter arrow** and ` ⇄ mixed`;
+* hovering any marker shows cut id, direction, mode, deps, type and the enclosing function;
+* every cut also gets an inlay hint (` cut1→server`), and the status bar / code lens count
+  cuts and crossings.
+
+The markers are refreshed by `flow/boundaryChanged`, which the server emits after every
+`didOpen` / `didChange` / `didSave` and on watched-file changes, so they stay live while
+you type.
 
 ### How analysis works
 

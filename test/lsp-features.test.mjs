@@ -489,3 +489,59 @@ fn main() -> Html {
     assert.equal(path.basename(new URL(typeDef.uri).pathname), "builtins.flow");
   } finally { c.proc.kill(); }
 });
+
+test("lsp: boundary regions mark cuts with direction, hover and inlay hints", async () => {
+  const { entry } = packageWith({
+    "main.flow": `fn main() -> Html {
+  let n = Client.state(1);
+  html {
+    <div>
+      <p>{str(n.get())}</p>
+      <p>{str(Server.now())}</p>
+    </div>
+  }
+}
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+
+    const payload = await c.request("flow/boundary", { uri: uri(entry) });
+    const regions = payload.regions.filter((r) => r.fileUri === uri(entry));
+    const fn = regions.find((r) => r.kind === "function");
+    assert.ok(fn, "the entry function is a placement region");
+    assert.equal(fn.side, "client");
+
+    const cut = regions.find((r) => r.kind === "cut");
+    assert.ok(cut, "the server call is an inferred cut");
+    assert.equal(cut.side, "server");
+    assert.equal(cut.direction, "client→server");
+    assert.equal(cut.mode, "reactive");
+    assert.equal(cut.cutId, "cut1");
+    assert.match(cut.parent, /main::main$/);
+    assert.ok(cut.type && cut.type.length > 0, "the boundary value's type is reported");
+    assert.deepEqual(cut.deps, []);
+    assert.equal(payload.summary.cuts, 1);
+    assert.equal(typeof payload.summary.crossings, "number");
+
+    const hover = await c.request("textDocument/hover", {
+      textDocument: { uri: uri(entry) },
+      position: { line: cut.range.start.line, character: cut.range.start.character + 1 },
+    });
+    assert.ok(hover?.contents?.value, "a cut has hover information");
+    assert.match(hover.contents.value, /Inferred cut/);
+    assert.match(hover.contents.value, /client→server/);
+    assert.match(hover.contents.value, /cut1/);
+
+    const hints = await c.request("textDocument/inlayHint", {
+      textDocument: { uri: uri(entry) },
+      range: { start: { line: 0, character: 0 }, end: { line: text.split("\n").length, character: 0 } },
+    });
+    assert.ok(
+      hints.some((h) => String(h.label).includes("cut1→server")),
+      "an inlay hint marks the cut",
+    );
+  } finally { c.proc.kill(); }
+});

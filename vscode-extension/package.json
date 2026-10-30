@@ -51,7 +51,17 @@
         "flow.cutColor": {
           "type": "string",
           "default": "rgba(190, 90, 255, 0.55)",
-          "description": "Colour of the underline marking an inferred boundary cut."
+          "description": "Colour of the underline and gutter marker for a cut that runs server work (client→server)."
+        },
+        "flow.cutInColor": {
+          "type": "string",
+          "default": "rgba(90, 168, 255, 0.6)",
+          "description": "Colour of the underline and gutter marker for a cut that pulls a value back to the client (→client)."
+        },
+        "flow.crossingColor": {
+          "type": "string",
+          "default": "rgba(176, 176, 176, 0.7)",
+          "description": "Colour of the dotted marker for a cross-tier expression resolved without a whole cut."
         },
         "flow.enableDecorations": {
           "type": "boolean",

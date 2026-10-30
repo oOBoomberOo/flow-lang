@@ -30,6 +30,8 @@ function makeMock(workspaceRoot) {
     clientColor: "rgba(80, 140, 255, 0.16)",
     serverColor: "rgba(255, 150, 60, 0.16)",
     cutColor: "rgba(190, 90, 255, 0.55)",
+    cutInColor: "rgba(90, 168, 255, 0.6)",
+    crossingColor: "rgba(176, 176, 176, 0.7)",
     enableDecorations: true,
     serverPath: "",
   };
@@ -53,7 +55,11 @@ function makeMock(workspaceRoot) {
       parse: (s) => ({ toString: () => s, fsPath: s.replace(/^file:\/\/\//, "") }),
       file: (p) => ({ toString: () => `file:///${p.replace(/\\/g, "/").replace(/^\/+/, "")}`, fsPath: p }),
     },
-    MarkdownString: class { constructor(v) { this.value = v; } },
+    MarkdownString: class {
+      constructor(v) { this.value = v; this.isTrusted = false; }
+      appendMarkdown(v) { this.value = (this.value ?? "") + v; return this; }
+      appendText(v) { this.value = (this.value ?? "") + v; return this; }
+    },
     Hover: class { constructor(c, r) { this.contents = c; this.range = r; } },
     Diagnostic: class { constructor(r, m, s) { this.range = r; this.message = m; this.severity = s; } },
     Location: class { constructor(uri, range) { this.uri = uri; this.range = range; } },
@@ -180,8 +186,10 @@ test("vscode: activates, drives the server and colours the boundary", async () =
     await waitUntil(() => /cuts \d+/.test(env.statusBar.text), 8000, "boundary summary");
 
     assert.ok(env.applied.some((a) => a.list.length > 0), "decorations applied");
-    assert.equal(env.decos.length, 3, "client, server and cut decoration types");
+    assert.equal(env.decos.length, 5, "client, server, out-cut, in-cut and crossing decoration types");
     assert.notEqual(env.decos[0].opts.backgroundColor, env.decos[1].opts.backgroundColor);
+    assert.ok(env.decos[2].opts.gutterIconPath, "cuts get a gutter marker");
+    assert.equal(env.decos[2].opts.overviewRulerLane, env.mock.OverviewRulerLane.Center);
 
     // every provider the server implements is registered with VS Code
     const names = env.registered.map((r) => r[0]).sort();
@@ -224,7 +232,11 @@ test("vscode: providers return real results from the server", async () => {
     assert.ok(hints.some((h) => String(h.label).includes("client")), "placement hint");
 
     const hover = await provider("hover").provideHover(doc, at("Server.secret"));
-    assert.ok(hover && /Placement/.test(hover.contents.value), "hover");
+    assert.ok(hover && /Inferred cut/.test(hover.contents.value), "hover on a cut shows boundary details");
+    assert.match(hover.contents.value, /client→server/);
+
+    const plain = await provider("hover").provideHover(doc, at("let n", 4));
+    assert.ok(plain && /Placement/.test(plain.contents.value), "hover on ordinary code shows placement");
 
     const completion = await provider("completion").provideCompletionItems(doc, at("html {", 6));
     assert.ok(completion.items.length > 10, "completion items");
