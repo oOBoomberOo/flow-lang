@@ -266,3 +266,26 @@ test("ffi: equality is a std-level FFI primitive", () => {
   assert.match(r.client, /R\.ffiCall\("__flow\.eq"/);
   assert.ok(!r.client.includes("R.eq("), "the compiler no longer emits R.eq");
 });
+
+test("stdlib: list sorting and search go through the FFI", () => {
+  const { entry } = packageWith({
+    "main.flow": `use std::list::{sortInts, sortStrings, contains, indexOfItem, sortBy}
+
+fn main() -> Html {
+  let ints = sortInts([3, 1, 2]);
+  let strs = sortStrings(["pear", "apple", "fig"]);
+  let idx = indexOfItem(ints, 2);
+  html {
+    <ul>
+      <li>{str(ints)}{":"}{str(indexOfItem(ints, 99))}{":"}{str(contains(ints, 2))}</li>
+      <li>{str(strs)}{":"}{str(idx)}</li>
+      <li>{str(sortBy(ints, fn(a: Int, b: Int) -> Int { b - a }))}</li>
+    </ul>
+  }
+}
+`,
+  });
+  const r = compileFile(entry);
+  assert.ok(r.client.includes('R.ffiCall("@sort"'), "sorting reaches the host through the FFI");
+  assert.deepEqual(r.diagnostics, []);
+});

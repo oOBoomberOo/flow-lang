@@ -81,3 +81,29 @@ pub fn all<a>(xs: List<a>, p: (a) -> Bool) -> Bool {
     [x, ..rest] => if (p(x)) { all(rest, p) } else { false },
   }
 }
+
+// ---------------------------------------------------------------- sorting
+// JS sort, reached through the FFI; the input list is copied first.
+
+unsafe extern js fn sort_in_place<a>(xs: List<a>, cmp: (a, a) -> Int) -> List<a> = "@sort"
+
+pub fn sortBy<a>(xs: List<a>, cmp: (a, a) -> Int) -> List<a> {
+  sort_in_place(slice_to(xs, 0, len(xs)), cmp)
+}
+
+pub fn sortInts(xs: List<Int>) -> List<Int> { sortBy(xs, fn(a: Int, b: Int) -> Int { a - b }) }
+
+pub fn sortStrings(xs: List<Str>) -> List<Str> {
+  sortBy(xs, fn(a: Str, b: Str) -> Int { if (a < b) { -1 } else if (a > b) { 1 } else { 0 } })
+}
+
+pub fn contains<a>(xs: List<a>, x: a) -> Bool { any(xs, fn(y: a) -> Bool { y == x }) }
+
+pub fn indexOfItem<a>(xs: List<a>, x: a) -> Int { indexFrom(xs, x, 0) }
+
+fn indexFrom<a>(xs: List<a>, x: a, i: Int) -> Int {
+  match xs {
+    [] => -1,
+    [y, ..rest] => if (y == x) { i } else { indexFrom(rest, x, i + 1) },
+  }
+}

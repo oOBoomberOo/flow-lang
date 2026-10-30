@@ -210,7 +210,7 @@ src/
     dom.js        el / text / hole / attr / mount
     client.js     browser entry (served at /runtime/client.js)
     server.js     server entry + SSE hub
-stdlib/           list, option, math, string, html (written in Flow)
+stdlib/           prelude, list, option, math, string, html, log, time (written in Flow)
 registry/         index.json + packages/{flow-charts,flow-time}
 packages/         demo (local modules), app (registry dependencies)
 vscode-extension/ package.json, tmLanguage grammar, extension.js

@@ -1,0 +1,23 @@
+// Sorting and searching are std functions over the FFI (`@sort`), not compiler
+// intrinsics: the host sorts, the compiler never sees a special case.
+
+use std::list::{sortInts, sortStrings, contains, indexOfItem, sortBy}
+
+fn main() -> Html {
+  let ints = sortInts([3, 1, 2]);
+  let strs = sortStrings(["pear", "apple", "fig"]);
+  let desc = sortBy(ints, fn(a: Int, b: Int) -> Int { b - a });
+
+  html {
+    <div class="card">
+      <h1>{"std::list sorting"}</h1>
+      <p class="sorted">{"asc: "}{str(ints)}{", desc: "}{str(desc)}</p>
+      <p class="strings">{"strs: "}{str(strs)}</p>
+      <p class="search">
+        {"index of 2: "}{str(indexOfItem(ints, 2))}
+        {", index of 99: "}{str(indexOfItem(ints, 99))}
+        {", contains 3: "}{str(contains(ints, 3))}
+      </p>
+    </div>
+  }
+}

@@ -142,6 +142,12 @@ use std::list::{map, filter, fold, forEach, headOf, take, drop, range, zip, any,
 | `range` | `(Int) -> List<Int>` |
 | `zip` | `(List<a>, List<b>) -> List<(a, b)>` |
 | `any` / `all` | `(List<a>, (a) -> Bool) -> Bool` |
+| `sortBy` | `(List<a>, (a, a) -> Int) -> List<a>` |
+| `sortInts` / `sortStrings` | `(List<Int>) -> List<Int>` / `(List<Str>) -> List<Str>` |
+| `contains` / `indexOfItem` | `(List<a>, a) -> Bool` / `(List<a>, a) -> Int` |
+
+`sortBy` copies the list and calls the host's `Array.prototype.sort` through the
+FFI (`unsafe extern js … = "@sort"`); no compiler intrinsic is involved.
 
 ### `std::option`
 
