@@ -1,0 +1,175 @@
+// std::http — request/response data, request and routing capabilities, and
+// easy route construction. Everything here is ordinary Flow over host
+// primitives; the host dispatches real HTTP requests to the routes registered
+// by `Router.mount`.
+
+// ---------------------------------------------------------------- data
+
+pub type RequestObject = {
+  method: Str,
+  path: Str,
+  query: Str,
+  body: Str,
+  headers: List<(Str, Str)>,
+  params: List<(Str, Str)>,
+}
+
+pub type Response = {
+  status: Int,
+  contentType: Str,
+  headers: List<(Str, Str)>,
+  body: Str,
+}
+
+pub type Handler = (RequestObject) -> Response
+
+pub type Route = {
+  method: Str,
+  path: Str,
+  handler: Handler,
+}
+
+// ---------------------------------------------------------------- capabilities
+
+/// The current HTTP request, available anywhere in a server-side handler.
+pub effect Request @ server {
+  fn current() -> RequestObject
+}
+
+/// Route registration. The host reads the routes registered here at startup.
+pub effect Router @ server {
+  fn mount(routes: List<Route>) -> Unit
+  fn notFound(handler: Handler) -> Unit
+}
+
+// ---------------------------------------------------------------- host primitives
+
+unsafe extern js fn host_request() -> RequestObject = "__flow.host.request"
+unsafe extern js fn host_routes(routes: List<Route>) -> Unit = "__flow.host.routes"
+unsafe extern js fn host_not_found(handler: Handler) -> Unit = "__flow.host.notFound"
+
+provide Request with {
+  current = host_request,
+}
+
+provide Router with {
+  mount = host_routes,
+  notFound = host_not_found,
+}
+
+// ---------------------------------------------------------------- responses
+
+pub fn textResponse(body: Str) -> Response {
+  { status: 200, contentType: "text/plain; charset=utf-8", headers: [], body: body }
+}
+
+pub fn htmlResponse(body: Str) -> Response {
+  { status: 200, contentType: "text/html; charset=utf-8", headers: [], body: body }
+}
+
+pub fn jsonResponse(body: Str) -> Response {
+  { status: 200, contentType: "application/json; charset=utf-8", headers: [], body: body }
+}
+
+pub fn withStatus(status: Int, response: Response) -> Response {
+  {
+    status: status,
+    contentType: response.contentType,
+    headers: response.headers,
+    body: response.body,
+  }
+}
+
+pub fn withHeader(response: Response, name: Str, value: Str) -> Response {
+  {
+    status: response.status,
+    contentType: response.contentType,
+    headers: push(response.headers, (name, value)),
+    body: response.body,
+  }
+}
+
+pub fn redirect(location: Str) -> Response {
+  withHeader(withStatus(302, textResponse("")), "location", location)
+}
+
+pub fn notFoundResponse(message: Str) -> Response {
+  withStatus(404, textResponse(message))
+}
+
+// ---------------------------------------------------------------- easy routing
+
+pub fn route(method: Str, path: Str, handler: Handler) -> Route {
+  { method: upper(method), path: path, handler: handler }
+}
+
+pub fn get(path: Str, handler: Handler) -> Route { route("GET", path, handler) }
+
+pub fn post(path: Str, handler: Handler) -> Route { route("POST", path, handler) }
+
+pub fn put(path: Str, handler: Handler) -> Route { route("PUT", path, handler) }
+
+pub fn patch(path: Str, handler: Handler) -> Route { route("PATCH", path, handler) }
+
+pub fn del(path: Str, handler: Handler) -> Route { route("DELETE", path, handler) }
+
+// ---------------------------------------------------------------- request helpers
+
+pub fn queryParam(request: RequestObject, name: Str) -> Option<Str> {
+  findQuery(split(request.query, "&"), name)
+}
+
+pub fn pathParam(request: RequestObject, name: Str) -> Option<Str> {
+  findPair(request.params, name)
+}
+
+pub fn header(request: RequestObject, name: Str) -> Option<Str> {
+  findHeader(request.headers, lower(name))
+}
+
+fn findPair(pairs: List<(Str, Str)>, name: Str) -> Option<Str> {
+  match pairs {
+    [] => None,
+    [(key, value), ..rest] => if (key == name) { Some(value) } else { findPair(rest, name) },
+  }
+}
+
+fn findHeader(pairs: List<(Str, Str)>, name: Str) -> Option<Str> {
+  match pairs {
+    [] => None,
+    [(key, value), ..rest] => if (lower(key) == name) { Some(value) } else { findHeader(rest, name) },
+  }
+}
+
+fn findQuery(pairs: List<Str>, name: Str) -> Option<Str> {
+  match pairs {
+    [] => None,
+    [pair, ..rest] => match split(pair, "=") {
+      [key, value] => if (key == name) { Some(value) } else { findQuery(rest, name) },
+      _ => findQuery(rest, name),
+    },
+  }
+}
+
+// ---------------------------------------------------------------- capability handler
+
+/// Pure route dispatch over a route list. The host uses the same Route values
+/// for real HTTP dispatch; this is the reusable in-language handler.
+pub fn handle(routes: List<Route>, request: RequestObject) -> Response {
+  match findRoute(routes, request.method, request.path) {
+    Some(route) => route.handler(request),
+    None => notFoundResponse("Not found"),
+  }
+}
+
+fn findRoute(routes: List<Route>, method: Str, path: Str) -> Option<Route> {
+  match routes {
+    [] => None,
+    [route, ..rest] =>
+      if ((route.method == "*" || upper(route.method) == upper(method)) && route.path == path) {
+        Some(route)
+      } else {
+        findRoute(rest, method, path)
+      },
+  }
+}

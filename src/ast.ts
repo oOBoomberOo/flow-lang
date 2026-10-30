@@ -80,6 +80,8 @@ export interface Param { name: string; type: TypeExpr; span: Span }
 export interface FnSig {
   name: string;
   typeParams: string[];
+  /** trait bounds written on type parameters, e.g. `<a: Describe + Eq>` */
+  paramBounds?: Record<string, string[]>;
   params: Param[];
   ret?: TypeExpr;
   eff?: EffRow;
@@ -88,14 +90,14 @@ export interface FnSig {
 
 export type Decl =
   | { k: "Use"; path: string[]; items: { name: string; alias?: string }[]; glob: boolean; span: Span }
-  | { k: "Adt"; name: string; params: string[]; variants: { name: string; args: TypeExpr[]; span: Span }[]; pub: boolean; span: Span }
-  | { k: "RecordType"; name: string; params: string[]; fields: { name: string; type: TypeExpr }[]; pub: boolean; span: Span }
-  | { k: "Alias"; name: string; params: string[]; type: TypeExpr; pub: boolean; span: Span }
-  | { k: "Trait"; name: string; params: string[]; methods: FnSig[]; pub: boolean; span: Span }
-  | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; methods: (FnSig & { body: Expr })[]; span: Span }
+  | { k: "Adt"; name: string; params: string[]; paramBounds?: Record<string, string[]>; variants: { name: string; args: TypeExpr[]; span: Span }[]; pub: boolean; span: Span }
+  | { k: "RecordType"; name: string; params: string[]; paramBounds?: Record<string, string[]>; fields: { name: string; type: TypeExpr }[]; pub: boolean; span: Span }
+  | { k: "Alias"; name: string; params: string[]; paramBounds?: Record<string, string[]>; type: TypeExpr; pub: boolean; span: Span }
+  | { k: "Trait"; name: string; params: string[]; paramBounds?: Record<string, string[]>; methods: FnSig[]; pub: boolean; span: Span }
+  | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; where?: { name: string; bounds: string[] }[]; methods: (FnSig & { body: Expr })[]; span: Span }
   | { k: "Effect"; name: string; ops: FnSig[]; pub: boolean; place?: Place; span: Span }
   | { k: "Provide"; effect: string; target?: TypeExpr; ops: { name: string; fn: Expr; span: Span }[]; span: Span }
   | { k: "Extern"; sig: FnSig; target: "js"; implName: string; unsafe: true; pub: boolean; span: Span }
-  | { k: "Fn"; name: string; typeParams: string[]; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
+  | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
 
 export interface Program { decls: Decl[]; file: string }

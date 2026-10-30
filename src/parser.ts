@@ -189,13 +189,13 @@ export class Parser {
   parseTypeDecl(start: Token, pub = false): Decl {
     this.expectKw("type");
     const name = this.expect("Con").value;
-    const params = this.parseTypeParams();
+    const { names: params, bounds } = this.parseTypeParams();
 
     // record type:  type T = { a: Int, ... }
     if (this.atSym("=") && this.peek().kind === "sym" && this.peek().value === "{") {
       this.next();
       const fields = this.parseRecordTypeFields();
-      return { k: "RecordType", name, params, fields, pub, span: this.spanFrom(start) };
+      return { k: "RecordType", name, params, paramBounds: bounds, fields, pub, span: this.spanFrom(start) };
     }
 
     this.expectSym("=");
@@ -204,15 +204,15 @@ export class Parser {
     // constructor followed by a payload '(' or another '|'. Anything else is an
     // alias, so `type Id = Int` stays an alias.
     if (this.atSym("|") || (this.at("Con") && (this.peek().value === "(" || this.peek().value === "|"))) {
-      return this.parseAdtBody(start, name, params, pub);
+      return this.parseAdtBody(start, name, params, bounds, pub);
     }
 
     const type = this.parseType();
     this.eatSym(";");
-    return { k: "Alias", name, params, type, pub, span: this.spanFrom(start) };
+    return { k: "Alias", name, params, paramBounds: bounds, type, pub, span: this.spanFrom(start) };
   }
 
-  parseAdtBody(start: Token, name: string, params: string[], pub = false): Decl {
+  parseAdtBody(start: Token, name: string, params: string[], paramBounds: Record<string, string[]> = {}, pub = false): Decl {
     this.eatSym("|");
     const variants: { name: string; args: TypeExpr[]; span: Span }[] = [];
     do {
@@ -227,13 +227,13 @@ export class Parser {
       variants.push({ name: ct.value, args, span: this.spanFrom(ct) });
     } while (this.eatSym("|"));
     this.eatSym(";");
-    return { k: "Adt", name, params, variants, pub, span: this.spanFrom(start) };
+    return { k: "Adt", name, params, paramBounds, variants, pub, span: this.spanFrom(start) };
   }
 
   parseTrait(start: Token, pub = false): Decl {
     this.expectKw("trait");
     const name = this.expect("Con").value;
-    const params = this.parseTypeParams();
+    const { names: params, bounds } = this.parseTypeParams();
     this.expectSym("{");
     const methods: FnSig[] = [];
     while (!this.atSym("}")) {
@@ -244,7 +244,7 @@ export class Parser {
       methods.push({ ...sig, span: this.spanFrom(t) });
     }
     this.expectSym("}");
-    return { k: "Trait", name, params, methods, pub, span: this.spanFrom(start) };
+    return { k: "Trait", name, params, paramBounds: bounds, methods, pub, span: this.spanFrom(start) };
   }
 
   parseImpl(start: Token): Decl {
@@ -254,6 +254,15 @@ export class Parser {
     if (this.atSym("<")) traitArgs = this.parseTypeArgs();
     this.expectKw("for");
     const target = this.parseType();
+    const where: { name: string; bounds: string[] }[] = [];
+    if (this.tok.kind === "id" && this.tok.value === "where") {
+      this.next();
+      do {
+        const name = this.typeVarName();
+        this.expectSym(":");
+        where.push({ name, bounds: this.parseTraitBounds() });
+      } while (this.eatSym(","));
+    }
     this.expectSym("{");
     const methods: (FnSig & { body: Expr })[] = [];
     while (!this.atSym("}")) {
@@ -264,7 +273,7 @@ export class Parser {
       methods.push({ ...sig, body, span: this.spanFrom(t) });
     }
     this.expectSym("}");
-    return { k: "Impl", trait, traitArgs, target, methods, span: this.spanFrom(start) };
+    return { k: "Impl", trait, traitArgs, target, where, methods, span: this.spanFrom(start) };
   }
 
   parseEffect(start: Token, pub = false): Decl {
@@ -317,7 +326,7 @@ export class Parser {
     if (nameTok.kind !== "id" && nameTok.kind !== "Con") this.err("expected a function name", nameTok);
     this.next();
     const name = nameTok.value;
-    const typeParams = this.parseTypeParams();
+    const { names: typeParams, bounds } = this.parseTypeParams();
     this.expectSym("(");
     const params: Param[] = [];
     if (!this.atSym(")")) {
@@ -334,17 +343,28 @@ export class Parser {
     let eff: EffRow | undefined;
     if (this.eatSym("->")) ret = this.parseType();
     if (this.atSym("!")) { this.next(); eff = this.parseEffRow(); }
-    return { name, typeParams, params, ret, eff, span: this.spanFrom(start) };
+    return { name, typeParams, paramBounds: bounds, params, ret, eff, span: this.spanFrom(start) };
   }
 
-  parseTypeParams(): string[] {
-    const params: string[] = [];
+  parseTypeParams(): { names: string[]; bounds: Record<string, string[]> } {
+    const names: string[] = [];
+    const bounds: Record<string, string[]> = {};
     if (this.atSym("<")) {
       this.next();
-      do { params.push(this.typeVarName()); } while (this.eatSym(","));
+      do {
+        const name = this.typeVarName();
+        names.push(name);
+        if (this.eatSym(":")) bounds[name] = this.parseTraitBounds();
+      } while (this.eatSym(","));
       this.expectSym(">");
     }
-    return params;
+    return { names, bounds };
+  }
+
+  parseTraitBounds(): string[] {
+    const bounds: string[] = [];
+    do { bounds.push(this.expect("Con").value); } while (this.eatSym("+"));
+    return bounds;
   }
 
   typeVarName(): string {

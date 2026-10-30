@@ -1,0 +1,39 @@
+// Generic trait bounds and dictionary dispatch.
+//
+// `Show<a>` is implemented for Int, Str and — with a bound — for List<a>.
+// `showAll` and `render` are generic over any `a: Show`; the compiler passes a
+// dictionary for each bounded type parameter.
+
+trait Show<a> {
+  fn show(x: a) -> Str
+}
+
+impl Show for Int {
+  fn show(x: Int) -> Str { "Int(" + str(x) + ")" }
+}
+
+impl Show for Str {
+  fn show(x: Str) -> Str { x }
+}
+
+fn showAll<a: Show>(xs: List<a>) -> Str {
+  match xs {
+    [] => "",
+    [x, ..rest] => Show.show(x) + ";" + showAll(rest),
+  }
+}
+
+impl Show<a> for List<a> where a: Show {
+  fn show(xs: List<a>) -> Str { showAll(xs) }
+}
+
+fn render<a: Show>(x: a) -> Str { Show.show(x) }
+
+fn main() -> Html {
+  html {
+    <div class="card">
+      <h1>{"Trait bounds"}</h1>
+      <p class="bounded">{"int: "}{render(42)}{", str: "}{render("hi")}{", list: "}{render([1, 2])}</p>
+    </div>
+  }
+}

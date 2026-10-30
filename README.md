@@ -65,16 +65,18 @@ examples/counter.flow    client state + events + components
 examples/boundary.flow   if across the boundary, uplink, downlink
 examples/adt.flow        sum types, records, exhaustive matching
 examples/traits.flow     trait dispatch, generic instances, list patterns
+examples/bounds.flow     trait bounds, bounded generic instances, dictionaries
+examples/http.flow       request/routing effect capabilities and easy routing
 examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, random, string, html, log, time
+stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **99 tests** across grammar, types, boundaries, modules, packages,
-the language server and the VS Code extension.
+Tests: `npm test` — **144 tests** across grammar, types, boundaries, modules, packages,
+the language server, HTTP capabilities, trait bounds and the VS Code extension.
 
 ---
 
@@ -136,6 +138,10 @@ fn area(s: Shape) -> Float {
 * Hindley–Milner inference, let-generalization, universal polymorphism
 * Algebraic data types, records, tuples, lists — with **exhaustiveness checking**
 * **Traits** with static dictionary dispatch and generic instances
+* **Trait bounds** - `fn render<a: Show>(x: a)` and bounded generic instances
+  (`impl Show<a> for List<a> where a: Show`) with dictionary passing at call sites
+* **HTTP capabilities** - `std::http` declares `Request` and `Router` as effect
+  capabilities, with easy `get`/`post` route helpers and a host-backed dispatcher
 * **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds
 * **Placement inference** - the thing no other mainstream language does
 * **Checked placement annotations** - `@client` / `@server` on returns, parameters and

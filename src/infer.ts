@@ -33,8 +33,19 @@ export interface TraitInfo {
   methods: Map<string, { sig: FnSig; ty: Type }>;
 }
 
+/** A hidden dictionary parameter for a bounded type parameter. */
+export interface DictParam {
+  trait: string;
+  typeParam: string;
+  name: string;
+  varId: number;
+}
+
 export interface ImplInfo {
-  trait: string; target: TypeExpr; index: number;
+  trait: string; target: TypeExpr; targetType?: Type; index: number;
+  where?: { name: string; bounds: string[] }[];
+  params?: Map<string, Type>;
+  dicts?: DictParam[];
   methods: Map<string, { params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr }>;
   mangled: Map<string, string>;
 }
@@ -59,6 +70,8 @@ export interface FnInfo {
   /** top-level placement annotations on the signature, if written */
   paramPlaces?: (AnnPlace | undefined)[];
   retPlace?: AnnPlace;
+  /** hidden dictionaries required by bounded type parameters */
+  dicts?: DictParam[];
   /** native (JavaScript) implementation, for `unsafe extern` declarations */
   extern?: { target: "js"; implName: string };
   /** declaration span, for editor features */
@@ -77,7 +90,11 @@ export interface Module {
   provides: Map<string, ProvideInfo>;
   typeDefs: Map<string, { params: string[]; kind: "adt" | "record" | "alias"; decl: Decl }>;
   info: Map<object, ResInfo>;
-  implChoices: Map<object, { impl: ImplInfo; method: string; mangled: string }>;
+  implChoices: Map<object, { impl: ImplInfo; method: string; mangled: string; dicts?: { trait: string; type: Type }[] }>;
+  /** trait calls on a bounded type variable, dispatched through a dictionary parameter */
+  boundChoices: Map<object, { dictName: string; method: string; trait: string }>;
+  /** dictionaries passed to a direct call of a bounded function */
+  dictArgs: Map<object, { trait: string; type: Type }[]>;
   varTypes: Map<object, Type>;
   methodIndex: Map<string, string>;
   diagnostics: string[];
@@ -92,6 +109,13 @@ export interface Module {
 export const implFnName = (trait: string, index: number, method: string) =>
   `$impl_${trait}_${index}_${method}`;
 
+export const dictParamName = (trait: string, typeParam: string) =>
+  `$d_${trait}_${typeParam}`;
+
+/** A type parameter's declared bounds, or an empty list. */
+const boundsOf = (paramBounds: Record<string, string[]> | undefined, name: string): string[] =>
+  paramBounds?.[name] ?? [];
+
 const BUILTIN_TYPES = new Set([
   "Int", "Float", "Str", "Bool", "Unit", "Html", "List", "Cell", "Event", "Dom",
 ]);
@@ -99,12 +123,14 @@ const BUILTIN_TYPES = new Set([
 export class Infer {
   mod: Module;
   env = new Map<string, EnvEntry>();
+  /** type-variable id -> dictionary parameter name while checking a body */
+  currentDicts = new Map<number, string>();
 
   constructor(file: string) {
     this.mod = {
       file, fns: new Map(), ctors: new Map(), traits: new Map(), impls: [],
       effects: new Map(), provides: new Map(), typeDefs: new Map(),
-      info: new Map(), implChoices: new Map(), methodIndex: new Map(),
+      info: new Map(), implChoices: new Map(), boundChoices: new Map(), dictArgs: new Map(), methodIndex: new Map(),
       varTypes: new Map(),
       diagnostics: [],
       errors: [],
@@ -297,25 +323,41 @@ export class Infer {
     const index = this.mod.impls.length;
     const mangled = new Map<string, string>();
     const methods = new Map<string, { params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr }>();
+    const implParams = new Map<string, Type>();
+    const dicts: DictParam[] = [];
+
+    // `where a: Trait` gives the impl's type variables their dictionaries.
+    for (const w of d.where ?? []) {
+      const v = fresh(0);
+      v.generic = true;
+      v.bounds = [...w.bounds];
+      implParams.set(w.name, v);
+      for (const b of w.bounds) {
+        dicts.push({ trait: b, typeParam: w.name, name: dictParamName(b, w.name), varId: v.id });
+      }
+    }
+
+    const targetType = this.resolveType(d.target, implParams);
+    for (const v of implParams.values()) if (v.k === "var") v.generic = true;
+
     for (const m of d.methods) {
       const fname = implFnName(d.trait, index, m.name);
+      const scheme = this.resolveSig(m, implParams);
+      markGeneric(scheme);
       mangled.set(m.name, fname);
       methods.set(m.name, { params: m.params, ret: m.ret, eff: m.eff, body: m.body });
       this.mod.fns.set(fname, {
-        name: fname, scheme: fnT([], fresh(0)), params: m.params, ret: m.ret,
+        name: fname, scheme, params: m.params, ret: m.ret,
         eff: m.eff, body: m.body, pub: false, synthetic: true, span: m.span,
         paramPlaces: m.params.map((p) => annotatedPlace(p.type)),
         retPlace: annotatedPlace(m.ret),
+        dicts,
       });
     }
-    this.mod.impls.push({ trait: d.trait, target: d.target, index, methods, mangled });
-    // declare signatures for the synthetic functions
-    for (const m of d.methods) {
-      const fname = implFnName(d.trait, index, m.name);
-      const info = this.mod.fns.get(fname)!;
-      info.scheme = this.resolveSig(m, new Map());
-      markGeneric(info.scheme);
-    }
+    this.mod.impls.push({
+      trait: d.trait, target: d.target, targetType, index,
+      where: d.where, params: implParams, dicts, methods, mangled,
+    });
   }
 
   checkImplBodies(d: Decl & { k: "Impl" }) {
@@ -365,9 +407,15 @@ export class Infer {
 
   declareFn(d: Decl & { k: "Fn" }) {
     const params = new Map<string, Type>();
+    const dicts: DictParam[] = [];
     for (const tp of d.typeParams ?? []) {
       const v = fresh(0);
       v.generic = true;
+      const bs = boundsOf(d.paramBounds, tp);
+      if (bs.length) {
+        v.bounds = [...bs];
+        for (const b of bs) dicts.push({ trait: b, typeParam: tp, name: dictParamName(b, tp), varId: v.id });
+      }
       params.set(tp, v);
     }
     const paramTypes = d.params.map((p) => this.resolveType(p.type, params));
@@ -379,6 +427,7 @@ export class Infer {
       name: d.name, scheme: ty, params: d.params, ret: d.ret, eff: d.eff, body: d.body, pub: d.pub, span: d.span,
       paramPlaces: d.params.map((p) => annotatedPlace(p.type)),
       retPlace: annotatedPlace(d.ret),
+      dicts,
     });
   }
 
@@ -424,6 +473,15 @@ export class Infer {
     this.fail(`placement mismatch: ${what} is annotated @${expected}, but is placed ${actual}`, span);
   }
 
+  /** Resolve a dictionary for a type variable by its id or its instantiation origin. */
+  private dictForVar(v: Type): string | undefined {
+    const p = prune(v);
+    if (p.k !== "var") return undefined;
+    const direct = this.currentDicts.get(p.id);
+    if (direct) return direct;
+    return p.origin !== undefined ? this.currentDicts.get(p.origin) : undefined;
+  }
+
   /** The place of a call argument, resolving locals from the environment so an
    *  annotated parameter sees the value the binding actually carries. */
   private exprPlace(e: Expr, fallback: string): string {
@@ -440,7 +498,9 @@ export class Infer {
     if (t.k !== "fun") return;
 
     const saved = this.env;
+    const savedDicts = this.currentDicts;
     this.env = new Map(saved);
+    this.currentDicts = new Map((info.dicts ?? []).map((d) => [d.varId, d.name]));
     for (let i = 0; i < params.length; i++) {
       const p = params[i]!;
       this.env.set(p.name, { ty: t.params[i]!, envVars: new Set(), place: "neutral" });
@@ -450,9 +510,11 @@ export class Infer {
       r = this.infer(body);
     } catch (e) {
       this.env = saved;
+      this.currentDicts = savedDicts;
       if (e instanceof FlowError) this.fail(`${e.message}\n  in fn ${name}`, e.span ? { line: e.span.line, col: e.span.col } : undefined);
       throw e;
     }
+    this.currentDicts = savedDicts;
     this.checkPlacement(info.retPlace, r.place, body.span, `fn ${name}`);
     try {
       unify(r.ty, t.ret);
@@ -487,6 +549,8 @@ export class Infer {
     for (const tp of s.typeParams ?? []) {
       const v = fresh(0);
       v.generic = true;
+      const bs = boundsOf(s.paramBounds, tp);
+      if (bs.length) v.bounds = [...bs];
       local.set(tp, v);
     }
     const ps = s.params.map((p) => this.resolveType(p.type, local));
@@ -846,13 +910,21 @@ export class Infer {
       }
     }
 
-    const fnInfo = this.infer(e.fn);
+    const callee = e.fn.k === "Var" && !this.env.has(e.fn.name) ? this.mod.fns.get(e.fn.name) : undefined;
+    let calleeTrace: Map<number, Type> | undefined;
+    let fnInfo: ResInfo;
+    if (callee?.dicts?.length) {
+      calleeTrace = new Map();
+      const ty = instantiate(callee.scheme, 0, calleeTrace);
+      fnInfo = { ty, place: this.varPlace(e.fn.name), eff: emptyEff() };
+      this.mod.info.set(e.fn, fnInfo);
+    } else {
+      fnInfo = this.infer(e.fn);
+    }
     const ft = prune(fnInfo.ty);
     if (ft.k !== "fun") this.fail(`attempt to call a value of type ${typeStr(ft)}`, e.fn.span);
     if (e.args.length !== ft.params.length) this.fail(`expected ${ft.params.length} argument(s), got ${e.args.length}`, e.span);
 
-    // Direct calls to a named function can check annotated parameter placements.
-    const callee = e.fn.k === "Var" && !this.env.has(e.fn.name) ? this.mod.fns.get(e.fn.name) : undefined;
     let place = joinPlace(fnInfo.place, typePlace(ft));
     let eff = mergeEff(fnInfo.eff, ft.eff);
     e.args.forEach((a, i) => {
@@ -869,6 +941,15 @@ export class Infer {
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
+
+    if (callee?.dicts?.length && calleeTrace) {
+      const dicts: { trait: string; type: Type }[] = [];
+      for (const d of callee.dicts) {
+        const t = calleeTrace.get(d.varId);
+        if (t) dicts.push({ trait: d.trait, type: prune(t) });
+      }
+      this.mod.dictArgs.set(e, dicts);
+    }
     return { ty: ft.ret, place: joinPlace(place, placeFromEffects(eff, this)), eff };
   }
 
@@ -886,28 +967,66 @@ export class Infer {
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
-    const target = prune(inst.params[0] ?? fresh());
-    const impl = this.resolveImpl(traitName, target);
-    if (!impl) this.fail(`no instance of ${traitName} for ${typeStr(target)}`);
+    let target = prune(inst.params[0] ?? inst.ret);
+    if (target.k === "var" && !target.bounds?.includes(traitName) && args.length === 0) {
+      // A nullary trait method (e.g. Monoid.empty()) has no value to dispatch
+      // on. If the trait has exactly one instance, use it; otherwise the call is
+      // genuinely ambiguous and needs an annotation or a value argument.
+      const impls = this.mod.impls.filter((im) => im.trait === traitName && im.targetType);
+      if (impls.length === 1) {
+        unify(target, instantiate(impls[0]!.targetType!, 0));
+        target = prune(inst.ret);
+      } else {
+        this.fail(
+          `cannot infer the type for ${traitName}.${method}(): the trait has ${impls.length} instances`,
+        );
+      }
+    }
     this.mod.info.set(node, { ty: inst.ret, place, eff });
-    this.mod.implChoices.set(node, { impl, method, mangled: impl.mangled.get(method)! });
+    if (target.k === "var") {
+      if (!target.bounds?.includes(traitName)) {
+        this.fail(
+          `no instance of ${traitName} for type variable ${typeStr(target)}; ` +
+          `add a trait bound such as <a: ${traitName}>`,
+        );
+      }
+      const dictName = this.dictForVar(target);
+      if (!dictName) this.fail(`internal: no dictionary parameter for ${traitName} ${typeStr(target)}`);
+      this.mod.boundChoices.set(node, { dictName, method, trait: traitName });
+      return { ty: inst.ret, place, eff };
+    }
+    const resolved = this.resolveImplInfo(traitName, target);
+    if (!resolved) this.fail(`no instance of ${traitName} for ${typeStr(target)}`);
+    const impl = resolved.impl;
+    const dicts: { trait: string; type: Type }[] = [];
+    for (const d of impl.dicts ?? []) {
+      const t = resolved.subst.get(d.varId);
+      if (t) dicts.push({ trait: d.trait, type: t });
+    }
+    this.mod.implChoices.set(node, { impl, method, mangled: impl.mangled.get(method)!, dicts });
     return { ty: inst.ret, place, eff };
   }
 
-  resolveImpl(trait: string, target: Type): ImplInfo | null {
+  resolveImplInfo(trait: string, target: Type): { impl: ImplInfo; subst: Map<number, Type> } | null {
     for (const im of this.mod.impls) {
-      if (im.trait !== trait) continue;
+      if (im.trait !== trait || !im.targetType) continue;
       const before = snapshotSubst();
       try {
-        const vars = new Map<string, Type>();
-        const t = this.resolveType(im.target, vars);
-        unify(t, target);
-        return im;
+        const trace = new Map<number, Type>();
+        const inst = instantiate(im.targetType, 0, trace);
+        unify(inst, target);
+        const subst = new Map<number, Type>();
+        for (const [oldId, freshVar] of trace) subst.set(oldId, prune(freshVar));
+        return { impl: im, subst };
       } catch {
         restoreSubst(before);
       }
     }
     return null;
+  }
+
+  resolveImpl(trait: string, target: Type): ImplInfo | null {
+    return this.resolveImplInfo(trait, target)?.impl ?? null;
   }
 
   inferMatch(e: Expr & { k: "Match" }): ResInfo {

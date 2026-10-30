@@ -1,0 +1,55 @@
+// std::http — request and routing effect capabilities, provided by the host.
+//
+// `routes()` is called once at server startup. `Request` is an effect
+// capability exposing the current request; `Router` mounts the routes and the
+// fallback. The client app still compiles as usual, but real HTTP requests are
+// dispatched to these server-side handlers.
+
+use std::http::{
+  get, post, Router, Request, RequestObject, Response,
+  textResponse, htmlResponse, jsonResponse, queryParam, pathParam, header,
+  notFoundResponse,
+}
+
+fn routes() -> Unit {
+  Router.mount([
+    get("/", fn(req: RequestObject) -> Response {
+      let who = match queryParam(req, "name") { Some(n) => n, None => "world" };
+      htmlResponse("<h1>Hello " + who + "</h1>")
+    }),
+    get("/health", fn(_req: RequestObject) -> Response {
+      jsonResponse("{\"ok\":true}")
+    }),
+    post("/echo", fn(req: RequestObject) -> Response {
+      textResponse(req.body)
+    }),
+    get("/users/:id", fn(req: RequestObject) -> Response {
+      match pathParam(req, "id") {
+        Some(id) => textResponse("user " + id),
+        None => textResponse("missing id"),
+      }
+    }),
+    get("/whoami", fn(_req: RequestObject) -> Response {
+      let request = Request.current();
+      textResponse(request.method + " " + request.path)
+    }),
+    get("/agent", fn(req: RequestObject) -> Response {
+      match header(req, "x-test") {
+        Some(value) => textResponse("header " + value),
+        None => textResponse("no header"),
+      }
+    })
+  ]);
+  Router.notFound(fn(req: RequestObject) -> Response {
+    notFoundResponse("no route for " + req.path)
+  });
+}
+
+fn main() -> Html {
+  html {
+    <div class="app">
+      <h1>{"Flow HTTP"}</h1>
+      <p>{"The client bundle is still served at /app.js."}</p>
+    </div>
+  }
+}

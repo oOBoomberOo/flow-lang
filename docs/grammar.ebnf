@@ -131,7 +131,10 @@ type-body       = [ '|' ] variant { '|' variant }      ; ADT
 variant         = constructor [ '(' [ type { ',' type } ] ')' ] ;
 
 type-params     = '<' type-param { ',' type-param } '>' ;
-type-param      = identifier | constructor ;
+type-param      = ( identifier | constructor ) [ ':' trait-bound { '+' trait-bound } ] ;
+
+; Trait bounds on type parameters (e.g. `fn render<a: Describe>(x: a)`).
+trait-bound     = constructor ;
 
 record-type-fields
                 = '{' [ field { ',' field } [ ',' ] ] '}' ;
@@ -167,8 +170,11 @@ effect-list     = constructor { ',' constructor } | identifier ;
 
 trait-decl      = 'trait' constructor [ type-params ] '{' { fn-signature [ ';' ] } '}' ;
 
-impl-decl       = 'impl' constructor [ type-args ] 'for' type '{' { impl-method } '}' ;
+impl-decl       = 'impl' constructor [ type-args ] 'for' type [ where-clause ] '{' { impl-method } '}' ;
 impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
+
+where-clause    = 'where' where-bound { ',' where-bound } ;
+where-bound     = identifier ':' trait-bound { '+' trait-bound } ;
 
 effect-decl     = 'effect' constructor [ '@' placement ] '{' { fn-signature [ ';' ] } '}' ;
 

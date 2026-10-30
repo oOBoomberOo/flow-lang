@@ -47,10 +47,10 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
-`std::list`, `std::option`, `std::math`, `std::string`, `std::html`, `std::log`,
-`std::time` — see [`docs/modules.md`](modules.md). A single file without a
-manifest still works. Host access goes through explicitly `unsafe` FFI bindings
-(§12).
+`std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
+`std::log`, `std::time`, `std::http` — see [`docs/modules.md`](modules.md). A single
+file without a manifest still works. Host access goes through explicitly `unsafe`
+FFI bindings (§12).
 
 ---
 
@@ -165,6 +165,37 @@ fn main() -> Html {
 * Methods are called qualified (`Describe.describe(x)`) or unqualified if the name is unique
   (`describe(x)` — resolved through the method index).
 
+A generic function can require an instance with a trait bound:
+
+```flow
+fn render<a: Describe>(x: a) -> Str { Describe.describe(x) }
+
+fn describeAll<a: Describe>(xs: List<a>) -> Str {
+  match xs {
+    [] => "",
+    [x, ..rest] => Describe.describe(x) + ";" + describeAll(rest),
+  }
+}
+
+impl Describe<a> for List<a> where a: Describe {
+  fn describe(xs: List<a>) -> Str { describeAll(xs) }
+}
+```
+
+Bounded parameters are compiled as hidden dictionary parameters. The call site
+supplies the instance (`render(42)` passes the `Describe<Int>` dictionary), and a
+bounded generic instance closes over the dictionary for its element type. Multiple
+bounds are allowed (`<a: Describe + Monoid>`). Calling a trait method on a type
+variable without the matching bound is an error:
+
+```
+no instance of Describe for type variable t; add a trait bound such as <a: Describe>
+```
+
+A nullary trait method (such as `Monoid.empty()`) uses the unique instance when
+the trait has exactly one; with several instances it is an error unless a value
+or annotation determines the type.
+
 ---
 
 ## 6. Effects are capabilities
@@ -182,6 +213,10 @@ effect Audit {
   fn record(msg: Str) -> Unit
 }
 ```
+
+A `provide` block is the **capability handler** for an effect: it supplies the
+implementation that runs when the effect is called. The provider's placement
+determines where the call runs.
 
 An effect can pin its own placement, which is what the standard library does for
 the built-in capabilities (`std::prelude` declares `Server @ server`,
@@ -413,7 +448,8 @@ flow add flow-time    # add the best matching version from the registry
 ```
 
 The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::string`, `std::html`. Full reference: [`docs/modules.md`](modules.md).
+`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`.
+Full reference: [`docs/modules.md`](modules.md).
 
 ---
 
@@ -474,7 +510,8 @@ raw host primitives (`__flow.show`, `__flow.eq`, `__flow.get`, `__flow.set`, and
 Honest list, so you do not discover them by surprise:
 
 * FFI targets are JavaScript only; FFI is unsafe and unchecked at the boundary.
-* Traits dispatch on one parameter; no superclasses or instance constraints.
+* Traits dispatch on one parameter; supertraits and associated types are not supported.
+  Trait bounds and bounded generic instances are supported (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`).
 * No effect handlers (no `handle … with …`); effects are capabilities.
 * No `String` interpolation — use `+`.
 * Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.

@@ -201,7 +201,13 @@ Dispatch is **static dictionary passing**. `resolveImpl` unifies the instance he
 attempt never pollutes inference. Generic instances are allowed and dispatch on the *head*
 constructor; the dictionary is monomorphic after resolution.
 
-Traits are single-parameter in 0.1: the type after `for` is the dispatch key.
+A bounded type parameter (`fn render<a: Show>(x: a)`) compiles to a hidden
+dictionary parameter. Each call supplies the instance dictionary, and a bounded
+generic instance (`impl Show<a> for List<a> where a: Show`) closes over the
+dictionary for its element type. Calling a trait method on a type variable
+without the matching bound is rejected at the call site.
+
+Traits still dispatch on one parameter: the type after `for` is the dispatch key.
 
 ### 4.7 Exhaustiveness
 

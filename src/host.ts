@@ -21,7 +21,8 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   process.env.FLOW_OPTS = JSON.stringify({ secrets: opts.secrets ?? {} });
 
   const serverBundle = path.join(opts.outDir, "server.js");
-  const { R } = await import(pathToFileUrl(serverBundle));
+  const serverModule = await import(pathToFileUrl(serverBundle));
+  const { R } = serverModule;
   const { createHub, attachServerTransport } = await import(
     pathToFileUrl(path.join(opts.outDir, "runtime", "server.js"))
   );
@@ -29,10 +30,30 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   const hub = createHub();
   attachServerTransport(R, hub);
 
+  // A program opts into HTTP routing by exporting a `routes()` function.
+  if (typeof serverModule.routes === "function") {
+    try { await serverModule.routes(); }
+    catch (e) { console.error("[flow] routes() failed:", e); }
+  }
+  const routes: HttpRoute[] = typeof R._routes === "function" ? R._routes() : [];
+  const notFound: HttpHandler | null = typeof R._notFound === "function" ? R._notFound() : null;
+
   const clientBundle = fs.readFileSync(path.join(opts.outDir, "app.js"), "utf8");
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const internal = url.pathname === "/app.js" ||
+      url.pathname.startsWith("/runtime/") ||
+      url.pathname.startsWith("/__flow/");
+
+    if (!internal) {
+      const match = matchRoute(routes, req.method ?? "GET", url.pathname);
+      if (match) {
+        const body = await readBody(req);
+        await handleRoute(R, match.route, makeRequest(req, url, body, match.params), res);
+        return;
+      }
+    }
 
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -94,6 +115,12 @@ export async function createHost(opts: HostOptions): Promise<Host> {
       return;
     }
 
+    if (!internal && notFound) {
+      const body = await readBody(req);
+      await handleRoute(R, { handler: notFound }, makeRequest(req, url, body, []), res);
+      return;
+    }
+
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
@@ -110,6 +137,133 @@ export async function createHost(opts: HostOptions): Promise<Host> {
       server.close(() => resolve());
     }),
   };
+}
+
+interface HttpRequest {
+  method: string;
+  path: string;
+  query: string;
+  body: string;
+  headers: [string, string][];
+  params: [string, string][];
+}
+
+type HttpHandler = (request: HttpRequest) => unknown;
+
+interface HttpRoute {
+  method?: string;
+  path?: string;
+  handler: HttpHandler;
+}
+
+function matchRoute(
+  routes: HttpRoute[],
+  method: string,
+  pathname: string,
+): { route: HttpRoute; params: [string, string][] } | null {
+  const segments = splitPath(pathname);
+  for (const route of routes) {
+    const routeMethod = String(route.method ?? "GET").toUpperCase();
+    if (routeMethod !== "*" && routeMethod !== method.toUpperCase()) continue;
+    const pattern = splitPath(String(route.path ?? "/"));
+    if (pattern.length !== segments.length) continue;
+    const params: [string, string][] = [];
+    let matched = true;
+    for (let i = 0; i < pattern.length; i++) {
+      const p = pattern[i]!;
+      const s = segments[i]!;
+      if (p.startsWith(":")) params.push([p.slice(1), s]);
+      else if (p !== s) { matched = false; break; }
+    }
+    if (matched) return { route, params };
+  }
+  return null;
+}
+
+function splitPath(pathname: string): string[] {
+  return pathname.split("/").filter((s) => s.length > 0).map((s) => {
+    try { return decodeURIComponent(s); } catch { return s; }
+  });
+}
+
+function makeRequest(
+  req: http.IncomingMessage,
+  url: URL,
+  body: string,
+  params: [string, string][],
+): HttpRequest {
+  const headers: [string, string][] = [];
+  for (const [name, value] of Object.entries(req.headers)) {
+    headers.push([name, Array.isArray(value) ? value.join(", ") : String(value ?? "")]);
+  }
+  return {
+    method: req.method ?? "GET",
+    path: url.pathname,
+    query: url.search.startsWith("?") ? url.search.slice(1) : "",
+    body,
+    headers,
+    params,
+  };
+}
+
+async function handleRoute(
+  R: unknown,
+  route: HttpRoute,
+  request: HttpRequest,
+  res: http.ServerResponse,
+): Promise<void> {
+  const runtime = R as { _setRequest?: (request: HttpRequest | null) => void };
+  if (typeof route.handler !== "function") {
+    res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    res.end("route has no handler");
+    return;
+  }
+  runtime._setRequest?.(request);
+  try {
+    const response = await route.handler(request);
+    sendResponse(res, response);
+  } catch (e) {
+    console.error("[flow] route error:", e);
+    if (!res.headersSent) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end("internal error");
+    } else {
+      res.end();
+    }
+  } finally {
+    runtime._setRequest?.(null);
+  }
+}
+
+function sendResponse(res: http.ServerResponse, response: unknown): void {
+  if (typeof response === "string") {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end(response);
+    return;
+  }
+  if (!response || typeof response !== "object") {
+    res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    res.end("route did not return a Response");
+    return;
+  }
+  const value = response as {
+    status?: unknown;
+    contentType?: unknown;
+    headers?: unknown;
+    body?: unknown;
+  };
+  const status = Number.isInteger(value.status) ? value.status as number : 200;
+  const contentType = typeof value.contentType === "string" && value.contentType
+    ? value.contentType
+    : "text/plain; charset=utf-8";
+  const headers: Record<string, string> = { "content-type": contentType };
+  if (Array.isArray(value.headers)) {
+    for (const pair of value.headers) {
+      if (Array.isArray(pair) && pair.length >= 2) headers[String(pair[0])] = String(pair[1]);
+    }
+  }
+  res.writeHead(status, headers);
+  res.end(typeof value.body === "string" ? value.body : String(value.body ?? ""));
 }
 
 function pathToFileUrl(p: string): string {

@@ -167,6 +167,27 @@ Float primitives through the FFI: `sqrt`, `pow`, `floor`, `ceil`, `round`, `absF
 `int(lo, hi)`, `bool()`, `chance(percent)`, `pick(xs)` — uniform helpers built
 on the FFI-backed `std::math::random()`.
 
+### `std::http`
+
+Request and routing **effect capabilities**, plus easy routing:
+
+```flow
+use std::http::{get, post, Router, Request, RequestObject, Response, htmlResponse}
+```
+
+| | |
+|---|---|
+| `Request` effect | `Request.current() -> RequestObject`; the current server request |
+| `Router` effect | `Router.mount(routes)`, `Router.notFound(handler)`; provided by the host |
+| route helpers | `get`, `post`, `put`, `patch`, `del`, `route` |
+| responses | `textResponse`, `htmlResponse`, `jsonResponse`, `withStatus`, `withHeader`, `redirect`, `notFoundResponse` |
+| request helpers | `queryParam`, `pathParam`, `header` |
+| handler | `handle(routes, request)` — pure in-language dispatch |
+
+A program opts in with `fn routes() -> Unit { Router.mount([...]) }`; the host
+calls it at startup and serves matching HTTP requests. Full reference:
+[`docs/http.md`](http.md).
+
 ### `std::log`
 
 ```flow

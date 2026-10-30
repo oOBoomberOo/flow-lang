@@ -15,7 +15,7 @@
  */
 
 import type { Decl, Expr, HtmlNode, Pattern, Program } from "./ast.ts";
-import type { Module, Infer } from "./infer.ts";
+import type { Module, Infer, DictParam } from "./infer.ts";
 import { implFnName } from "./infer.ts";
 import type { Place, Type } from "./types.ts";
 import { prune, typeStr, typePlace, sendable } from "./types.ts";
@@ -48,6 +48,8 @@ export class Codegen {
   diagnostics: string[] = [];
   private counter = 0;
   private tmp = 0;
+  /** type-variable id -> dictionary parameter name while emitting a function */
+  private currentDicts = new Map<number, string>();
 
   constructor(mod: Module, inf: Infer, prog: Program) {
     this.mod = mod;
@@ -239,7 +241,8 @@ export class Codegen {
     for (const d of this.prog.decls) {
       if (d.k === "Fn") {
         const h = this.home(d.body);
-        if (h === side || h === "neutral") out.push(this.emitFn(d.name, d.params, d.body, side));
+        const info = this.mod.fns.get(d.name);
+        if (h === side || h === "neutral") out.push(this.emitFn(d.name, d.params, d.body, side, info?.dicts));
       }
     }
     for (let i = 0; i < this.mod.impls.length; i++) {
@@ -247,7 +250,9 @@ export class Codegen {
       for (const [mname, m] of im.methods) {
         const h = this.home(m.body);
         if (h === side || h === "neutral") {
-          out.push(this.emitFn(implFnName(im.trait, i, mname), m.params, m.body, side));
+          const fname = implFnName(im.trait, i, mname);
+          const info = this.mod.fns.get(fname);
+          out.push(this.emitFn(fname, m.params, m.body, side, info?.dicts));
         }
       }
     }
@@ -278,6 +283,11 @@ export class Codegen {
       out.push(`export function __flow_start(root) { R.mount(root, () => R.v(main())); }`);
       out.push(`export { R };`);
     } else {
+      const routesFn = this.prog.decls.find((d) => d.k === "Fn" && d.name === "routes");
+      if (routesFn && (this.home(routesFn.body) === "server" || this.home(routesFn.body) === "neutral")) {
+        out.push("");
+        out.push(`export { ${routesFn.name} as routes };`);
+      }
       out.push("");
       out.push(`export { R };`);
     }
@@ -285,11 +295,20 @@ export class Codegen {
     return out.join("\n");
   }
 
-  private emitFn(name: string, params: { name: string }[], body: Expr, side: Side): string {
-    const env = new Set(params.map((p) => p.name));
-    const js = this.emitExpr(body, side, side, env);
+  private emitFn(name: string, params: { name: string }[], body: Expr, side: Side, dicts?: DictParam[]): string {
+    const dictParams = (dicts ?? []).map((d) => d.name);
+    const env = new Set([...params.map((p) => p.name), ...dictParams]);
+    const savedDicts = this.currentDicts;
+    this.currentDicts = new Map((dicts ?? []).map((d) => [d.varId, d.name]));
+    let js: string;
+    try {
+      js = this.emitExpr(body, side, side, env);
+    } finally {
+      this.currentDicts = savedDicts;
+    }
     const asyncKw = this.hasCallCut(body) ? "async " : "";
-    return `${asyncKw}function ${name}(${params.map((p) => p.name).join(", ")}) { return ${js}; }`;
+    const allParams = [...params.map((p) => p.name), ...dictParams];
+    return `${asyncKw}function ${name}(${allParams.join(", ")}) { return ${js}; }`;
   }
 
   /** True when evaluating `e` needs `await`, i.e. it contains a request/response cut. */
@@ -373,6 +392,15 @@ export class Codegen {
   }
 
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    const bound = this.mod.boundChoices.get(e);
+    if (bound) {
+      const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
+      const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
+      const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      return `${bound.dictName}.${bound.method}(${parts.join(", ")})`;
+    }
+
     const choice = this.mod.implChoices.get(e);
     if (choice) {
       // A method call carries its receiver outside `e.args`; a qualified trait
@@ -381,6 +409,7 @@ export class Codegen {
       const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
       const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
       if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      for (const d of choice.dicts ?? []) parts.push(this.emitDict(d.trait, d.type));
       return `${choice.mangled}(${parts.join(", ")})`;
     }
 
@@ -404,7 +433,40 @@ export class Codegen {
         return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
       }
     }
-    return `${this.emitExpr(e.fn, side, ctxHome, env)}(${args})`;
+    const dicts = e.fn.k === "Var" ? this.mod.dictArgs.get(e) ?? [] : [];
+    const callArgs = [args, ...dicts.map((d) => this.emitDict(d.trait, d.type))]
+      .filter((x) => x.length > 0)
+      .join(", ");
+    return `${this.emitExpr(e.fn, side, ctxHome, env)}(${callArgs})`;
+  }
+
+  /** Emit a dictionary object for a trait instance, closing over inner
+   *  dictionaries when the instance itself is generic with bounds. */
+  private emitDict(trait: string, type: Type): string {
+    const t = prune(type);
+    if (t.k === "var") {
+      const name = this.currentDicts.get(t.id) ?? (t.origin !== undefined ? this.currentDicts.get(t.origin) : undefined);
+      if (name) return name;
+      // The variable may be a fresh alias whose origin was lost during
+      // unification; if this function carries a dictionary for the same trait,
+      // that is the dictionary to pass.
+      const fallback = [...this.currentDicts.values()].find((n) => n.startsWith(`$d_${trait}_`));
+      if (fallback) return fallback;
+      this.fail(`no dictionary for ${trait} ${typeStr(t)} is in scope`);
+    }
+    const resolved = this.inf.resolveImplInfo(trait, t);
+    if (!resolved) this.fail(`no instance of ${trait} for ${typeStr(t)} is available for a dictionary`);
+    const inner = (resolved.impl.dicts ?? [])
+      .map((d) => {
+        const innerType = resolved.subst.get(d.varId);
+        return innerType ? this.emitDict(d.trait, innerType) : null;
+      })
+      .filter((x): x is string => Boolean(x));
+    const fields = [...resolved.impl.mangled.entries()].map(([method, fn]) => {
+      if (inner.length) return `${JSON.stringify(method)}: (...a) => ${fn}(...a, ${inner.join(", ")})`;
+      return `${JSON.stringify(method)}: ${fn}`;
+    });
+    return `{ ${fields.join(", ")} }`;
   }
 
   private emitBinary(e: Expr & { k: "Binary" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {

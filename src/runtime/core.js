@@ -345,6 +345,13 @@ export function createRuntime() {
 /** Authority that only exists on a server process. */
 export function installServerCapabilities(R, opts = {}) {
   const store = new Map(Object.entries(opts.store ?? {}));
+  const routes = [];
+  let notFound = null;
+  let currentRequest = null;
+  R._routes = () => routes;
+  R._notFound = () => notFound;
+  R._setRequest = (req) => { currentRequest = req; };
+
   const host = globalThis.__flow.host;
   host.secret = (name) =>
     opts.secrets && opts.secrets[name] != null ? String(opts.secrets[name]) : "";
@@ -352,6 +359,14 @@ export function installServerCapabilities(R, opts = {}) {
     store.has(k) ? R.ctor("Some", [store.get(k)]) : R.ctor("None", []);
   host.storeSet = (k, v) => { store.set(k, v); return null; };
   host.log = (msg) => { (opts.log ?? console.log)(msg); return null; };
+
+  // HTTP routing primitives used by std::http.
+  host.route = (route) => { routes.push(route); return null; };
+  host.routes = (list) => { for (const r of list ?? []) routes.push(r); return null; };
+  host.notFound = (handler) => { notFound = handler; return null; };
+  host.request = () => currentRequest ?? {
+    method: "", path: "", query: "", body: "", headers: [], params: [],
+  };
 }
 
 /** The client has no extra authority beyond the shared primitives. */

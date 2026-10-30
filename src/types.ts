@@ -9,7 +9,7 @@ import { FlowError } from "./lexer.ts";
 
 export type Place = "neutral" | "client" | "server" | "cross";
 
-export interface TVar { k: "var"; id: number; level: number; generic?: boolean }
+export interface TVar { k: "var"; id: number; level: number; generic?: boolean; bounds?: string[]; origin?: number }
 export interface TCon { k: "con"; name: string; args: Type[] }
 export interface TFun { k: "fun"; params: Type[]; ret: Type; eff: Eff }
 export interface TRec { k: "rec"; fields: Record<string, Type>; open?: boolean }
@@ -139,6 +139,12 @@ export function unify(a: Type, b: Type): void {
   if (x === y) return;
   if (x.k === "var") {
     if (occurs(x.id, y)) tErr(`infinite type: ${typeStr(x)} = ${typeStr(y)}`);
+    // A bound survives unification with another type variable so the call site
+    // can still find (or pass) a dictionary for it.
+    if (y.k === "var" && x.bounds?.length) {
+      y.bounds = [...new Set([...(y.bounds ?? []), ...x.bounds])];
+      if (y.origin === undefined) y.origin = x.origin ?? x.id;
+    }
     bind(x.id, y);
     return;
   }
@@ -213,14 +219,21 @@ export function generalize(t: Type, envVars: Set<number>): Type {
   return mapType(p, (x) => generalize(x, envVars));
 }
 
-/** Replace generic variables with fresh ones. */
-export function instantiate(t: Type, level: number): Type {
+/** Replace generic variables with fresh ones. `trace` records the mapping from
+ *  each generalized variable to its fresh instantiation (for dictionaries). */
+export function instantiate(t: Type, level: number, trace?: Map<number, Type>): Type {
   const mapping = new Map<number, Type>();
   const go = (x: Type): Type => {
     const p = prune(x);
     if (p.k === "var") {
       if (p.generic) {
-        if (!mapping.has(p.id)) mapping.set(p.id, fresh(level));
+        if (!mapping.has(p.id)) {
+          const v = fresh(level);
+          if (p.bounds) v.bounds = [...p.bounds];
+          if (p.bounds?.length) v.origin = p.origin ?? p.id;
+          mapping.set(p.id, v);
+          if (trace) trace.set(p.id, v);
+        }
         return mapping.get(p.id)!;
       }
       return p;
