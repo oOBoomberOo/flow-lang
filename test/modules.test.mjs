@@ -289,3 +289,19 @@ fn main() -> Html {
   assert.ok(r.client.includes('R.ffiCall("@sort"'), "sorting reaches the host through the FFI");
   assert.deepEqual(r.diagnostics, []);
 });
+
+test("ffi: user code can declare and call raw JavaScript directly", () => {
+  const { entry } = packageWith({
+    "main.flow": `unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
+unsafe extern js fn shout(s: Str) -> Str = "@toUpperCase"
+
+fn main() -> Html {
+  html { <p>{str(hypot(3.0, 4.0))}{shout("ok")}</p> }
+}
+`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /R\.ffiCall\("Math\.hypot"/);
+  assert.match(r.client, /R\.ffiCall\("@toUpperCase"/);
+  assert.deepEqual(r.diagnostics, []);
+});

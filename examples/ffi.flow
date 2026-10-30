@@ -5,16 +5,28 @@ use std::log::{info, value}
 use std::time::{nowMs, duration}
 use std::math::{sqrt, floor, pow}
 
+// User code can bind raw JavaScript directly — the same mechanism std uses.
+unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
+unsafe extern js fn shout(s: Str) -> Str = "@toUpperCase"
+unsafe extern js fn countOf(xs: List<Int>) -> Int = "#length"
+unsafe extern js fn itemAt(xs: List<Int>, i: Int) -> Int = "#index"
+
 fn main() -> Html {
   let started = nowMs();
   let root = sqrt(144.0);
   let whole = floor(2.7);
   let big = pow(2.0, 10.0);
+  let hyp = hypot(3.0, 4.0);
+  let loud = shout("flow ffi");
+  let n = countOf([10, 20, 30]);
+  let second = itemAt([10, 20, 30], 1);
 
   info("flow: ffi demo");
   value("sqrt(144)", root);
   value("floor(2.7)", whole);
   value("2^10", big);
+  value("hypot(3,4)", hyp);
+  value("uppercase", loud);
   value("boot took", duration(nowMs() - started));
 
   // a server-placed log still uses the Server capability
@@ -24,6 +36,7 @@ fn main() -> Html {
     <div class="card">
       <h1>{"FFI primitives"}</h1>
       <p class="math">{"sqrt(144) = "}{str(root)}{", floor(2.7) = "}{str(whole)}{", 2^10 = "}{str(big)}</p>
+      <p class="direct">{"hypot(3,4) = "}{str(hyp)}{", upper = "}{loud}{", length = "}{str(n)}{", index 1 = "}{str(second)}</p>
       <p class="time">{"started at "}{str(started)}</p>
     </div>
   }
