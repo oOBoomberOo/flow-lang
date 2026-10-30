@@ -39,9 +39,18 @@ cut cut1: reactive server-side block @24 deps=[] type=Str
 ```
 node bin/flow.mjs check   examples/boundary.flow     # type-check only
 node bin/flow.mjs explain examples/boundary.flow     # + inferred boundary
+node bin/flow.mjs watch   examples/boundary.flow     # re-check on every save
+node bin/flow.mjs watch   examples/boundary.flow --run --port 4173
 node bin/flow.mjs build   examples/boundary.flow --out dist
 node bin/flow.mjs run     examples/boundary.flow --port 4173 --secret flag=hunter2
 ```
+
+`flow watch` watches the package directory (sources, `flow.json`, `flow.lock`),
+rebuilds after a short debounce, and keeps running when a build fails. Add
+`--run` to rebuild and restart the server on every successful change.
+
+Progress goes to stderr (`Checking`, `Compiling`, `Finished in 0.12s`) and honours
+`--quiet`, `NO_COLOR` and `--color always|never`.
 
 Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build step.
 
@@ -537,29 +546,40 @@ dist/
 
 ## 10. Diagnostics
 
+Flow renders errors like rustc: an error code, the source location, the offending
+line with a caret underline, and a one-line summary. Every error in the package is
+reported, not just the first.
+
 ```
 $ flow check bad.flow
-bad.flow:12:14 — [E_TYPE] non-exhaustive match on Shape: missing Triangle
-  in fn area
-
-$ flow check bad.flow
-bad.flow:5:17 — [E_TYPE] return type mismatch in fn f: expected Str, got Int
-  in fn f
-
-$ flow check bad.flow
-bad.flow:1:11 — [E_TYPE] unknown type 'str' — 'str' is a value, not a type; did you mean 'Str'?
-
-$ flow check bad.flow
-bad.flow:9:20 — [E_TYPE] right operand of '+' (left is Int): expected Int, got Str
-  in argument 1
-  in fn main
-
-$ flow check bad.flow
-bad.flow:7:3 — [E_SPLIT] value 'f' of type (Int) -> Int cannot cross the server
-boundary: functions are not serializable across the boundary
+    Checking bad.flow
+error[E_TYPE]: unknown type 'str'
+ --> bad.flow:1:11
+  |
+1 | fn f() -> str { "hello" }
+  |           ^^^
+  |
+  = help: 'str' is a value, not a type; did you mean 'Str'?
+error: could not check `bad.flow` due to 1 previous error
 ```
 
-Error codes: `E_LEX`, `E_PARSE`, `E_TYPE`, `E_SPLIT`, `E_ENTRY`.
+```
+$ flow check bad.flow
+    Checking bad.flow
+error[E_TYPE]: right operand of '+' (left is Int): expected Int, got Str
+ --> bad.flow:4:40
+  |
+4 | fn main() -> Html { html { <p>{1 + "x"}</p> } }
+  |                                        ^^^
+  |
+  = note: in argument 1
+  = note: in fn main
+error: could not check `bad.flow` due to 1 previous error
+```
+
+The process exits 1 on failure and 0 on success. Colour is enabled on a TTY and
+can be forced or disabled with `--color always` / `--color never` (or `NO_COLOR`).
+`--quiet` suppresses the progress lines.
 
 Diagnostics point at the expression that is wrong, not at the enclosing function:
 

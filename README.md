@@ -47,9 +47,14 @@ Requires **Node ≥ 22.6** (native TypeScript type-stripping). No dependencies, 
 ```bash
 node bin/flow.mjs check   examples/boundary.flow
 node bin/flow.mjs explain examples/boundary.flow
-node bin/flow.mjs run     examples/boundary.flow --port 4173 --secret flag=hunter2
-# open http://localhost:4173
+node bin/flow.mjs watch   examples/boundary.flow --run --port 4173
+# open http://localhost:4173; edits rebuild and restart automatically
 ```
+
+Errors are rendered Cargo-style: `error[E_TYPE]: …`, a ` --> file:line:col` arrow,
+the source line with a caret underline, notes, and a `could not … due to N previous
+errors` summary. `flow watch` re-checks (or rebuilds and restarts with `--run`) on
+save; progress lines honour `--quiet`, `NO_COLOR` and `--color`.
 
 A package with real dependencies:
 
@@ -80,8 +85,8 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **189 tests** across grammar, types, boundaries, modules, packages,
-the language server, HTTP capabilities, network capabilities, filesystem capabilities,
+Tests: `npm test` — **200 tests** across grammar, types, boundaries, modules, packages,
+the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
 algebraic effects, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 
 ---
@@ -172,6 +177,10 @@ fn area(s: Shape) -> Float {
 * **Unsafe FFI** - `unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"`; the
   standard library (logging, timing, arithmetic, strings, lists) is built on it rather
   than on compiler-emitted primitives
+* **Cargo-style CLI** - `flow check/build/run/watch/explain` with `error[E_TYPE]`
+  diagnostics, `--> file:line:col` arrows, source snippets with carets, colour on a
+  TTY, `--quiet` and a `could not … due to N previous errors` summary; `flow watch`
+  re-checks (or rebuilds and restarts with `--run`) on every save
 
 **Modules, packages, and a standard library**
 

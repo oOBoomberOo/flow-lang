@@ -137,6 +137,8 @@ export class Infer {
   env = new Map<string, EnvEntry>();
   /** type parameters of the declaration whose body is being checked */
   typeParams = new Map<string, Type>();
+  /** declarations whose signature failed: references must not cascade errors */
+  private failedNames = new Set<string>();
   /** type-variable id -> dictionary parameter name while checking a body */
   currentDicts = new Map<number, string>();
 
@@ -165,15 +167,17 @@ export class Infer {
 
   /** Run a checking step, recording type errors instead of aborting the whole
    *  analysis — an editor wants every error, not just the first. */
-  private collect(step: () => void) {
+  private collect(step: () => void): boolean {
     try {
       step();
+      return true;
     } catch (e) {
       if (!(e instanceof FlowError)) throw e;
       const key = `${e.file}:${e.line}:${e.col}:${e.message}`;
       if (!this.mod.errors.some((x) => `${x.file}:${x.line}:${x.col}:${x.message}` === key)) {
         this.mod.errors.push(e);
       }
+      return false;
     }
   }
 
@@ -182,25 +186,30 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   run(prog: Program): Module {
-    this.checkDuplicateDeclarations(prog);
+    this.failedNames.clear();
+    this.collect(() => this.checkDuplicateDeclarations(prog));
     for (const d of prog.decls) {
-      if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") this.registerType(d);
-      if (d.k === "Trait") this.registerTrait(d);
-      if (d.k === "Effect") this.registerEffect(d);
+      if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") this.collect(() => this.registerType(d));
+      if (d.k === "Trait") this.collect(() => this.registerTrait(d));
+      if (d.k === "Effect") this.collect(() => this.registerEffect(d));
     }
     this.checkDeclaredRows(prog);
-    for (const d of prog.decls) if (d.k === "Adt") this.registerCtors(d);
-    for (const d of prog.decls) if (d.k === "Impl") this.registerImpl(d);
-    for (const d of prog.decls) if (d.k === "Fn") this.declareFn(d);
-    for (const d of prog.decls) if (d.k === "Extern") this.declareExtern(d);
+    for (const d of prog.decls) if (d.k === "Adt") this.collect(() => this.registerCtors(d));
+    for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.registerImpl(d));
+    for (const d of prog.decls) if (d.k === "Fn") {
+      if (!this.collect(() => this.declareFn(d))) this.failedNames.add(d.name);
+    }
+    for (const d of prog.decls) if (d.k === "Extern") {
+      if (!this.collect(() => this.declareExtern(d))) this.failedNames.add(d.sig.name);
+    }
 
     // Capabilities (Server / Client / Store) are declared by std::prelude, which
     // every module imports implicitly; the compiler injects nothing here.
 
     // Providers determine where an effect lives, and effect placement determines
     // where the calls are placed. Run both to a fixpoint.
-    this.checkProvides(prog);
-    for (const d of prog.decls) if (d.k === "Provide") this.registerProvide(d);
+    this.collect(() => this.checkProvides(prog));
+    for (const d of prog.decls) if (d.k === "Provide") this.collect(() => this.registerProvide(d));
     this.applyProviderPlaces();
 
     for (let pass = 0; pass < 8; pass++) {
@@ -208,7 +217,7 @@ export class Infer {
       for (const d of prog.decls) if (d.k === "Fn") this.collect(() => this.checkFnBody(d));
       for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.checkImplBodies(d));
       this.collect(() => this.checkProvides(prog));
-      for (const d of prog.decls) if (d.k === "Provide") this.registerProvide(d);
+      for (const d of prog.decls) if (d.k === "Provide") this.collect(() => this.registerProvide(d));
       this.applyProviderPlaces();
       if (this.placementFingerprint() === before) break;
     }
@@ -237,6 +246,7 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   lookupVar(name: string, span?: { line: number; col: number }): Type {
+    if (this.failedNames.has(name)) return fresh(0);
     const local = this.env.get(name);
     if (local) return instantiate(local.ty, 0);
     const fn = this.mod.fns.get(name);
@@ -301,8 +311,11 @@ export class Infer {
 
   /** Validate rows and signatures once every effect and trait is known. */
   private checkDeclaredRows(prog: Program) {
-    for (const d of prog.decls) {
-      switch (d.k) {
+    for (const d of prog.decls) this.collect(() => this.checkDeclaredRow(d));
+  }
+
+  private checkDeclaredRow(d: Decl) {
+    switch (d.k) {
         case "Fn":
           this.checkSigRows(d);
           break;
@@ -356,7 +369,6 @@ export class Infer {
         case "Provide":
           if (d.target) this.resolveType(d.target, new Map());
           break;
-      }
     }
   }
 
@@ -790,7 +802,14 @@ export class Infer {
   }
 
   private checkNamedBody(name: string, params: Param[], body: Expr, ret?: TypeExpr, declaredEff?: EffRow) {
-    const info = this.mod.fns.get(name)!;
+    const info = this.mod.fns.get(name);
+    if (!info) return; // a declaration error was already reported
+    // Do not report cascades caused by a declaration that already failed.
+    let poisoned = false;
+    forEachExpr(body, (x) => {
+      if (x.k === "Var" && this.failedNames.has(x.name)) poisoned = true;
+    });
+    if (poisoned) return;
     const t = info.scheme;
     if (t.k !== "fun") return;
 

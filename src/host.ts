@@ -9,6 +9,8 @@ export interface HostOptions {
   outDir: string;
   port: number;
   secrets?: Record<string, string>;
+  /** appended to the server bundle import so `watch --run` picks up rebuilds */
+  cacheBust?: string;
 }
 
 export interface Host {
@@ -21,7 +23,9 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   process.env.FLOW_OPTS = JSON.stringify({ secrets: opts.secrets ?? {} });
 
   const serverBundle = path.join(opts.outDir, "server.js");
-  const serverModule = await import(pathToFileUrl(serverBundle));
+  const serverModule = await import(
+    pathToFileUrl(serverBundle) + (opts.cacheBust ? `?v=${encodeURIComponent(opts.cacheBust)}` : "")
+  );
   const { R } = serverModule;
   const { createHub, attachServerTransport } = await import(
     pathToFileUrl(path.join(opts.outDir, "runtime", "server.js"))
@@ -133,7 +137,19 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     res.end("not found");
   });
 
-  await new Promise<void>((resolve) => server.listen(opts.port, resolve));
+  await new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => {
+      server.off("listening", onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(opts.port);
+  });
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : opts.port;
 

@@ -474,7 +474,8 @@ installed into .../flow_modules
 wrote .../flow.lock
 
 $ node ../../bin/flow.mjs check src/main.flow
-ok: src/main.flow type-checks (0 cut(s) inferred)
+    Checking src/main.flow
+    Finished check in 0.07s (no cuts)
 ```
 
 Verified in a browser: `uptime: 01:02:03`, bars at `width:42%`, cards rendered —
