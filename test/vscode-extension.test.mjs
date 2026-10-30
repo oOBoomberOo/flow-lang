@@ -71,6 +71,7 @@ function makeMock(workspaceRoot) {
     TextEdit: class { static replace(range, newText) { return { range, newText }; } },
     CodeAction: class { constructor(title, kind) { this.title = title; this.kind = kind; } },
     CodeLens: class { constructor(range, command) { this.range = range; this.command = command; } },
+    DocumentLink: class { constructor(range, target) { this.range = range; this.target = target; } },
     WorkspaceEdit: class { constructor() { this.edits = []; } replace(uri, range, newText) { this.edits.push({ uri, range, newText }); } },
     window: {
       createOutputChannel: () => ({ appendLine() {}, clear() {}, show() {}, dispose() {} }),
@@ -94,6 +95,7 @@ function makeMock(workspaceRoot) {
       onDidSaveTextDocument: (h) => { handlers.save = h; return d(); },
       onDidCloseTextDocument: (h) => { handlers.close = h; return d(); },
       onDidChangeConfiguration: (h) => { handlers.config = h; return d(); },
+      createFileSystemWatcher: () => ({ onDidChange: () => d(), onDidCreate: () => d(), onDidDelete: () => d(), dispose() {} }),
     },
     languages: {
       createDiagnosticCollection: () => ({ set: () => { diagnosticsSets++; }, delete() {}, dispose() {} }),
@@ -108,6 +110,8 @@ function makeMock(workspaceRoot) {
       registerFoldingRangeProvider: (_l, p) => { registered.push(["foldingRange", p]); return d(); },
       registerSelectionRangeProvider: (_l, p) => { registered.push(["selectionRange", p]); return d(); },
       registerDocumentHighlightProvider: (_l, p) => { registered.push(["documentHighlight", p]); return d(); },
+      registerDocumentLinkProvider: (_l, p) => { registered.push(["documentLink", p]); return d(); },
+      registerTypeDefinitionProvider: (_l, p) => { registered.push(["typeDefinition", p]); return d(); },
       registerDocumentFormattingEditProvider: (_l, p) => { registered.push(["formatting", p]); return d(); },
       registerCodeActionsProvider: (_l, p, m) => { registered.push(["codeAction", p, m]); return d(); },
       registerCodeLensProvider: (_l, p) => { registered.push(["codeLens", p]); return d(); },
@@ -182,9 +186,9 @@ test("vscode: activates, drives the server and colours the boundary", async () =
     // every provider the server implements is registered with VS Code
     const names = env.registered.map((r) => r[0]).sort();
     assert.deepEqual(names, [
-      "codeAction", "codeLens", "completion", "definition", "documentHighlight",
+      "codeAction", "codeLens", "completion", "definition", "documentHighlight", "documentLink",
       "documentSymbol", "foldingRange", "formatting", "hover", "inlayHint",
-      "references", "rename", "selectionRange", "signatureHelp", "workspaceSymbol",
+      "references", "rename", "selectionRange", "signatureHelp", "typeDefinition", "workspaceSymbol",
     ]);
   } finally {
     ext.deactivate();
@@ -230,6 +234,46 @@ test("vscode: providers return real results from the server", async () => {
 
     const edits = await provider("formatting").provideDocumentFormattingEdits(doc);
     assert.ok(edits.length >= 1, "formatting edits");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: completion carries auto-import edits and module links", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-mod-"));
+  fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  const source = `use app::util::known
+fn main() -> Html {
+  html { <p>{str(known())}{str(meaning())}</p> }
+}
+`;
+  fs.writeFileSync(path.join(dir, "src", "main.flow"), source);
+  fs.writeFileSync(path.join(dir, "src", "util.flow"), `pub fn known() -> Int { 1 }\npub fn meaning() -> Int { 42 }\n`);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const file = path.join(dir, "src", "main.flow");
+    const doc = { languageId: "flow", uri: env.mock.Uri.file(file), version: 1, getText: () => source };
+    await waitUntil(() => typeof env.handlers.open === "function", 3000, "open handler");
+    env.handlers.open(doc);
+    await waitUntil(() => env.registered.some((r) => r[0] === "documentLink"), 3000, "providers");
+    await new Promise((r) => setTimeout(r, 250));
+
+    const provider = (name) => env.registered.find((r) => r[0] === name)[1];
+    const line = source.split("\n").findIndex((l) => l.includes("meaning()"));
+    const character = source.split("\n")[line].indexOf("meaning") + 3;
+    const completion = await provider("completion").provideCompletionItems(doc, new env.mock.Position(line, character));
+    const item = completion.items.find((i) => i.label === "meaning");
+    assert.ok(item, "unimported package symbol is suggested");
+    assert.equal(item.additionalTextEdits.length, 1);
+    assert.match(item.additionalTextEdits[0].newText, /use app::util::\{meaning\}/);
+
+    const links = await provider("documentLink").provideDocumentLinks(doc);
+    assert.ok(links.some((l) => l.target.fsPath.endsWith("util.flow")), "import becomes clickable link");
   } finally {
     ext.deactivate();
     restore();

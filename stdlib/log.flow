@@ -1,0 +1,19 @@
+// std::log — logging through the host console, built on the FFI.
+//
+// No compiler support: `console.log` is an ordinary `unsafe extern js` binding.
+
+unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
+unsafe extern js fn console_warn(msg: Str) -> Unit = "console.warn"
+unsafe extern js fn console_error(msg: Str) -> Unit = "console.error"
+unsafe extern js fn console_debug(msg: Str) -> Unit = "console.debug"
+
+pub fn info(msg: Str) -> Unit { console_log(msg) }
+
+pub fn warn(msg: Str) -> Unit { console_warn("[warn] " + msg) }
+
+pub fn error(msg: Str) -> Unit { console_error("[error] " + msg) }
+
+pub fn debug(msg: Str) -> Unit { console_debug(msg) }
+
+/// Log a value with a label, using the structural `str` from the prelude.
+pub fn value<a>(label: Str, x: a) -> Unit { console_log(label + " = " + str(x)) }

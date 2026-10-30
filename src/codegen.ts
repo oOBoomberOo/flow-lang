@@ -310,7 +310,11 @@ export class Codegen {
 
     switch (e.k) {
       case "Lit": return litJs(e.lit);
-      case "Var": return e.name;
+      case "Var": {
+        const ext = this.mod.fns.get(e.name)?.extern;
+        if (ext && !env.has(e.name)) return `R.ffiFn(${ev(ext.implName)})`;
+        return e.name;
+      }
       case "Lam": {
         const inner = new Set(env);
         for (const p of e.params) inner.add(p.name);
@@ -384,6 +388,14 @@ export class Codegen {
     }
 
     const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
+
+    // `unsafe extern js fn` — call the host directly
+    if (e.fn.k === "Var") {
+      const ext = this.mod.fns.get(e.fn.name)?.extern;
+      if (ext && !env.has(e.fn.name)) {
+        return `R.ffiCall(${ev(ext.implName)}, [${args}])`;
+      }
+    }
 
     const qual = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
     if (e.fn.k === "Field" && qual && this.mod.effects.has(qual)) {

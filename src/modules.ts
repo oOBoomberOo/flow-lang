@@ -59,6 +59,7 @@ export interface SymInfo {
 function kindOf(decl: Decl, name: string): SymKind {
   switch (decl.k) {
     case "Fn": return "function";
+    case "Extern": return "function";
     case "Adt": return decl.name === name ? "type" : "constructor";
     case "RecordType": return "record";
     case "Alias": return "alias";
@@ -75,6 +76,8 @@ export interface LinkedProgram {
   display: Map<string, string>;
   /** final name -> declaration site (for go-to-definition, references, symbols) */
   symbols: Map<string, SymInfo>;
+  /** file -> final names imported into that file (for auto-import) */
+  importedByFile: Map<string, Set<string>>;
   entry: SourceUnit;
 }
 
@@ -216,6 +219,11 @@ export class Linker {
     visit(this.entry);
     for (const u of this.units.values()) visit(u);
 
+    // The prelude is injected into every module: intrinsics and the capability
+    // effects live in std, not in the compiler.
+    const prelude = this.loadUnit(stdPackage(), ["prelude"]);
+    if (!ordered.includes(prelude)) ordered.unshift(prelude);
+
     return this.flatten(ordered);
   }
 
@@ -235,7 +243,7 @@ export class Linker {
     const declares = new Map<string, Decl>();
     for (const d of program.decls) {
       if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
-      declares.set(d.name, d);
+      declares.set(d.k === "Extern" ? d.sig.name : d.name, d);
       if (d.k === "Adt") for (const v of d.variants) declares.set(v.name, d);
     }
     const unit: SourceUnit = { id, pkg: pkg.name, pkgObj: pkg, modulePath, file, program, declares };
@@ -342,9 +350,11 @@ export class Linker {
     for (const u of units) {
       for (const d of u.program.decls) {
         if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
-        const names: string[] = [d.name];
+        const names: string[] = [d.k === "Extern" ? d.sig.name : d.name];
         if (d.k === "Adt") names.push(...d.variants.map((v) => v.name));
-        for (const n of names) {
+        // `type Priority = Priority(Int)` names a type and a constructor with the
+        // same identifier: that is one name, not a collision.
+        for (const n of new Set(names)) {
           if (!byName.has(n)) byName.set(n, []);
           byName.get(n)!.push({ unit: u, decl: d, name: n });
         }
@@ -352,10 +362,11 @@ export class Linker {
     }
 
     // 2. final names: keep the simple name when unique, otherwise qualify
+    const PINNED = new Set(["Server", "Client", "Store"]); // runtime capability names
     const finalName = new Map<string, string>(); // `${unit.id}::${name}` -> final
     const symbols = new Map<string, SymInfo>();
     for (const [name, entries] of byName) {
-      const unique = entries.length === 1;
+      const unique = entries.length === 1 || PINNED.has(name);
       for (const e of entries) {
         const key = `${e.unit.id}::${e.name}`;
         const final = unique ? name : `${name}$${e.unit.id.replace(/::/g, "$")}`;
@@ -377,6 +388,27 @@ export class Linker {
     // 3. per-unit scopes and AST rewriting
     const out: Decl[] = [];
     const display = new Map<string, string>();
+    const importedByFile = new Map<string, Set<string>>();
+
+    // exports of std::prelude, injected into every module with the lowest priority
+    const preludeUnit = this.units.get("std::prelude");
+    const preludeValues = new Map<string, string>();
+    const preludeTypes = new Map<string, string>();
+    if (preludeUnit) {
+      for (const [n, d] of preludeUnit.declares) {
+        const final = finalName.get(`${preludeUnit.id}::${n}`);
+        if (!final) continue;
+        if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") preludeTypes.set(n, final);
+        else preludeValues.set(n, final);
+        if (d.k === "Adt") {
+          for (const v of d.variants) {
+            const vFinal = finalName.get(`${preludeUnit.id}::${v.name}`);
+            if (vFinal) preludeValues.set(v.name, vFinal);
+          }
+        }
+      }
+    }
+
     for (const u of units) {
       const values = new Map<string, string>();
       const types = new Map<string, string>();
@@ -386,7 +418,7 @@ export class Linker {
         display.set(final, `${u.id}::${n}`);
         if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") types.set(n, final);
         if (d.k === "Adt") for (const v of d.variants) values.set(v.name, finalName.get(`${u.id}::${v.name}`)!);
-        if (d.k === "Fn" || d.k === "Trait" || d.k === "Effect") values.set(n, final);
+        if (d.k === "Fn" || d.k === "Extern" || d.k === "Trait" || d.k === "Effect") values.set(n, final);
       }
       for (const [alias, ref] of this.importTable(u)) {
         const final = finalName.get(`${ref.unit.id}::${ref.name}`);
@@ -402,7 +434,13 @@ export class Linker {
             if (vFinal) values.set(v.name, vFinal);
           }
         }
+        if (!importedByFile.has(u.file)) importedByFile.set(u.file, new Set());
+        importedByFile.get(u.file)!.add(final);
       }
+
+      // prelude names fill in whatever this unit does not declare or import
+      for (const [k, v] of preludeValues) if (!values.has(k)) values.set(k, v);
+      for (const [k, v] of preludeTypes) if (!types.has(k)) types.set(k, v);
 
       for (const d of u.program.decls) {
         if (d.k === "Use") continue;
@@ -415,6 +453,7 @@ export class Linker {
       units,
       display,
       symbols,
+      importedByFile,
       entry: this.entry,
     };
   }
@@ -491,7 +530,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
         ops: d.ops.map((o) => ({ ...o, fn: rwExpr(o.fn, new Set(), values, types) })),
       };
     case "Extern":
-      return { ...d, sig: rwSig(d.sig, types) };
+      return { ...d, sig: { ...rwSig(d.sig, types), name: values.get(d.sig.name) ?? d.sig.name } };
   }
   return d;
 }

@@ -20,7 +20,7 @@ export interface Token {
 
 export const KEYWORDS = new Set([
   "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl",
-  "effect", "provide", "with", "use", "extern", "html", "pub", "return",
+  "effect", "provide", "with", "use", "extern", "unsafe", "html", "pub", "return",
   "for", "in", "true", "false", "and", "or", "not", "as",
 ]);
 

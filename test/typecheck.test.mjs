@@ -68,9 +68,9 @@ ${page(`<p>{sum([1,2,3])}</p>`)}`);
 
 test("constructor arity is checked", () => {
   bad(`
-type O = None | Some(Int)
-fn f(o: O) -> Int { match o { None => 0, Some(a, b) => a } }
-${page(`<p>{f(None)}</p>`)}`, /expects 1 pattern argument/);
+type Num = Nothing | Just(Int)
+fn f(o: Num) -> Int { match o { Nothing => 0, Just(a, b) => a } }
+fn main() -> Html { html { <p>{str(f(Nothing))}</p> } }`, /expects 1 pattern argument/);
 });
 
 test("unknown type names are rejected", () => {

@@ -1,0 +1,31 @@
+// std::time — timing built on the FFI, not on compiler intrinsics.
+
+unsafe extern js fn date_now() -> Int = "Date.now"
+unsafe extern js fn perf_now() -> Float = "globalThis.performance.now"
+
+/// Wall-clock milliseconds since the epoch.
+pub fn nowMs() -> Int { date_now() }
+
+/// High-resolution milliseconds since the process started (fractional).
+pub fn nowPrecise() -> Float { perf_now() }
+
+pub fn elapsedSince(start: Int) -> Int { nowMs() - start }
+
+pub fn since(start: Float) -> Float { perf_now() - start }
+
+pub fn pad2(n: Int) -> Str {
+  if (n < 0) { "00" } else if (n < 10) { "0" + str(n) } else { str(n) }
+}
+
+/// `hh:mm:ss` for a duration in milliseconds.
+pub fn hms(ms: Int) -> Str {
+  let total = ms / 1000;
+  pad2(total / 3600) + ":" + pad2((total / 60) % 60) + ":" + pad2(total % 60)
+}
+
+/// A compact duration: `900ms`, `12s`, `3m 05s`.
+pub fn duration(ms: Int) -> Str {
+  if (ms < 1000) { str(ms) + "ms" }
+  else if (ms < 60000) { str(ms / 1000) + "s" }
+  else { str(ms / 60000) + "m " + pad2((ms / 1000) % 60) + "s" }
+}

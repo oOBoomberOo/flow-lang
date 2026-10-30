@@ -1,9 +1,11 @@
+import fs from "node:fs";
+import path from "node:path";
 import { parse } from "./parser.ts";
 import { Infer } from "./infer.ts";
 import { Codegen } from "./codegen.ts";
-import { Linker } from "./modules.ts";
+import { Linker, STDLIB_DIR } from "./modules.ts";
 import type { SymInfo } from "./modules.ts";
-import type { Program } from "./ast.ts";
+import type { Decl, Program } from "./ast.ts";
 import type { Module, Infer as InferType } from "./infer.ts";
 import type { Compiled } from "./codegen.ts";
 import { FlowError } from "./lexer.ts";
@@ -27,6 +29,7 @@ export interface CompileResult {
   units: { id: string; file: string }[];
   display?: Map<string, string>;
   symbols?: Map<string, SymInfo>;
+  importedByFile?: Map<string, Set<string>>;
 }
 
 function checkEntry(mod: Module, file: string) {
@@ -76,9 +79,22 @@ export function compileProgram(
   };
 }
 
-/** Single-file mode: no imports, used by tests and small examples. */
+/** The std prelude, parsed once; it is prepended in single-file mode. */
+let PRELUDE_DECLS: Decl[] | null = null;
+function preludeDecls(): Decl[] {
+  if (!PRELUDE_DECLS) {
+    const file = path.join(STDLIB_DIR, "prelude.flow");
+    PRELUDE_DECLS = parse(fs.readFileSync(file, "utf8"), file).decls;
+  }
+  return PRELUDE_DECLS;
+}
+
+/** Single-file mode: no imports, used by tests and small examples.
+ *  The prelude is prepended so intrinsics behave exactly as in a package. */
 export function compileSource(src: string, file = "<input>", opts: CompileOptions = {}): CompileResult {
-  return compileProgram(parse(src, file), file, [{ id: "main::main", file }], opts);
+  const program = parse(src, file);
+  const merged: Program = { ...program, decls: [...preludeDecls(), ...program.decls] };
+  return compileProgram(merged, file, [{ id: "main::main", file }], opts);
 }
 
 /** Package mode: load, link, then compile the flattened program. */
@@ -95,5 +111,6 @@ export function compileFile(
   );
   result.display = linked.display;
   result.symbols = linked.symbols;
+  result.importedByFile = linked.importedByFile;
   return result;
 }

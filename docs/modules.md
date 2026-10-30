@@ -110,6 +110,22 @@ use std::option::map as mapOption
 
 `std` is resolved by the compiler (no manifest entry, no install step).
 
+### `std::prelude` — injected into every module
+
+These names are available without an import. A module's own declarations and
+imports take precedence over the prelude.
+
+| | |
+|---|---|
+| effects | `Server`, `Client`, `Store` (declared here, not by the compiler) |
+| lists | `len`, `isEmpty`, `push`, `head`, `tail`, `concat`, `reverse` |
+| strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars` |
+| numbers | `int`, `float` |
+
+The prelude is ordinary Flow: every primitive is an `unsafe extern js` binding to
+the host (`#length`, `@toUpperCase`, `__flow.show`, …). Nothing here is emitted by
+the compiler.
+
 ### `std::list`
 
 ```flow
@@ -134,7 +150,27 @@ use std::list::{map, filter, fold, forEach, headOf, take, drop, range, zip, any,
 
 ### `std::math`
 
-`abs`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`.
+Int helpers in Flow: `abs`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`.
+Float primitives through the FFI: `sqrt`, `pow`, `floor`, `ceil`, `round`, `absF`,
+`minF`, `maxF`, `logF`, `expF`, `sinF`, `cosF`.
+
+### `std::log`
+
+```flow
+use std::log::{info, warn, error, debug, value}
+```
+
+`console.log` / `warn` / `error` / `debug` behind a typed wrapper, plus
+`value("label", x)` which prints `label = str(x)`.
+
+### `std::time`
+
+```flow
+use std::time::{nowMs, nowPrecise, elapsedSince, since, hms, duration}
+```
+
+`Date.now()` and `performance.now()` behind typed functions, plus `hms` and
+`duration` formatting.
 
 ### `std::string`
 

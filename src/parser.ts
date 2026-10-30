@@ -94,7 +94,7 @@ export class Parser {
     let pub = false;
     if (this.atKw("pub")) { this.next(); pub = true; }
 
-    if (this.atKw("extern")) return this.parseExtern(t);
+    if (this.atKw("extern") || this.atKw("unsafe")) return this.parseExtern(t, pub);
     if (this.atKw("type")) return this.parseTypeDecl(t, pub);
     if (this.atKw("trait")) return this.parseTrait(t, pub);
     if (this.atKw("impl")) return this.parseImpl(t);
@@ -170,14 +170,20 @@ export class Parser {
     return name;
   }
 
-  parseExtern(start: Token): Decl {
-    this.next(); // extern
-    this.next(); // fn
-    this.parseFnSig();
+  parseExtern(start: Token, pub = false): Decl {
+    if (!this.eatKw("unsafe")) this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
+    this.expectKw("extern");
+    const target = this.word();
+    if (target !== "js") this.err(`unsupported FFI target '${target}' (expected js)`);
+    this.expectKw("fn");
+    const sig = this.parseFnSig();
     this.expectSym("=");
-    this.expect("str");
+    const implName = this.expect("str").value;
+    if (!/^(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*|[@#][A-Za-z_$][A-Za-z0-9_$]*)$/.test(implName)) {
+      this.err(`invalid JavaScript FFI target '${implName}' (expected "Math.floor", "@method" or "#property")`, start);
+    }
     this.eatSym(";");
-    this.err("'extern' is reserved and not available in Flow 0.1; native capabilities are provided by the runtime", start);
+    return { k: "Extern", sig, target: "js", implName, unsafe: true, pub, span: this.spanFrom(start) };
   }
 
   parseTypeDecl(start: Token, pub = false): Decl {

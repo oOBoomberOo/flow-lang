@@ -131,6 +131,8 @@ fn main() -> Html {
 
 const UTIL = `pub type Report = { title: Str, count: Int }
 
+pub fn meaning() -> Int { 42 }
+
 pub fn tally(xs: List<Int>) -> Int {
   match xs {
     [] => 0,
@@ -147,7 +149,7 @@ test("lsp: completion offers keywords, locals, symbols and module members", asyn
     await c.request("initialize", { rootUri: null, capabilities: {} });
     const text = await open(c, entry);
 
-    const atBody = pos(text, "html {", 6, 1);
+    const atBody = pos(text, "let total", 0);
     const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: atBody });
     const labels = res.items.map((i) => i.label);
     assert.ok(labels.includes("fn"), "keyword completion");
@@ -159,6 +161,13 @@ test("lsp: completion offers keywords, locals, symbols and module members", asyn
     const atField = pos(text, "r.title", 2);
     const fields = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: atField });
     assert.deepEqual(fields.items.map((i) => i.label).sort(), ["count", "title"]);
+
+    // The item is visible without an import, and selecting it inserts the import.
+    const hole = pos(text, "{total}", 1);
+    const auto = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: hole });
+    const meaning = auto.items.find((i) => i.label === "meaning");
+    assert.ok(meaning, "unimported package symbols are offered");
+    assert.match(meaning.additionalTextEdits[0].newText, /use app::util::\{meaning\}/);
 
     // module members after ::
     const usesFile = path.join(root, "src", "uses.flow");
@@ -226,7 +235,8 @@ test("lsp: symbols, signature help and inlay hints", async () => {
       textDocument: { uri: uri(entry) }, range: { start: { line: 0, character: 0 }, end: { line: 30, character: 0 } },
     });
     assert.ok(hints.some((h) => /client|server/.test(String(h.label))), "placement hint");
-    assert.ok(hints.some((h) => String(h.label).startsWith(": ")), "inferred type hint");
+    const totalHint = hints.find((h) => String(h.label).includes(": Int"));
+    assert.ok(totalHint, "let initializer gets its exact inferred type, not the callee type");
   } finally { c.proc.kill(); }
 });
 
@@ -310,5 +320,88 @@ test("lsp: every type error is reported, not just the first", async () => {
     const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
     assert.equal(note.params.diagnostics.length, 2, `expected 2 diagnostics, got ${note.params.diagnostics.length}`);
     assert.ok(note.params.diagnostics.some((d) => /type mismatch/.test(d.message)));
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: markup completion offers tags, attributes and components", async () => {
+  const { entry } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+
+    const mk = (s) => {
+      const lines = s.split("\n");
+      const l = lines.findIndex((x) => x.includes("<div>"));
+      return { line: l, character: lines[l].indexOf("<div>") };
+    };
+    const atTag = mk(text);
+    const tags = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(entry) },
+      position: { line: atTag.line, character: atTag.character + 1 },
+    });
+    assert.ok(tags.items.some((i) => i.label === "div"), "tag names");
+    assert.ok(tags.items.some((i) => i.detail === "component"), "components are offered");
+
+    const attrPos = pos(text, "<Label ", 7);
+    const attrs = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: attrPos });
+    assert.ok(attrs.items.some((i) => i.label === "class"), "attributes");
+    assert.ok(attrs.items.some((i) => i.label === "onClick"), "event attributes");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: document links point at the imported module", async () => {
+  const { entry } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const links = await c.request("textDocument/documentLink", { textDocument: { uri: uri(entry) } });
+    assert.equal(links.length, 1);
+    assert.ok(links[0].target.endsWith("util.flow"), links[0].target);
+    assert.match(links[0].tooltip, /app::util/);
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: type definition resolves a named type", async () => {
+  const { entry } = packageWith({
+    "main.flow": `use app::util::{Priority, rank}
+fn main() -> Html {
+  let p = Priority(2);
+  html { <p>{str(rank(p))}</p> }
+}
+`,
+    "util.flow": `pub type Priority = Priority(Int)
+pub fn rank(p: Priority) -> Int { match p { Priority(n) => n } }
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const lines = text.split("\n");
+    const l = lines.findIndex((x) => x.includes("rank(p)"));
+    const at = { line: l, character: lines[l].indexOf("rank(p)") + 6 };
+    const td = await c.request("textDocument/typeDefinition", { textDocument: { uri: uri(entry) }, position: at });
+    assert.ok(td, "type definition");
+    assert.ok(td.uri.endsWith("util.flow"));
+    assert.match(text.split("\n")[0], /Priority/);
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: watched-file changes re-analyse the package", async () => {
+  const { entry, root } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    // break util.flow on disk, then notify as an editor would
+    fs.writeFileSync(path.join(root, "src", "util.flow"), UTIL.replace("pub fn tally", "fn tally"));
+    c.notify("workspace/didChangeWatchedFiles", {
+      changes: [{ uri: uri(path.join(root, "src", "util.flow")), type: 2 }],
+    });
+    const note = await c.waitFor((m) =>
+      m.method === "textDocument/publishDiagnostics" && m.params.diagnostics.length > 0);
+    assert.match(note.params.diagnostics[0].message, /private in app::util/);
   } finally { c.proc.kill(); }
 });

@@ -39,10 +39,7 @@ whitespace      = " " | "\t" | "\r" | "\n" ;
 
 ; Keywords (reserved, may not be used as identifiers)
 ;   fn let mut if else match type trait impl effect provide with
-;   use extern html pub return for in true false and or not
-
-; Reserved but rejected with an explicit error in 0.1:
-;   use extern            (no modules, no native escapes)
+;   use extern unsafe html pub return for in true false and or not
 
 ; Multi-character symbols
 ;   =>  ->  ==  !=  <=  >=  &&  ||  ..  ::
@@ -63,10 +60,32 @@ declaration     = use-decl
                 | impl-decl
                 | [ 'pub' ] effect-decl
                 | provide-decl
+                | [ 'pub' ] extern-decl
                 | [ 'pub' ] fn-decl ;
 
 ; `pub` marks a declaration as exported from its module. Without it the name is
 ; private to the file and importing it is an error.
+
+; ---------------------------------------------------------------------
+; 3b. FFI — raw JavaScript, explicitly unsafe
+; ---------------------------------------------------------------------
+
+;   unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"
+;
+; Targets:
+;   "Math.floor"   a global path, called with its parent as receiver
+;   "@toUpperCase" a method on the first argument
+;   "#length"      a property of the first argument
+;   "#index"       an element of the first argument
+;
+; This is the escape hatch that the standard library is built on: logging,
+; timing, arithmetic and list/string primitives are ordinary std code bound to
+; the host with `unsafe extern`, not compiler-injected.
+extern-decl     = 'unsafe' 'extern' ffi-target 'fn' identifier [ type-params ]
+                  '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ]
+                  '=' json-string ';'? ;
+
+ffi-target      = identifier ;                      ; only `js` is implemented
 
 ; ---------------------------------------------------------------------
 ; 3a. Modules and imports

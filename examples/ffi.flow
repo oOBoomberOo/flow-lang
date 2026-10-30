@@ -1,0 +1,30 @@
+// Everything here is std code on top of `unsafe extern js` — logging, timing
+// and arithmetic are no longer compiler builtins.
+
+use std::log::{info, value}
+use std::time::{nowMs, duration}
+use std::math::{sqrt, floor, pow}
+
+fn main() -> Html {
+  let started = nowMs();
+  let root = sqrt(144.0);
+  let whole = floor(2.7);
+  let big = pow(2.0, 10.0);
+
+  info("flow: ffi demo");
+  value("sqrt(144)", root);
+  value("floor(2.7)", whole);
+  value("2^10", big);
+  value("boot took", duration(nowMs() - started));
+
+  // a server-placed log still uses the Server capability
+  Server.log("server saw sqrt(144) = " + str(root));
+
+  html {
+    <div class="card">
+      <h1>{"FFI primitives"}</h1>
+      <p class="math">{"sqrt(144) = "}{str(root)}{", floor(2.7) = "}{str(whole)}{", 2^10 = "}{str(big)}</p>
+      <p class="time">{"started at "}{str(started)}</p>
+    </div>
+  }
+}

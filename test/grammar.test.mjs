@@ -259,8 +259,30 @@ test("decl: module paths may use keywords as segments", () => {
   assert.deepEqual(p.decls[0].path, ["std", "html"]);
 });
 
-test("extern is rejected with an explanation", () => {
-  assert.throws(() => parse('extern fn f() -> Int = "f"'), /reserved/);
+test("decl: unsafe extern js declares a raw host function", () => {
+  const p = parse(`unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"
+fn main() -> Html { html { <p>{"x"}</p> } }`);
+  assert.equal(p.decls[0].k, "Extern");
+  assert.equal(p.decls[0].target, "js");
+  assert.equal(p.decls[0].implName, "Math.sqrt");
+  assert.equal(p.decls[0].unsafe, true);
+});
+
+test("decl: FFI supports method and property targets", () => {
+  const p = parse(`unsafe extern js fn upper(s: Str) -> Str = "@toUpperCase"
+unsafe extern js fn size(s: Str) -> Int = "#length"
+fn main() -> Html { html { <p>{"x"}</p> } }`);
+  assert.equal(p.decls[0].implName, "@toUpperCase");
+  assert.equal(p.decls[1].implName, "#length");
+});
+
+test("decl: FFI must be marked unsafe", () => {
+  assert.throws(() => parse('extern js fn f() -> Int = "Math.abs"'), /marked `unsafe`/);
+});
+
+test("decl: FFI rejects unknown targets", () => {
+  assert.throws(() => parse('unsafe extern wasm fn f() -> Int = "x"'), /unsupported FFI target/);
+  assert.throws(() => parse('unsafe extern js fn f() -> Int = "not a path"'), /invalid JavaScript FFI target/);
 });
 
 test("errors carry line and column", () => {

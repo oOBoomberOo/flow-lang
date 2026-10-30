@@ -95,7 +95,7 @@ export type Decl =
   | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; methods: (FnSig & { body: Expr })[]; span: Span }
   | { k: "Effect"; name: string; ops: FnSig[]; pub: boolean; span: Span }
   | { k: "Provide"; effect: string; target?: TypeExpr; ops: { name: string; fn: Expr; span: Span }[]; span: Span }
-  | { k: "Extern"; sig: FnSig; implName: string; span: Span }
+  | { k: "Extern"; sig: FnSig; target: "js"; implName: string; unsafe: true; pub: boolean; span: Span }
   | { k: "Fn"; name: string; typeParams: string[]; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
 
 export interface Program { decls: Decl[]; file: string }

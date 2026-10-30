@@ -47,9 +47,10 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
-`std::list`, `std::option`, `std::math`, `std::string`, `std::html` — see
-[`docs/modules.md`](modules.md). A single file without a manifest still works.
-`extern` is reserved and rejected with an explicit message.
+`std::list`, `std::option`, `std::math`, `std::string`, `std::html`, `std::log`,
+`std::time` — see [`docs/modules.md`](modules.md). A single file without a
+manifest still works. Host access goes through explicitly `unsafe` FFI bindings
+(§12).
 
 ---
 
@@ -381,11 +382,57 @@ The standard library ships as modules: `std::list`, `std::option`, `std::math`,
 
 ---
 
-## 12. Limits of 0.1
+## 12. Native access (unsafe FFI)
+
+Anything that must touch the host — the console, the clock, `Math` — is declared
+explicitly and marked `unsafe`. This is how the standard library is built: the
+compiler no longer emits primitives for logging, timing or arithmetic.
+
+```flow
+unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
+unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"
+unsafe extern js fn upper(s: Str) -> Str = "@toUpperCase"
+unsafe extern js fn size(s: Str) -> Int = "#length"
+```
+
+Targets:
+
+| form | meaning | example |
+|---|---|---|
+| `"Path.to.fn"` | global function, called with its receiver | `"Math.floor"` |
+| `"@method"` | method on the first argument | `"@concat"` → `xs.concat(ys)` |
+| `"#property"` | property of the first argument | `"#length"` → `xs.length` |
+| `"#index"` | element of the first argument | `xs[i]` |
+
+Rules:
+
+* The declaration **must** say `unsafe`; `extern` alone is a parse error.
+* Only the `js` target exists in 0.1.
+* An FFI function is **placement-neutral**: it runs wherever it is called, so
+  `Date.now` is the client clock on the client and the server clock on the
+  server. If you want authority, call it behind a capability:
+  ```flow
+  provide Server with { now = fn() -> Int { date_now() } }
+  ```
+* FFI calls are **not sandboxed** and bypass the serializer. Nothing stops you
+  from mutating host state; that is what `unsafe` is admitting.
+
+`std::log`, `std::time` and `std::math` are thin wrappers over exactly these
+bindings:
+
+```flow
+use std::log::{info, value}
+use std::time::{nowMs, duration}
+use std::math::{sqrt, floor, pow}
+```
+
+---
+
+## 13. Limits of 0.1
 
 Honest list, so you do not discover them by surprise:
 
-* `extern` is rejected (no native escapes); modules and packages are supported (see docs/modules.md).
+* FFI targets are JavaScript only; FFI is unsafe and unchecked at the boundary.
 * Traits dispatch on one parameter; no superclasses or instance constraints.
 * No effect handlers (no `handle … with …`); effects are capabilities.
 * No `String` interpolation — use `+`.

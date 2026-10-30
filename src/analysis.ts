@@ -75,6 +75,7 @@ export interface Analysis {
   units: { id: string; file: string }[];
   program?: Program;
   display?: Map<string, string>;
+  importedByFile?: Map<string, Set<string>>;
 }
 
 export function readSource(file: string, overlay?: Map<string, string>): string {
@@ -224,6 +225,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       units: result.units,
       program: result.program,
       display: result.display,
+      importedByFile: result.importedByFile,
     };
   } catch (e) {
     if (!(e instanceof FlowError)) throw e;

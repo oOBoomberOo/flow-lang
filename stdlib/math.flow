@@ -1,4 +1,46 @@
-// std::math
+// std::math — Int helpers in Flow, float primitives through the FFI.
+
+// ---------------------------------------------------------------- float host ops
+// These used to be compiler builtins; now they are ordinary std bindings.
+
+unsafe extern js fn f_sqrt(x: Float) -> Float = "Math.sqrt"
+unsafe extern js fn f_pow(x: Float, y: Float) -> Float = "Math.pow"
+unsafe extern js fn f_floor(x: Float) -> Int = "Math.floor"
+unsafe extern js fn f_ceil(x: Float) -> Int = "Math.ceil"
+unsafe extern js fn f_round(x: Float) -> Int = "Math.round"
+unsafe extern js fn f_abs(x: Float) -> Float = "Math.abs"
+unsafe extern js fn f_min(a: Float, b: Float) -> Float = "Math.min"
+unsafe extern js fn f_max(a: Float, b: Float) -> Float = "Math.max"
+unsafe extern js fn f_log(x: Float) -> Float = "Math.log"
+unsafe extern js fn f_exp(x: Float) -> Float = "Math.exp"
+unsafe extern js fn f_sin(x: Float) -> Float = "Math.sin"
+unsafe extern js fn f_cos(x: Float) -> Float = "Math.cos"
+
+pub fn sqrt(x: Float) -> Float { f_sqrt(x) }
+
+pub fn pow(x: Float, y: Float) -> Float { f_pow(x, y) }
+
+pub fn floor(x: Float) -> Int { f_floor(x) }
+
+pub fn ceil(x: Float) -> Int { f_ceil(x) }
+
+pub fn round(x: Float) -> Int { f_round(x) }
+
+pub fn absF(x: Float) -> Float { f_abs(x) }
+
+pub fn minF(a: Float, b: Float) -> Float { f_min(a, b) }
+
+pub fn maxF(a: Float, b: Float) -> Float { f_max(a, b) }
+
+pub fn logF(x: Float) -> Float { f_log(x) }
+
+pub fn expF(x: Float) -> Float { f_exp(x) }
+
+pub fn sinF(x: Float) -> Float { f_sin(x) }
+
+pub fn cosF(x: Float) -> Float { f_cos(x) }
+
+// ---------------------------------------------------------------- Int helpers
 
 pub fn abs(n: Int) -> Int { if (n < 0) { -n } else { n } }
 

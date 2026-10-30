@@ -213,6 +213,14 @@ function registerProviders(context) {
         if (it.detail) item.detail = it.detail;
         if (it.documentation) item.documentation = typeof it.documentation === "string" ? it.documentation : it.documentation.value;
         if (it.sortText) item.sortText = it.sortText;
+        if (it.insertTextFormat === 2 && it.insertText && vscode.SnippetString) {
+          item.insertText = new vscode.SnippetString(it.insertText);
+        } else if (it.insertText) {
+          item.insertText = it.insertText;
+        }
+        if (it.additionalTextEdits) {
+          item.additionalTextEdits = it.additionalTextEdits.map((e) => vscode.TextEdit.replace(R(e.range), e.newText));
+        }
         list.items.push(item);
       }
       return list;
@@ -311,6 +319,24 @@ function registerProviders(context) {
     async provideDocumentHighlights(document, position) {
       const hits = await ask("textDocument/documentHighlight", { textDocument: doc(document), position: backPos(position) }, []);
       return (hits || []).map((h) => new vscode.DocumentHighlight(R(h.range), h.kind));
+    },
+  }));
+
+  push(vscode.languages.registerDocumentLinkProvider("flow", {
+    async provideDocumentLinks(document) {
+      const links = await ask("textDocument/documentLink", { textDocument: doc(document) }, []);
+      return (links || []).map((l) => {
+        const link = new vscode.DocumentLink(R(l.range), vscode.Uri.parse(l.target));
+        if (l.tooltip) link.tooltip = l.tooltip;
+        return link;
+      });
+    },
+  }));
+
+  push(vscode.languages.registerTypeDefinitionProvider("flow", {
+    async provideTypeDefinition(document, position) {
+      const d = await ask("textDocument/typeDefinition", { textDocument: doc(document), position: backPos(position) }, null);
+      return d ? new vscode.Location(vscode.Uri.parse(d.uri), R(d.range)) : null;
     },
   }));
 
@@ -485,6 +511,17 @@ function activate(context) {
   );
 
   registerProviders(context);
+
+  // edits to files that are not open (another module, a teammate's change) still
+  // re-analyse the package
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*.flow");
+  const watch = (uri, type) =>
+    client?.notify("workspace/didChangeWatchedFiles", { changes: [{ uri: uri.toString(), type }] });
+  watcher.onDidChange((u) => watch(u, 2));
+  watcher.onDidCreate((u) => watch(u, 1));
+  watcher.onDidDelete((u) => watch(u, 3));
+  context.subscriptions.push(watcher);
+
   start(context);
 }
 

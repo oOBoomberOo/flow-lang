@@ -395,6 +395,42 @@ const KEYWORDS = [
   "provide", "with", "use", "pub", "html", "true", "false", "and", "or", "not",
 ];
 
+const HTML_TAGS = [
+  "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "button", "input", "textarea",
+  "ul", "ol", "li", "a", "img", "section", "header", "footer", "main", "nav", "aside",
+  "form", "label", "table", "thead", "tbody", "tr", "td", "th", "strong", "em", "code",
+  "pre", "hr", "br", "figure", "figcaption", "details", "summary", "select", "option",
+];
+
+const HTML_ATTRS = [
+  "class", "id", "style", "href", "src", "value", "placeholder", "title", "type",
+  "disabled", "checked", "selected", "name", "target", "alt", "width", "height",
+  "onClick", "onInput", "onChange", "onSubmit", "onKeyDown", "onKeyUp", "onFocus",
+  "onBlur", "onMouseEnter", "onMouseLeave",
+];
+
+/** Are we in markup position inside an `html { … }` block?
+ *  depth 1 = directly in markup; depth ≥ 2 = inside a `{expr}` hole. */
+function htmlContext(before: string): { inside: boolean; depth: number; inTag: boolean; afterLt: boolean } {
+  const open = before.lastIndexOf("html {");
+  if (open < 0) return { inside: false, depth: 0, inTag: false, afterLt: false };
+  let depth = 1;
+  let inStr = false;
+  for (let i = open + "html {".length; i < before.length; i++) {
+    const c = before[i];
+    if (c === '"') inStr = !inStr;
+    if (inStr) continue;
+    if (c === "{") depth++;
+    else if (c === "}") depth--;
+  }
+  if (depth <= 0) return { inside: false, depth: 0, inTag: false, afterLt: false };
+  const lastLt = before.lastIndexOf("<");
+  const lastGt = before.lastIndexOf(">");
+  const inTag = lastLt > lastGt;
+  const afterLt = inTag && /^[A-Za-z]*$/.test(before.slice(lastLt + 1));
+  return { inside: true, depth, inTag, afterLt };
+}
+
 const KEYWORD_DOC: Record<string, string> = {
   fn: "fn name(params) -> Type { body }",
   let: "let name = value;",
@@ -405,6 +441,18 @@ const KEYWORD_DOC: Record<string, string> = {
   provide: "provide Effect with { op = fn(…) { … } }",
   use: "use pkg::module::{name}",
   pub: "pub fn f() …  — exported from this module",
+};
+
+const KEYWORD_SNIPPETS: Record<string, string> = {
+  fn: "fn ${1:name}(${2}) -> ${3:Type} {\n\t${0}\n}",
+  let: "let ${1:name} = ${2:value};",
+  match: "match ${1:value} {\n\t${2:Pattern} => ${3:expr},\n}",
+  html: "html {\n\t${0}\n}",
+  type: "type ${1:Name} =\n  | ${2:Variant}",
+  trait: "trait ${1:Name}<a> {\n\tfn ${2:method}(x: a) -> ${3:Type}\n}",
+  effect: "effect ${1:Name} {\n\tfn ${2:op}() -> ${3:Type}\n}",
+  provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
+  use: "use ${1:pkg}::${2:module}::{${3:name}}",
 };
 
 function completion(file: string, pos: Position) {
@@ -448,24 +496,79 @@ function completion(file: string, pos: Position) {
     return { isIncomplete: false, items };
   }
 
+  // Markup: inside `html { … }` (but not inside a `{expr}` hole)
+  const h = htmlContext(before);
+  if (h.inside && h.depth === 1) {
+    if (h.inTag && !h.afterLt) {
+      return {
+        isIncomplete: false,
+        items: HTML_ATTRS
+          .filter((a) => !prefix || a.toLowerCase().startsWith(prefix.toLowerCase()))
+          .map((a) => ({
+            label: a,
+            kind: a.startsWith("on") ? 5 : 9,
+            detail: a.startsWith("on") ? "event handler" : "attribute",
+            sortText: "0" + a,
+          })),
+      };
+    }
+    const components = (lastAnalysis?.symbols ?? [])
+      .filter((s) => s.kind === "function")
+      .map((s) => ({ label: s.name, kind: 3, detail: "component", sortText: "1" + s.name }));
+    return {
+      isIncomplete: false,
+      items: [
+        ...HTML_TAGS.filter((t) => !prefix || t.startsWith(prefix)).map((t) => ({
+          label: t, kind: 10, detail: "tag", sortText: "0" + t,
+        })),
+        ...components.filter((c) => !prefix || c.label.startsWith(prefix)),
+      ],
+    };
+  }
+
   const items: unknown[] = [];
   for (const k of KEYWORDS) {
     if (prefix && !k.startsWith(prefix)) continue;
-    items.push({ label: k, kind: 14, detail: "keyword", documentation: KEYWORD_DOC[k], sortText: "3" + k });
+    const snippet = KEYWORD_SNIPPETS[k];
+    const item: Record<string, unknown> = {
+      label: k, kind: 15, detail: "keyword", documentation: KEYWORD_DOC[k], sortText: "3" + k,
+    };
+    if (snippet) {
+      // `fn`, `match`, `html`, … expand into a skeleton the user fills in
+      item.insertText = snippet;
+      item.insertTextFormat = 2;
+      item.kind = 14;
+    }
+    items.push(item);
   }
   for (const l of localsAt(file, pos)) {
     if (prefix && !l.name.startsWith(prefix)) continue;
     items.push({ label: l.name, kind: 6, detail: l.type || "local", sortText: "0" + l.name });
   }
+  const curUnit = (lastAnalysis?.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
+  const imported = lastAnalysis?.importedByFile?.get(path.resolve(file)) ?? new Set<string>();
+  const lastUseLine = text.split("\n").reduce((acc, l, i) => (l.startsWith("use ") ? i : acc), -1);
+
   for (const s of lastAnalysis?.symbols ?? []) {
     if (prefix && !s.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
-    items.push({
+    const inScope = s.unit === curUnit?.id || imported.has(s.finalName);
+    const item: Record<string, unknown> = {
       label: s.name,
       kind: symbolKind(s.kind),
-      detail: s.kind,
+      detail: inScope ? s.kind : `${s.kind} · ${s.display.split("::").slice(0, -1).join("::")}`,
       documentation: { kind: "markdown", value: `\`${s.display}\`` },
       sortText: "1" + s.name,
-    });
+    };
+    if (!inScope) {
+      // completing a name from another module inserts its import
+      const dir = s.display.split("::").slice(0, -1).join("::");
+      const at = { line: lastUseLine + 1, character: 0 };
+      item.additionalTextEdits = [{
+        range: { start: at, end: at },
+        newText: `use ${dir}::{${s.name}}\n`,
+      }];
+    }
+    items.push(item);
   }
   return { isIncomplete: false, items };
 }
@@ -538,9 +641,20 @@ function inlayHints(file: string): unknown[] {
   }
 
   // inferred types for unannotated `let` bindings
-  const addBinding = (name: string, stmtSpan: { start: number }, valueSpan: { line: number; col: number }, annotated: boolean) => {
+  const addBinding = (
+    name: string,
+    stmtSpan: { start: number },
+    valueSpan: { start: number; end: number; line: number; col: number; file?: string },
+    annotated: boolean,
+  ) => {
     if (annotated) return;
-    const node = findNodeAt(a, f, { line: valueSpan.line - 1, character: valueSpan.col - 1 });
+    const wanted = spanRange(text, valueSpan);
+    const node = a.nodes.find((n) =>
+      path.resolve(n.file) === f &&
+      n.range.start.line === wanted.start.line &&
+      n.range.start.character === wanted.start.character &&
+      n.range.end.line === wanted.end.line &&
+      n.range.end.character === wanted.end.character);
     if (!node) return;
     const atName = text.indexOf(name, stmtSpan.start);
     if (atName < 0) return;
@@ -796,6 +910,43 @@ function rename(file: string, pos: Position, newName: string) {
   return { changes };
 }
 
+function documentLinks(file: string) {
+  const a = lastAnalysis;
+  if (!a) return [];
+  const text = textOf(file);
+  const out: unknown[] = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*use\s+)([A-Za-z0-9_:-]+)/.exec(lines[i]!);
+    if (!m) continue;
+    const p = m[2]!;
+    const parts = p.split("::");
+    let target: string | null = null;
+    for (let n = parts.length; n > 0; n--) {
+      const id = parts.slice(0, n).join("::");
+      const unit = a.units.find((u) => u.id === id);
+      if (unit) { target = unit.file; break; }
+    }
+    if (!target) continue;
+    const start = m[1]!.length;
+    out.push({
+      range: { start: { line: i, character: start }, end: { line: i, character: start + p.length } },
+      target: pathToUri(target),
+      tooltip: `open ${p}`,
+    });
+  }
+  return out;
+}
+
+function typeDefinition(file: string, pos: Position) {
+  const node = nodeAt(file, pos);
+  if (!node) return null;
+  if (!/^[A-Z][A-Za-z0-9_]*$/.test(node.type)) return null;
+  const sym = (lastAnalysis?.symbols ?? []).find((s) =>
+    s.name === node.type && (s.kind === "type" || s.kind === "record" || s.kind === "alias"));
+  return sym ? { uri: pathToUri(sym.file), range: sym.range } : null;
+}
+
 /* ------------------------------------------------------------------ */
 /* boundary                                                           */
 /* ------------------------------------------------------------------ */
@@ -846,6 +997,8 @@ reader.onMessage((msg) => {
           selectionRangeProvider: true,
           documentHighlightProvider: true,
           documentFormattingProvider: true,
+          documentLinkProvider: { resolveProvider: false },
+          typeDefinitionProvider: true,
           codeActionProvider: true,
           codeLensProvider: { resolveProvider: false },
           renameProvider: { prepareProvider: true },
@@ -984,6 +1137,25 @@ reader.onMessage((msg) => {
     case "textDocument/documentHighlight":
       reply(id, documentHighlights(path.resolve(uriToPath(docUri!)), p.position as Position));
       return;
+
+    case "textDocument/documentLink":
+      reply(id, documentLinks(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/typeDefinition": {
+      if (!lastAnalysis) reanalyze();
+      reply(id, typeDefinition(path.resolve(uriToPath(docUri!)), p.position as Position));
+      return;
+    }
+
+    case "workspace/didChangeWatchedFiles": {
+      reanalyze();
+      if (lastAnalysis) {
+        for (const uri of openDocs.keys()) publishDiagnostics(uri, lastAnalysis);
+        notify("flow/boundaryChanged", boundary());
+      }
+      return;
+    }
 
     case "textDocument/formatting":
       reply(id, format(path.resolve(uriToPath(docUri!))));

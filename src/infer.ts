@@ -47,7 +47,9 @@ export interface ProvideInfo { effect: string; ops: Map<string, Expr>; target?: 
 
 export interface FnInfo {
   name: string; scheme: Type; params: Param[]; ret?: TypeExpr;
-  eff?: EffRow; body: Expr; pub: boolean; synthetic?: boolean;
+  eff?: EffRow; body?: Expr; pub: boolean; synthetic?: boolean;
+  /** native (JavaScript) implementation, for `unsafe extern` declarations */
+  extern?: { target: "js"; implName: string };
   /** declaration span, for editor features */
   span?: { start: number; end: number; line: number; col: number; file?: string };
 }
@@ -72,26 +74,9 @@ export interface Module {
   errors: FlowError[];
 }
 
-const BUILTIN_FNS: { name: string; scheme: (f: () => Type) => Type; emit: string }[] = [
-  { name: "str", scheme: (f) => fnT([f()], STR), emit: "show" },
-  { name: "int", scheme: () => fnT([STR], INT), emit: "toInt" },
-  { name: "float", scheme: () => fnT([STR], FLOAT), emit: "toFloat" },
-  { name: "len", scheme: (f) => fnT([listOf(f())], INT), emit: "len" },
-  { name: "push", scheme: (f) => fnT([listOf(f()), f()], listOf(f())), emit: "push" },
-  { name: "head", scheme: (f) => fnT([listOf(f())], optionOf(f())), emit: "head" },
-  { name: "tail", scheme: (f) => fnT([listOf(f())], listOf(f())), emit: "tail" },
-  { name: "isEmpty", scheme: (f) => fnT([listOf(f())], BOOL), emit: "isEmpty" },
-  { name: "concat", scheme: (f) => fnT([listOf(f()), listOf(f())], listOf(f())), emit: "concat" },
-  { name: "reverse", scheme: (f) => fnT([listOf(f())], listOf(f())), emit: "reverse" },
-  { name: "chars", scheme: () => fnT([STR], listOf(STR)), emit: "chars" },
-  { name: "join", scheme: () => fnT([listOf(STR), STR], STR), emit: "join" },
-  { name: "trim", scheme: () => fnT([STR], STR), emit: "trim" },
-  { name: "upper", scheme: () => fnT([STR], STR), emit: "upper" },
-  { name: "lower", scheme: () => fnT([STR], STR), emit: "lower" },
-  { name: "split", scheme: () => fnT([STR, STR], listOf(STR)), emit: "split" },
-  { name: "replace", scheme: () => fnT([STR, STR, STR], STR), emit: "replace" },
-  { name: "contains", scheme: () => fnT([STR, STR], BOOL), emit: "contains" },
-];
+// The language surface that used to be injected here now lives in
+// std/prelude.flow and reaches the host through `unsafe extern js` bindings.
+const BUILTIN_FNS: { name: string; scheme: (f: () => Type) => Type; emit: string }[] = [];
 
 export const implFnName = (trait: string, index: number, method: string) =>
   `$impl_${trait}_${index}_${method}`;
@@ -155,12 +140,10 @@ export class Infer {
     for (const d of prog.decls) if (d.k === "Adt") this.registerCtors(d);
     for (const d of prog.decls) if (d.k === "Impl") this.registerImpl(d);
     for (const d of prog.decls) if (d.k === "Fn") this.declareFn(d);
+    for (const d of prog.decls) if (d.k === "Extern") this.declareExtern(d);
 
-    // Capabilities installed by the runtime are predeclared; a program may still
-    // declare them itself (the explicit declaration wins).
-    for (const cap of ["Server", "Client", "Store"]) {
-      if (!this.mod.effects.has(cap)) this.registerBuiltinEffect(cap);
-    }
+    // Capabilities (Server / Client / Store) are declared by std::prelude, which
+    // every module imports implicitly; the compiler injects nothing here.
 
     // Providers determine where an effect lives, and effect placement determines
     // where the calls are placed. Run both to a fixpoint.
@@ -276,6 +259,9 @@ export class Infer {
 
   registerCtors(d: Decl & { k: "Adt" }) {
     for (const v of d.variants) {
+      if (v.name === "None" || v.name === "Some") {
+        this.fail(`constructor '${v.name}' is built in (Option); pick another name`, v.span);
+      }
       const params = new Map<string, Type>();
       for (const p of d.params) { const tv = fresh(0); tv.generic = true; params.set(p, tv); }
       const argTypes = v.args.map((a) => this.resolveType(a, params));
@@ -427,6 +413,29 @@ export class Infer {
 
   checkFnBody(d: Decl & { k: "Fn" }) {
     this.checkNamedBody(d.name, d.params, d.body, d.ret, d.eff);
+  }
+
+  /** `unsafe extern js fn f(..) -> T = "Math.floor"` — a raw JavaScript call.
+   *  Placement is neutral: the same target exists on whichever side runs it. */
+  declareExtern(d: Decl & { k: "Extern" }) {
+    const params = new Map<string, Type>();
+    for (const tp of d.sig.typeParams ?? []) {
+      const v = fresh(0);
+      v.generic = true;
+      params.set(tp, v);
+    }
+    const ty = this.resolveSig(d.sig, params);
+    markGeneric(ty);
+    this.mod.fns.set(d.sig.name, {
+      name: d.sig.name,
+      scheme: ty,
+      params: d.sig.params,
+      ret: d.sig.ret,
+      eff: d.sig.eff,
+      pub: d.pub,
+      extern: { target: d.target, implName: d.implName },
+      span: d.span,
+    });
   }
 
   private checkNamedBody(name: string, params: Param[], body: Expr, ret?: TypeExpr, declaredEff?: EffRow) {

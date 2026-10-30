@@ -1,0 +1,101 @@
+// std::prelude — the language surface that used to be compiler-injected.
+//
+// Every module gets these names automatically (a unit's own declarations and
+// imports win). The primitives are ordinary `unsafe extern js` bindings to the
+// host, so the compiler no longer emits special code for them.
+//
+// FFI targets:
+//   "Path"    call a global, preserving its receiver  (Math.floor, Date.now)
+//   "@name"   method on the first argument            (xs.concat(ys))
+//   "#name"   property of the first argument          (xs.length)
+//   "#index"  element of the first argument           (xs[i])
+
+// ---------------------------------------------------------------- effects
+// Client/server authority is declared here, not injected by the compiler.
+
+pub effect Server {
+  fn now() -> Int
+  fn secret(name: Str) -> Str
+  fn log(msg: Str) -> Unit
+  fn random() -> Float
+}
+
+pub effect Client {
+  fn now() -> Int
+  fn state<a>(init: a) -> Cell<a>
+  fn log(msg: Str) -> Unit
+}
+
+pub effect Store {
+  fn get(key: Str) -> Option<Str>
+  fn set(key: Str, value: Str) -> Unit
+}
+
+// ---------------------------------------------------------------- host access
+
+unsafe extern js fn host_show<a>(x: a) -> Str = "__flow.show"
+unsafe extern js fn host_parse_int(s: Str) -> Int = "parseInt"
+unsafe extern js fn host_parse_float(s: Str) -> Float = "parseFloat"
+
+// ---------------------------------------------------------------- lists
+
+unsafe extern js fn length<a>(xs: List<a>) -> Int = "#length"
+unsafe extern js fn at<a>(xs: List<a>, i: Int) -> a = "#index"
+unsafe extern js fn concat_arrays<a>(xs: List<a>, ys: List<a>) -> List<a> = "@concat"
+unsafe extern js fn slice<a>(xs: List<a>, from: Int) -> List<a> = "@slice"
+unsafe extern js fn slice_to<a>(xs: List<a>, from: Int, to: Int) -> List<a> = "@slice"
+unsafe extern js fn reverse_in_place<a>(xs: List<a>) -> Unit = "@reverse"
+
+pub fn len<a>(xs: List<a>) -> Int { length(xs) }
+
+pub fn isEmpty<a>(xs: List<a>) -> Bool { len(xs) == 0 }
+
+pub fn push<a>(xs: List<a>, x: a) -> List<a> { concat_arrays(xs, [x]) }
+
+pub fn concat<a>(xs: List<a>, ys: List<a>) -> List<a> { concat_arrays(xs, ys) }
+
+pub fn head<a>(xs: List<a>) -> Option<a> {
+  if (isEmpty(xs)) { None } else { Some(at(xs, 0)) }
+}
+
+pub fn tail<a>(xs: List<a>) -> List<a> {
+  if (isEmpty(xs)) { [] } else { slice(xs, 1) }
+}
+
+pub fn reverse<a>(xs: List<a>) -> List<a> {
+  let out = slice_to(xs, 0, len(xs));
+  reverse_in_place(out);
+  out
+}
+
+// ---------------------------------------------------------------- strings
+
+unsafe extern js fn s_trim(s: Str) -> Str = "@trim"
+unsafe extern js fn s_upper(s: Str) -> Str = "@toUpperCase"
+unsafe extern js fn s_lower(s: Str) -> Str = "@toLowerCase"
+unsafe extern js fn s_split(s: Str, sep: Str) -> List<Str> = "@split"
+unsafe extern js fn s_replace(s: Str, from: Str, to: Str) -> Str = "@replaceAll"
+unsafe extern js fn s_contains(s: Str, sub: Str) -> Bool = "@includes"
+unsafe extern js fn s_join(xs: List<Str>, sep: Str) -> Str = "@join"
+unsafe extern js fn s_char_at(s: Str, i: Int) -> Str = "@charAt"
+unsafe extern js fn s_length(s: Str) -> Int = "#length"
+
+pub fn trim(s: Str) -> Str { s_trim(s) }
+pub fn upper(s: Str) -> Str { s_upper(s) }
+pub fn lower(s: Str) -> Str { s_lower(s) }
+pub fn split(s: Str, sep: Str) -> List<Str> { s_split(s, sep) }
+pub fn replace(s: Str, from: Str, to: Str) -> Str { s_replace(s, from, to) }
+pub fn contains(s: Str, sub: Str) -> Bool { s_contains(s, sub) }
+pub fn join(xs: List<Str>, sep: Str) -> Str { s_join(xs, sep) }
+
+pub fn chars(s: Str) -> List<Str> { charsFrom(s, 0, s_length(s), []) }
+
+fn charsFrom(s: Str, i: Int, n: Int, acc: List<Str>) -> List<Str> {
+  if (i >= n) { acc } else { charsFrom(s, i + 1, n, push(acc, s_char_at(s, i))) }
+}
+
+// ---------------------------------------------------------------- conversions
+
+pub fn str<a>(x: a) -> Str { host_show(x) }
+pub fn int(s: Str) -> Int { host_parse_int(s) }
+pub fn float(s: Str) -> Float { host_parse_float(s) }

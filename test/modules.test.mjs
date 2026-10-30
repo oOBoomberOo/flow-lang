@@ -133,7 +133,9 @@ fn main() -> Html {
 }`,
   });
   const r = compileFile(entry);
-  assert.ok(r.client.includes("R.builtin"), "uses prelude builtins");
+  // the intrinsics are std code now: they reach the host through the FFI
+  assert.ok(r.client.includes("R.ffiCall"), "stdlib intrinsics go through the FFI");
+  assert.ok(!r.client.includes("R.builtin("), "no compiler-injected primitives");
 });
 
 test("stdlib: html components are usable", () => {

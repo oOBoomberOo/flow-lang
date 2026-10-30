@@ -182,6 +182,41 @@ export function createRuntime() {
       return f;
     },
 
+    /**
+     * `unsafe extern js fn …= "target"` — raw access to the host.
+     *
+     *   "Math.floor"  global path, called with its parent as receiver
+     *   "@trim"       method on the first argument:      a.trim(b, …)
+     *   "#length"     property of the first argument:    a.length
+     *   "#index"      element of the first argument:     a[b]
+     */
+    ffiCall(target, args) {
+      if (target[0] === "@") {
+        const [recv, ...rest] = args;
+        const m = recv == null ? undefined : recv[target.slice(1)];
+        if (typeof m !== "function") throw new Error(`flow: FFI method '${target}' is not callable`);
+        return m.apply(recv, rest);
+      }
+      if (target[0] === "#") {
+        const [recv, ...rest] = args;
+        if (recv == null) throw new Error(`flow: FFI target '${target}' on null`);
+        return target === "#index" ? recv[rest[0]] : recv[target.slice(1)];
+      }
+      const parts = target.split(".");
+      const name = parts.pop();
+      let recv = globalThis;
+      for (const p of parts) {
+        recv = recv == null ? undefined : recv[p];
+      }
+      const fn = recv == null ? undefined : recv[name];
+      if (typeof fn !== "function") throw new Error(`flow: FFI target '${target}' is not a function`);
+      return fn.apply(recv, args);
+    },
+
+    ffiFn(target) {
+      return (...args) => R.ffiCall(target, args);
+    },
+
     /* ---------- effects ---------- */
 
     provide(effect, impl) {
@@ -292,8 +327,7 @@ export function createRuntime() {
 
     /* ---------- introspection ---------- */
 
-    _stats() {
-      return { remotes: [...remotes.keys()], serves: [...serves.keys()], served: served.size };
+    _stats() {      return { remotes: [...remotes.keys()], serves: [...serves.keys()], served: served.size };
     },
   };
 
@@ -304,6 +338,13 @@ export function createRuntime() {
     for (const [k, v] of Object.entries(obj ?? {})) out[k] = R.get(v);
     return out;
   }
+
+  // The host surface reachable from `unsafe extern js` bindings.
+  globalThis.__flow = {
+    show: (x) => R.show(x),
+    get: (x) => R.get(x),
+    set: (x, v) => R.set(x, v),
+  };
 
   return R;
 }
