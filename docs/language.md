@@ -57,7 +57,7 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
 `std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
-`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad` — see [`docs/modules.md`](modules.md). A single
+`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`, `std::fn` — see [`docs/modules.md`](modules.md). A single
 file without a manifest still works. Host access goes through explicitly `unsafe`
 FFI bindings (§12).
 
@@ -79,10 +79,22 @@ fn main() -> Html {
 }
 ```
 
-* Types are inferred; annotations are optional except on function parameters.
+* Types are inferred; function declarations may annotate parameters, while lambdas can omit
+  them (`fn(x) => x + 1`) and infer from the expected function type.
 * Arithmetic requires matching numeric types — there is no implicit `Int`/`Float` coercion.
 * Strings concatenate with `+`; `str(x)` renders any value.
-* Functions are values: `fn(x: Int) -> Int { x + 1 }` is a lambda.
+* Functions are values and **curry**: `add(1)` partially applies, `add(1)(2)` calls the result.
+* Chain with `|>` (data first), or apply with `<|` / `$`:
+
+```flow
+fn add(a: Int, b: Int) -> Int { a + b }
+fn inc(x: Int) -> Int { x + 1 }
+
+let f = add(1);                 // (Int) -> Int
+let n = f(2);                   // 3
+let m = 1 |> inc |> add(1);     // add(inc(1)) = 3
+let k = inc $ 1 + 1;            // inc(2) = 3
+```
 
 ---
 
@@ -670,7 +682,7 @@ flow add flow-time    # add the best matching version from the registry
 ```
 
 The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`.
+`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`, `std::fn`.
 Full reference: [`docs/modules.md`](modules.md).
 
 ---

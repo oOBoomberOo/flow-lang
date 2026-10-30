@@ -1,0 +1,39 @@
+// Functional style: inferred lambda params, currying, pipes and combinators.
+
+use std::fn::{compose, flip, pipe, applyTwice}
+use std::list::{map, filter, range}
+
+fn add(a: Int, b: Int) -> Int { a + b }
+fn sub(a: Int, b: Int) -> Int { a - b }
+fn mul(a: Int, b: Int) -> Int { a * b }
+
+fn main() -> Html {
+  let inc = add(1);                     // (Int) -> Int
+  let ten = inc(9);
+  let chained = add(1)(2);              // both arguments at once
+
+  let xs = range(6);
+  let evens = xs |> filter(fn(x) => x % 2 == 0);
+  let doubled = xs |> map(fn(x) => x * 2);
+  let sum = xs |> map(inc) |> map(fn(x) => x * 1);
+  let piped = 3 |> add(1) |> mul(2);    // 8
+
+  let composed = compose(fn(x) => x + 1, fn(x) => x * 2);
+  let flipped = flip(sub);
+  let twice = applyTwice(fn(x) => x + 3, 1);
+
+  let expressionBody = add $ 4;          // add(4): (Int) -> Int
+  let applied = expressionBody(1);       // 5
+
+  let addLocal = fn(a: Int, b: Int) -> Int { a + b };
+  let plusTen = addLocal(10);
+  let localPartial = plusTen(5);         // 15
+
+  html {
+    <div class="card">
+      <h1>{"Currying and pipes"}</h1>
+      <p class="values">{str(ten) + " " + str(chained) + " " + str(piped) + " " + str(composed(3)) + " " + str(flipped(10, 3)) + " " + str(twice) + " " + str(applied) + " " + str(localPartial)}</p>
+      <p class="lists">{str(evens) + " " + str(doubled) + " " + str(sum)}</p>
+    </div>
+  }
+}

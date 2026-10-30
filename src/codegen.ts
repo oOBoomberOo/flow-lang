@@ -643,6 +643,7 @@ export class Codegen {
       const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
       return this.yieldStar(`resume(${args})`, e.span, `resume`);
     }
+    if (this.mod.partialCalls.has(e)) return this.emitPartialApp(e, side, ctxHome, env);
 
     const genCall = (js: string): string =>
       this.mod.genCalls.has(e) ? this.yieldStar(js, e.span, `'${this.callName(e)}'`) : js;
@@ -694,13 +695,72 @@ export class Codegen {
     const callArgs = [args, ...dicts.map((d) => this.emitDict(d.trait, d.type))]
       .filter((x) => x.length > 0)
       .join(", ");
-    return genCall(`${this.emitExpr(e.fn, side, ctxHome, env)}(${callArgs})`);
+    return genCall(`${this.calleeJs(e.fn, side, ctxHome, env)}(${callArgs})`);
+  }
+
+  /** A local function value lives in a reactive Node; dereference before calling. */
+  private calleeJs(fn: Expr, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    const js = this.emitExpr(fn, side, ctxHome, env);
+    return fn.k === "Var" && env.has(fn.name) ? `R.v(${js})` : js;
   }
 
   private callName(e: Expr & { k: "App" }): string {
     if (e.fn.k === "Var") return e.fn.name;
     if (e.fn.k === "Field") return e.fn.name;
     return "call";
+  }
+
+  /** `f(a)` with fewer arguments than the arity: a closure over `a`. */
+  private emitPartialApp(
+    e: Expr & { k: "App" },
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string {
+    if (e.fn.k === "Var") {
+      const fn = this.mod.fns.get(e.fn.name);
+      if (fn?.body && this.hasCallCut(fn.body)) {
+        this.fail(`cannot partially apply '${e.fn.name}': it needs a request/response cut`, e.span);
+      }
+    } else if (this.hasCallCut(e.fn)) {
+      this.fail("cannot partially apply a function that needs a request/response cut", e.span);
+    }
+
+    const n = ++this.tmp;
+    const fnVar = `$p${n}`;
+    const restVar = `$r${n}`;
+    let fnJs: string;
+    let provided: string[] = [];
+    let suffix: string[] = [];
+
+    const bound = this.mod.boundChoices.get(e);
+    const choice = this.mod.implChoices.get(e);
+    if (bound) {
+      const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
+      const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
+      provided = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) provided.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      fnJs = `${bound.dictName}.${bound.method}`;
+    } else if (choice) {
+      const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
+      const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
+      provided = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) provided.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      suffix = (choice.dicts ?? []).map((d) => this.emitDict(d.trait, d.type));
+      fnJs = choice.mangled;
+    } else if (e.fn.k === "Var") {
+      const ext = this.mod.fns.get(e.fn.name)?.extern;
+      fnJs = ext && !env.has(e.fn.name)
+        ? `R.ffiFn(${ev(ext.implName)})`
+        : this.calleeJs(e.fn, side, ctxHome, env);
+      provided = e.args.map((a) => this.val(a, side, ctxHome, env));
+    } else {
+      fnJs = this.emitExpr(e.fn, side, ctxHome, env);
+      provided = e.args.map((a) => this.val(a, side, ctxHome, env));
+    }
+
+    const args = [...provided, `...${restVar}`, ...suffix].join(", ");
+    return `((${fnVar}) => (...${restVar}) => ${fnVar}(${args}))(${fnJs})`;
   }
 
   /** Emit a dictionary object for a trait instance, closing over inner

@@ -110,6 +110,8 @@ export interface Module {
   errors: FlowError[];
   /** calls whose callee may perform algebraic operations (they need `yield*`) */
   genCalls: Set<object>;
+  /** calls with fewer arguments than the function's arity (curried partials) */
+  partialCalls: Set<object>;
   /** `resume` references inside algebraic handler operations */
   resumeVars: Set<object>;
 }
@@ -151,6 +153,7 @@ export class Infer {
       diagnostics: [],
       errors: [],
       genCalls: new Set(),
+      partialCalls: new Set(),
       resumeVars: new Set(),
     };
   }
@@ -1554,10 +1557,28 @@ export class Infer {
     }
     const ft = prune(fnInfo.ty);
     if (ft.k !== "fun") this.fail(`attempt to call a value of type ${typeStr(ft)}`, e.fn.span);
-    if (e.args.length !== ft.params.length) this.fail(`expected ${ft.params.length} argument(s), got ${e.args.length}`, e.span);
+    if (e.args.length > ft.params.length) {
+      this.fail(`expected ${ft.params.length} argument(s), got ${e.args.length}`, e.span);
+    }
+    const partial = e.args.length < ft.params.length;
+    if (partial) {
+      const names = e.fn.k === "Var" ? e.fn.name : "this function";
+      if (callee?.dicts?.length) {
+        this.fail(`cannot partially apply '${callee.name}': it needs trait dictionaries; call it with all arguments`, e.span);
+      }
+      if (callee?.scheme.k === "fun" && this.effHasAlgebraic(callee.scheme.eff)) {
+        this.fail(`cannot partially apply '${callee.name}': it performs an algebraic effect`, e.span);
+      }
+      if (!callee && this.effHasAlgebraic(ft.eff)) {
+        this.fail(`cannot partially apply ${names}: it performs an algebraic effect`, e.span);
+      }
+      if (e.fn.k === "Var" && !this.env.has(e.fn.name) && this.findEffectOp(e.fn.name)) {
+        this.fail(`cannot partially apply effect operation '${e.fn.name}'`, e.span);
+      }
+    }
 
     let place = joinPlace(fnInfo.place, typePlace(ft));
-    let eff = mergeEff(fnInfo.eff, ft.eff);
+    let argEff = emptyEff();
     e.args.forEach((a, i) => {
       const r = this.infer(a);
       try { unify(r.ty, ft.params[i]!); }
@@ -1586,9 +1607,21 @@ export class Infer {
         this.checkPlacement(expected, this.exprPlace(a, r.place), a.span, `argument ${i + 1} to ${callee!.name}`);
       }
       place = joinPlace(place, r.place);
-      eff = mergeEff(eff, r.eff);
+      argEff = mergeEff(argEff, r.eff);
     });
 
+    if (partial) {
+      this.mod.partialCalls.add(e);
+      const remaining = ft.params.slice(e.args.length).map((p) => p);
+      const eff: Eff = { labels: new Set(ft.eff.labels) };
+      return {
+        ty: fnT(remaining, ft.ret, eff),
+        place: joinPlace(place, placeFromEffects(ft.eff, this)),
+        eff: mergeEff(fnInfo.eff, argEff),
+      };
+    }
+
+    const eff = mergeEff(fnInfo.eff, ft.eff, argEff);
     if (callee?.dicts?.length && calleeTrace) {
       const dicts: { trait: string; type: Type }[] = [];
       for (const d of callee.dicts) {

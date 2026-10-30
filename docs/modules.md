@@ -267,6 +267,28 @@ recover(99, fn() -> Int { fail("soft") })                  // 99
 | `recoverWith` | `((Str) -> a, () -> a ! {Exn}) -> a` |
 | `recover` | `(a, () -> a ! {Exn}) -> a` — resume at the failure point |
 
+### `std::fn` — combinators for curried code
+
+```flow
+use std::fn::{identity, constant, flip, compose, pipe, apply, applyTwice}
+```
+
+| function | type |
+|---|---|
+| `identity` | `(a) -> a` |
+| `constant` | `(a, b) -> a` |
+| `flip` | `((a, b) -> c) -> (b, a) -> c` |
+| `compose` | `((b) -> c, (a) -> b) -> (a) -> c` — `f(g(x))` |
+| `pipe` | `((a) -> b, (b) -> c) -> (a) -> c` — `g(f(x))` |
+| `apply` | `(a, (a) -> b) -> b` |
+| `applyTwice` | `((a) -> a, a) -> a` |
+
+```flow
+let inc = add(1);
+let f = compose(fn(x) => x + 1, fn(x) => x * 2);
+let xs = [1, 2, 3] |> map(inc);
+```
+
 ### `std::monad` — bind/do for Option and List
 
 ```flow

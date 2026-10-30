@@ -238,13 +238,16 @@ assignment-expr = binary-expr [ assign-op expr ]          ; cell.value = e, cell
 assign-op       = '=' | '+=' | '-=' | '*=' | '/=' ;
 
 ; Precedence, lowest to highest:
-;   1  or   ||
-;   2  and  &&
-;   3  ==  !=  <  <=  >  >=
-;   4  +  -
-;   5  *  /  %
-;   6  unary -  not  !
-;   7  postfix   f(x)   r.field
+;   0    $            right-assoc apply:  f $ x  = f(x)
+;   0.5  |>  <|       pipe / apply:       x |> f = f(x) with x first; f <| x = f(x)
+;   1    or   ||
+;   2    and  &&
+;   3    ==  !=  <  <=  >  >=
+;   4    +  -
+;   5    *  /  %
+;   6    unary -  not  !
+;   7    postfix   f(x)   r.field
+; `m >>= f` is right-associative Monad bind (see do-expr).
 
 binary-expr     = unary-expr { binary-op binary-expr } ;
 
@@ -275,7 +278,10 @@ primary-expr    = literal
                 | record-literal
                 | block ;
 
-lambda          = 'fn' '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
+lambda          = 'fn' '(' [ lambda-param { ',' lambda-param } ] ')'
+                  [ '->' type ] [ '!' effect-row ]
+                  ( block | '=>' expr ) ;
+lambda-param    = identifier [ ':' type ] ;      ; untyped parameters are inferred
 
 if-expr         = 'if' '(' expr ')' block [ 'else' ( block | if-expr ) ] ;
 

@@ -11,6 +11,8 @@ import type {
 } from "./ast.ts";
 
 const PREC: Record<string, number> = {
+  "$": 0,
+  "|>": 0.5, "<|": 0.5,
   or: 1, "||": 1,
   and: 2, "&&": 2,
   "==": 3, "!=": 3, "<": 3, "<=": 3, ">": 3, ">=": 3,
@@ -628,7 +630,32 @@ export class Parser {
       const prec = PREC[op];
       if (prec === undefined || prec < minPrec) break;
       this.next();
-      const right = this.parseExpr(prec + 1);
+      const rightAssoc = op === "$" || op === "<|";
+      const right = this.parseExpr(rightAssoc ? prec : prec + 1);
+      if (op === "|>" || op === "<|" || op === "$") {
+        // `x |> f` inserts x as the first argument (Elixir-style), so
+        // `xs |> filter(p)` is `filter(xs, p)`. `f <| x` and `f $ x` are
+        // ordinary application: `f(x)`.
+        if (op === "|>") {
+          if (right.k === "App") {
+            left = {
+              k: "App", fn: right.fn, args: [left, ...right.args],
+              span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file },
+            };
+          } else {
+            left = {
+              k: "App", fn: right, args: [left],
+              span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file },
+            };
+          }
+        } else {
+          left = {
+            k: "App", fn: left, args: [right],
+            span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file },
+          };
+        }
+        continue;
+      }
       left = { k: "Binary", op, l: left, r: right, span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file } };
     }
 
@@ -790,8 +817,10 @@ export class Parser {
       do {
         const pt = this.tok;
         const name = this.expect("id").value;
-        this.expectSym(":");
-        const type = this.parseType();
+        const type: TypeExpr = this.eatSym(":")
+          ? this.parseType()
+          // `fn(x) -> …` infers the parameter from the expected function type.
+          : { k: "TVar", name: "_", span: this.spanFrom(pt) };
         params.push({ name, type, span: this.spanFrom(pt) });
       } while (this.eatSym(","));
     }
@@ -800,6 +829,12 @@ export class Parser {
     if (this.eatSym("->")) ret = this.parseType();
     let eff: EffRow | undefined;
     if (this.atSym("!")) { this.next(); eff = this.parseEffRow(); }
+    // `fn(x) => expr` is an expression-bodied lambda: the body type is the
+    // return type, which keeps curried one-liners readable.
+    if (this.eatSym("=>")) {
+      const body = this.parseExpr();
+      return { k: "Lam", params, ret, eff, body, span: this.spanFrom(start) };
+    }
     const body = this.parseBlock();
     return { k: "Lam", params, ret, eff, body, span: this.spanFrom(start) };
   }

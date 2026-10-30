@@ -75,6 +75,7 @@ examples/hkt.flow        higher-kinded type parameters (Functor for List/Option)
 examples/handler.flow    scoped and nested local capability handlers
 examples/algebraic.flow  algebraic effects: state, resume, aborting handlers
 examples/cell-monad.flow cell sugar and do-blocks over Option/List
+examples/fp.flow         inferred lambda params, currying, pipes and combinators
 examples/net.flow        server-or-client network effect capability
 examples/fs.flow         server-side filesystem effect capability
 examples/http.flow       request/routing effect capabilities and easy routing
@@ -82,13 +83,13 @@ examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs, state, exn, ref, monad
+stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs, state, exn, ref, monad, fn
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **206 tests** across grammar, types, boundaries, modules, packages,
+Tests: `npm test` — **210 tests** across grammar, types, boundaries, modules, packages,
 the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
-algebraic effects, cell sugar, monads, trait bounds, higher-kinded types, local handlers and the VS Code extension.
+algebraic effects, cell sugar, monads, currying, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 
 ---
 
@@ -161,6 +162,10 @@ fn area(s: Shape) -> Float {
 * **Cells with syntax sugar** - `cell.value` reads, `cell.value = e` writes,
   `cell.update(f)` and `+=`/`-=`/`*=`/`/=`/`++`/`--` update in place; all lower to
   `CellOps` get/set with the same `Client` placement as the long forms
+* **Currying and pipes** - functions partially apply (`add(1)` is `(Int) -> Int`,
+  `add(1)(2)` works), lambdas infer parameter types (`fn(x) => x + 1`), and
+  `x |> f`, `f <| x`, `f $ x` chain and apply; `std::fn` adds `compose`, `flip`,
+  `apply` and friends
 * **Monads** - `std::monad` provides `Monad<f>` (`bind`/`map`) for Option and List,
   with `m >>= f` and `do { x <- m; … }` sugar that desugars to nested binds
 * **Local capability handlers** - `handle Effect with { … } { body }` scopes a
