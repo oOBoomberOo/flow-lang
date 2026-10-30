@@ -408,13 +408,13 @@ test("lsp: watched-file changes re-analyse the package", async () => {
 
 test("lsp: prelude primitives resolve into std, not a compiler builtin", async () => {
   const { entry } = packageWith({
-    "main.flow": `fn main() -> Html { html { <p>{str(1)}{str(len([1, 2]))}</p> } }\n`,
+    "main.flow": `fn main() -> Html { html { <p>{str(1)}{str(len([1, 2]))}{str(Some(3))}</p> } }\n`,
   });
   const c = startServer();
   try {
     await c.request("initialize", { rootUri: null, capabilities: {} });
     const text = await open(c, entry);
-    for (const [needle, name] of [["str(1)", "str"], ["len(", "len"]]) {
+    for (const [needle, name] of [["str(1)", "str"], ["len(", "len"], ["Some(", "Some"]]) {
       const at = pos(text, needle, 1);
       const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
       assert.ok(def, `definition for ${name}`);

@@ -10,6 +10,11 @@
 //   "#name"   property of the first argument          (xs.length)
 //   "#index"  element of the first argument           (xs[i])
 
+// ---------------------------------------------------------------- types
+// Option is a plain ADT declared here, not a compiler builtin.
+
+pub type Option<a> = None | Some(a)
+
 // ---------------------------------------------------------------- effects
 // Client/server authority is declared here, not injected by the compiler.
 

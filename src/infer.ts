@@ -82,7 +82,7 @@ export const implFnName = (trait: string, index: number, method: string) =>
   `$impl_${trait}_${index}_${method}`;
 
 const BUILTIN_TYPES = new Set([
-  "Int", "Float", "Str", "Bool", "Unit", "Html", "List", "Option", "Cell", "Event", "Dom",
+  "Int", "Float", "Str", "Bool", "Unit", "Html", "List", "Cell", "Event", "Dom",
 ]);
 
 export class Infer {
@@ -129,8 +129,6 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   run(prog: Program): Module {
-    this.registerBuiltins();
-
     for (const d of prog.decls) {
       if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") this.registerType(d);
       if (d.k === "Trait") this.registerTrait(d);
@@ -182,21 +180,6 @@ export class Infer {
   /* ---------------------------------------------------------------- */
   /* environment                                                      */
   /* ---------------------------------------------------------------- */
-
-  registerBuiltins() {
-    // Option is a builtin type, so its constructors are built in too.
-    const a = fresh(0);
-    a.generic = true;
-    this.mod.ctors.set("None", {
-      typeName: "Option", variant: "None", arity: 0, typeParams: ["a"], argTypes: [],
-      scheme: con("Option", a),
-    });
-    this.mod.ctors.set("Some", {
-      typeName: "Option", variant: "Some", arity: 1, typeParams: ["a"], argTypes: [],
-      scheme: fnT([a], con("Option", a)),
-    });
-    void HTML;
-  }
 
   lookupVar(name: string, span?: { line: number; col: number }): Type {
     const local = this.env.get(name);
@@ -251,9 +234,6 @@ export class Infer {
 
   registerCtors(d: Decl & { k: "Adt" }) {
     for (const v of d.variants) {
-      if (v.name === "None" || v.name === "Some") {
-        this.fail(`constructor '${v.name}' is built in (Option); pick another name`, v.span);
-      }
       const params = new Map<string, Type>();
       for (const p of d.params) { const tv = fresh(0); tv.generic = true; params.set(p, tv); }
       const argTypes = v.args.map((a) => this.resolveType(a, params));
@@ -485,7 +465,6 @@ export class Infer {
       case "TCon": {
         const def = this.mod.typeDefs.get(te.name);
         if (te.name === "List") return listOf(this.resolveType(te.args[0]!, params));
-        if (te.name === "Option") return optionOf(this.resolveType(te.args[0]!, params));
         if (te.name === "Cell") return cellOf(this.resolveType(te.args[0]!, params));
         if (te.name === "Event") return con("Event");
         if (def && def.kind === "alias") {

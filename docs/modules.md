@@ -117,7 +117,8 @@ imports take precedence over the prelude.
 
 | | |
 |---|---|
-| effects | `Server`, `Client`, `Store` — declared **and provided** here, not by the compiler; the runtime only exposes raw host primitives |
+| types | `Option<a> = None \| Some(a)` - a plain ADT declared in Flow, not a compiler builtin |
+| effects | `Server`, `Client`, `Store` - declared **and provided** here, not by the compiler; the runtime only exposes raw host primitives |
 | lists | `len`, `isEmpty`, `push`, `head`, `tail`, `concat`, `reverse` |
 | strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars`, `strLen` |
 | numbers | `int`, `float`, `eq`, `neq` |
@@ -151,7 +152,7 @@ FFI (`unsafe extern js … = "@sort"`); no compiler intrinsic is involved.
 
 ### `std::option`
 
-`map`, `withDefault`, `isSome`, `isNone`, `toList` — all over the builtin
+`map`, `withDefault`, `isSome`, `isNone`, `toList` - all over the prelude
 `Option<a>`.
 
 ### `std::math`
