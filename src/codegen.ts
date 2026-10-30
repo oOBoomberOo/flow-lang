@@ -402,6 +402,25 @@ export class Codegen {
     return `${asyncKw}function${gen ? "*" : ""} ${name}(${allParams.join(", ")}) { return ${js}; }`;
   }
 
+  /**
+   * A `let` is a lazy signal only when its value is pure. Bindings that exist for
+   * their effect must run in program order: `_`, `Unit`-typed values, and values
+   * that call an `unsafe extern` (FFI) function such as `window.setInterval`.
+   */
+  isEagerLet(e: { name: string; value: Expr }): boolean {
+    if (e.name === "_") return true;
+    const ty = this.mod.info.get(e.value)?.ty;
+    if (ty && typeStr(ty) === "Unit") return true;
+    return this.callsExtern(e.value);
+  }
+
+  private callsExtern(e: Expr): boolean {
+    if (e.k === "Lam") return false;
+    if (e.k === "App" && e.fn.k === "Var" && this.mod.fns.get(e.fn.name)?.extern) return true;
+    for (const x of childExprs(e)) if (this.callsExtern(x)) return true;
+    return false;
+  }
+
   /** True when evaluating `e` needs `await`, i.e. it contains a request/response cut. */
   hasCallCut(e: Expr, skipSelf = false): boolean {
     const c = this.cuts.get(e);
@@ -474,7 +493,7 @@ export class Codegen {
         }
         const vJs = this.emitExpr(e.value, side, ctxHome, env);
         const inner = new Set(env); inner.add(e.name);
-        const bind = this.hasCallCut(e.value) ? `const ${e.name} = ${vJs};` : `const ${e.name} = R.sig(() => ${vJs});`;
+        const bind = this.hasCallCut(e.value) || this.isEagerLet(e) ? `const ${e.name} = ${vJs};` : `const ${e.name} = R.sig(() => ${vJs});`;
         const bodyJs = this.emitExpr(e.body, side, ctxHome, inner);
         const needsAwait = this.hasCallCut(e);
         return needsAwait
@@ -902,7 +921,7 @@ export class Codegen {
     for (const s of e.stmts) {
       if (s.k === "LetStmt") {
         const v = this.emitExpr(s.value, side, ctxHome, inner);
-        const eager = gen || this.hasCallCut(s.value);
+        const eager = gen || this.hasCallCut(s.value) || this.isEagerLet(s);
         stmts.push(eager ? `const ${s.name} = ${v};` : `const ${s.name} = R.sig(() => ${v});`);
         inner.add(s.name);
       } else {
