@@ -69,7 +69,7 @@ examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::list, std::option, std::math, std::string, std::html
+stdlib/                  std::prelude, list, option, math, string, html, log, time
 registry/                a small package registry (index.json + packages/)
 ```
 
@@ -137,7 +137,10 @@ fn area(s: Shape) -> Float {
 * Algebraic data types, records, tuples, lists — with **exhaustiveness checking**
 * **Traits** with static dictionary dispatch and generic instances
 * **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds
-* **Placement inference** — the thing no other mainstream language does
+* **Placement inference** - the thing no other mainstream language does
+* **Unsafe FFI** - `unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"`; the
+  standard library (logging, timing, arithmetic, strings, lists) is built on it rather
+  than on compiler-emitted primitives
 
 **Modules, packages, and a standard library**
 
