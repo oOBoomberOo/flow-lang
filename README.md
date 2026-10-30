@@ -87,10 +87,17 @@ $ node src/lsp/server.ts     # LSP on stdio
 * **Syntax highlighting** — TextMate grammar (`vscode-extension/syntaxes/flow.tmLanguage.json`).
 * **Boundary colouring** — client code washed blue, server code amber, every inferred cut
   underlined in violet. Hover a region to see `reactive cut cut1 → server (deps: token)`.
-* **Diagnostics, hover** (type / placement / effects), and a status bar summary
-  `Flow · client 2 · server 1 · cuts 3`.
+* **Inlay hints** — `fn render server`, `let total: Int`: the boundary is visible inline.
+* **Code lenses** — `client · 2 cuts` above each function; status bar `Flow · client 6 · server 0 · cuts 2`.
+* **Diagnostics** — every type error in the package, with quick fixes (*make public*, *import*).
+* **Completion** — keywords, locals, package symbols, module members after `::`, fields and
+  Cell members after `.`.
+* **Navigation** — go-to-definition (including from `use` lines), find references, rename
+  (package-wide for globals, scoped for locals), document/workspace symbols.
+* **Editing** — signature help, folding, selection ranges, document highlights, formatting.
 
-Install the extension: `code --extensionDevelopmentPath="$PWD/vscode-extension" .`
+Install the extension: `npm run package:extension && code --install-extension build/flow-language.vsix --force`
+(add `--profile "<name>"` if your workspace uses a VS Code profile).
 
 Details: [`docs/editor.md`](editor.md).
 

@@ -1,22 +1,22 @@
 /**
  * Flow — language server (LSP over stdio, no dependencies).
  *
- * Capabilities
- *   textDocumentSync           incremental
- *   textDocument/semanticTokens/full   keywords/types/functions + client/server modifiers
- *   textDocument/hover         inferred type, placement and effect row
- *   publishDiagnostics         whole-package diagnostics, per file
- *   flow/boundary              placement regions (the client/server boundary)
+ * textDocument: synchronization, diagnostics, hover, completion, definition,
+ * references, document/workspace symbols, signature help, inlay hints,
+ * folding ranges, selection ranges, document highlights, formatting, code
+ * actions, code lenses, rename.
  *
- * Run: node src/lsp/server.ts --stdio
+ * Plus the Flow-specific `flow/boundary` request: placement regions per file,
+ * which is what the editor paints.
  */
 
 import path from "node:path";
-import { analyze, findNodeAt, readSource } from "../analysis.ts";
-import type { Analysis, Region } from "../analysis.ts";
+import { analyze, findNodeAt, readSource, offsetToPosition, spanRange } from "../analysis.ts";
+import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
 import { loadPackage } from "../modules.ts";
+import type { Decl, Expr, Program } from "../ast.ts";
 
 /* ------------------------------------------------------------------ */
 /* JSON-RPC framing                                                   */
@@ -28,33 +28,22 @@ function write(msg: Json) {
   const body = JSON.stringify(msg);
   process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
 }
-
-function reply(id: unknown, result: unknown) {
-  write({ jsonrpc: "2.0", id, result });
-}
-
-function replyError(id: unknown, code: number, message: string) {
+const reply = (id: unknown, result: unknown) => write({ jsonrpc: "2.0", id, result });
+const replyError = (id: unknown, code: number, message: string) =>
   write({ jsonrpc: "2.0", id, error: { code, message } });
-}
-
-function notify(method: string, params: unknown) {
-  write({ jsonrpc: "2.0", method, params });
-}
+const notify = (method: string, params: unknown) => write({ jsonrpc: "2.0", method, params });
 
 class Reader {
   private buf = Buffer.alloc(0);
   private wanted = -1;
-  private chunks: Json[] = [];
   private listeners: ((m: Json) => void)[] = [];
-
   push(chunk: Buffer) {
     this.buf = Buffer.concat([this.buf, chunk]);
     for (;;) {
       if (this.wanted < 0) {
         const idx = this.buf.indexOf("\r\n\r\n");
         if (idx < 0) return;
-        const header = this.buf.slice(0, idx).toString("utf8");
-        const m = /Content-Length:\s*(\d+)/i.exec(header);
+        const m = /Content-Length:\s*(\d+)/i.exec(this.buf.slice(0, idx).toString("utf8"));
         if (!m) { this.buf = this.buf.slice(idx + 4); continue; }
         this.wanted = Number(m[1]);
         this.buf = this.buf.slice(idx + 4);
@@ -63,15 +52,15 @@ class Reader {
       const body = this.buf.slice(0, this.wanted).toString("utf8");
       this.buf = this.buf.slice(this.wanted);
       this.wanted = -1;
+      let msg: Json;
       try {
-        const msg = JSON.parse(body) as Json;
-        for (const l of this.listeners) l(msg);
+        msg = JSON.parse(body) as Json;
       } catch {
-        /* ignore malformed frame */
+        continue; // not a JSON-RPC frame
       }
+      for (const l of this.listeners) l(msg); // handler errors must surface
     }
   }
-
   onMessage(fn: (m: Json) => void) { this.listeners.push(fn); }
 }
 
@@ -79,22 +68,17 @@ class Reader {
 /* state                                                              */
 /* ------------------------------------------------------------------ */
 
-const openDocs = new Map<string, string>();   // uri -> text
-const versions = new Map<string, number>();
+const openDocs = new Map<string, string>();
 let workspaceRoot: string | null = null;
 let lastAnalysis: Analysis | null = null;
 let lastEntry: string | null = null;
 
-function uriToPath(uri: string): string {
+const uriToPath = (uri: string): string => {
   let p = decodeURIComponent(uri.replace(/^file:\/\//, ""));
   if (/^\/[a-zA-Z]:/.test(p)) p = p.slice(1);
   return path.normalize(p);
-}
-
-function pathToUri(p: string): string {
-  const abs = path.resolve(p).replace(/\\/g, "/");
-  return `file:///${abs.replace(/^\/+/, "")}`;
-}
+};
+const pathToUri = (p: string): string => `file:///${path.resolve(p).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
 function overlay(): Map<string, string> {
   const m = new Map<string, string>();
@@ -102,16 +86,17 @@ function overlay(): Map<string, string> {
   return m;
 }
 
+function textOf(fileOrUri: string): string {
+  const uri = fileOrUri.startsWith("file:") ? fileOrUri : pathToUri(fileOrUri);
+  const text = openDocs.get(uri);
+  return text !== undefined ? text : readSource(uriToPath(uri));
+}
+
 function entryFor(file: string): string {
-  // Prefer the package entry (src/main.flow); otherwise treat `file` as the program.
   try {
     const pkg = loadPackage(file);
-    if (pkg.singleFile) return pkg.singleFile;
-    const main = path.join(pkg.srcDir, "main.flow");
-    return main;
-  } catch {
-    return file;
-  }
+    return pkg.singleFile ? pkg.singleFile : path.join(pkg.srcDir, "main.flow");
+  } catch { return file; }
 }
 
 function reanalyze(): Analysis | null {
@@ -120,32 +105,212 @@ function reanalyze(): Analysis | null {
   const file = lastEntry ?? uriToPath(first!);
   const entry = entryFor(file);
   lastEntry = entry;
-
-  let a: Analysis;
   try {
-    a = analyze(entry, overlay());
+    lastAnalysis = analyze(entry, overlay());
   } catch (e) {
     console.error("[flow-lsp]", e);
     return null;
   }
-  lastAnalysis = a;
-
-  for (const uri of openDocs.keys()) publishDiagnostics(uri, a);
-  return a;
+  for (const uri of openDocs.keys()) publishDiagnostics(uri, lastAnalysis);
+  return lastAnalysis;
 }
 
 function publishDiagnostics(uri: string, a: Analysis) {
   const file = path.resolve(uriToPath(uri));
-  const diags = a.diagnostics
-    .filter((d) => path.resolve(d.file) === file)
-    .map((d) => ({
-      range: d.range,
-      severity: d.severity,
-      code: d.code,
-      source: "flow",
-      message: d.message,
-    }));
-  notify("textDocument/publishDiagnostics", { uri, diagnostics: diags });
+  notify("textDocument/publishDiagnostics", {
+    uri,
+    diagnostics: a.diagnostics
+      .filter((d) => path.resolve(d.file) === file)
+      .map((d) => ({ range: d.range, severity: d.severity, code: d.code, source: "flow", message: d.message })),
+  });
+}
+
+const nodeAt = (file: string, pos: Position): NodeInfo | null =>
+  lastAnalysis ? findNodeAt(lastAnalysis, file, pos) : null;
+
+interface Position { line: number; character: number }
+
+/* ------------------------------------------------------------------ */
+/* helpers over source text                                            */
+/* ------------------------------------------------------------------ */
+
+function offsetAt(text: string, pos: Position): number {
+  let line = 0, off = 0;
+  while (line < pos.line && off < text.length) {
+    const nl = text.indexOf("\n", off);
+    if (nl < 0) return text.length;
+    off = nl + 1;
+    line++;
+  }
+  return Math.min(off + pos.character, text.length);
+}
+
+function wordAt(text: string, off: number): { word: string; start: number; end: number } {
+  let s = off, e = off;
+  const isW = (c: string) => /[A-Za-z0-9_']/.test(c);
+  while (s > 0 && isW(text[s - 1]!)) s--;
+  while (e < text.length && isW(text[e]!)) e++;
+  return { word: text.slice(s, e), start: s, end: e };
+}
+
+const LSP_KIND: Record<string, number> = {
+  function: 3, type: 5, constructor: 4, trait: 11, effect: 25, record: 23, alias: 26,
+};
+
+function symbolKind(name: string): number { return LSP_KIND[name] ?? 13; }
+
+/* ------------------------------------------------------------------ */
+/* symbols / definitions                                              */
+/* ------------------------------------------------------------------ */
+
+function symbolsInFile(file: string): SymbolInfo[] {
+  const f = path.resolve(file);
+  return (lastAnalysis?.symbols ?? []).filter((s) => path.resolve(s.file) === f);
+}
+
+function symbolForName(finalName: string): SymbolInfo | undefined {
+  return lastAnalysis?.symbols.find((s) => s.finalName === finalName);
+}
+
+/** Resolve a name on a `use` line to its declaration (go-to-definition on imports). */
+function importTargetAt(file: string, pos: Position): SymbolInfo | null {
+  const text = textOf(file);
+  const line = (text.split("\n")[pos.line] ?? "");
+  if (!/^\s*use\s/.test(line)) return null;
+  const word = wordAt(text, offsetAt(text, pos)).word;
+  if (!word) return null;
+  const m = /^\s*use\s+([A-Za-z0-9_:-]+)/.exec(line);
+  if (!m) return null;
+  const mods = [m[1]!, m[1]!.replace(/::[A-Za-z0-9_]+$/, "")];
+  const cands = (lastAnalysis?.symbols ?? []).filter((s) => s.name === word);
+  return cands.find((s) => mods.some((p) => s.display.startsWith(p + "::"))) ?? cands[0] ?? null;
+}
+
+function definition(file: string, pos: Position) {
+  const node = nodeAt(file, pos);
+  const sym = node?.ident ? symbolForName(node.ident) : importTargetAt(file, pos);
+  if (!sym) return null;
+  return { uri: pathToUri(sym.file), range: sym.range };
+}
+
+function occurrences(finalName: string, limitFile?: string) {
+  const out: { uri: string; range: Range }[] = [];
+  for (const n of lastAnalysis?.nodes ?? []) {
+    if (n.ident !== finalName) continue;
+    if (limitFile && path.resolve(n.file) !== path.resolve(limitFile)) continue;
+    out.push({ uri: pathToUri(n.file), range: n.range });
+  }
+  return out;
+}
+
+type Range = { start: Position; end: Position };
+
+/* ------------------------------------------------------------------ */
+/* locals (for completion, rename, highlights)                        */
+/* ------------------------------------------------------------------ */
+
+interface Local { name: string; type: string; place: string; range: Range; declSpan: number }
+
+function collectLocal(d: unknown, out: Local[], file: string, text: string) {
+  const push = (name: string, span: { start: number; end: number; line?: number; col?: number; file?: string }, type: string, place: string) => {
+    if (span.file && path.resolve(span.file) !== path.resolve(file)) return;
+    const start = span.start;
+    const at = text.indexOf(name, start);
+    const from = at >= 0 ? at : start;
+    out.push({
+      name, type, place, declSpan: start,
+      range: { start: offsetToPosition(text, from), end: offsetToPosition(text, from + name.length) },
+    });
+  };
+  const visit = (e: Expr) => {
+    switch (e.k) {
+      case "Lam":
+        for (const p of e.params) push(p.name, e.span, typeText(p.type), "neutral");
+        visit(e.body);
+        return;
+      case "Let":
+        push(e.name, e.span, "", "neutral");
+        visit(e.value); visit(e.body);
+        return;
+      case "Block":
+        for (const s of e.stmts) {
+          if (s.k === "LetStmt") { push(s.name, s.span, "", "neutral"); visit(s.value); }
+          else visit(s.e);
+        }
+        if (e.value) visit(e.value);
+        return;
+      case "Match":
+        visit(e.scrut);
+        for (const a of e.arms) {
+          const walk = (p: unknown) => {
+            const q = p as { k: string; name?: string; items?: unknown[]; args?: unknown[]; fields?: { pat: unknown }[]; rest?: string };
+            if (q.k === "PVar" && q.name) push(q.name, a.pat.span, "", "neutral");
+            if (q.items) q.items.forEach(walk);
+            if (q.args) q.args.forEach(walk);
+            if (q.fields) q.fields.forEach((f) => walk(f.pat));
+            if (q.rest) push(q.rest, a.pat.span, "", "neutral");
+          };
+          walk(a.pat);
+          visit(a.body);
+        }
+        return;
+      case "App": visit(e.fn); e.args.forEach(visit); return;
+      case "If": visit(e.cond); visit(e.then); visit(e.else); return;
+      case "Binary": visit(e.l); visit(e.r); return;
+      case "Unary": visit(e.e); return;
+      case "Tuple": case "List": e.items.forEach(visit); return;
+      case "Ctor": e.args.forEach(visit); return;
+      case "Record": e.fields.forEach((f) => visit(f.value)); return;
+      case "Field": visit(e.target); return;
+      case "Html": for (const n of htmlExprs(e)) visit(n); return;
+      case "Lit": case "Var": return;
+    }
+  };
+  visit(d as Expr);
+  void out;
+}
+
+function htmlExprs(e: Expr): Expr[] {
+  const out: Expr[] = [];
+  const walk = (nodes: unknown[]) => {
+    for (const n of nodes as { k: string; e?: Expr; attrs?: { value: { k: string; e?: Expr } }[]; children?: unknown[] }[]) {
+      if (n.k === "Hole" && n.e) out.push(n.e);
+      for (const a of n.attrs ?? []) if (a.value.k === "expr" && a.value.e) out.push(a.value.e);
+      if (n.children) walk(n.children);
+    }
+  };
+  walk(e.nodes);
+  return out;
+}
+
+function typeText(t: unknown): string {
+  const ty = t as { k: string; name?: string; args?: unknown[]; items?: unknown[] };
+  if (!ty) return "";
+  if (ty.k === "TCon") return ty.args?.length ? `${ty.name}<${ty.args.map(typeText).join(", ")}>` : String(ty.name);
+  if (ty.k === "TVar") return "a";
+  return "?";
+}
+
+function declContaining(program: Program, file: string, offset: number): Decl | null {
+  for (const d of program.decls) {
+    const span = (d as { span?: { start: number; end: number; file?: string } }).span;
+    if (!span || (span.file && path.resolve(span.file) !== path.resolve(file))) continue;
+    if (offset >= span.start && offset <= span.end) return d;
+  }
+  return null;
+}
+
+function localsAt(file: string, pos: Position): Local[] {
+  const a = lastAnalysis;
+  if (!a?.program) return [];
+  const text = textOf(file);
+  const off = offsetAt(text, pos);
+  const decl = declContaining(a.program, file, off);
+  if (!decl) return [];
+  const locals: Local[] = [];
+  if (decl.k === "Fn") collectLocal(decl.body, locals, file, text);
+  else if (decl.k === "Impl") for (const m of decl.methods) collectLocal(m.body, locals, file, text);
+  return locals.filter((l) => l.declSpan <= off);
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,31 +326,26 @@ const TOKEN_MODIFIERS = ["client", "server", "cut", "boundary"];
 function inRegion(regions: Region[], line: number, character: number): Region | null {
   let best: Region | null = null;
   for (const r of regions) {
-    const afterStart = line > r.range.start.line || (line === r.range.start.line && character >= r.range.start.character);
-    const beforeEnd = line < r.range.end.line || (line === r.range.end.line && character <= r.range.end.character);
-    if (afterStart && beforeEnd) {
-      if (!best || r.kind === "cut") best = r;
-    }
+    const after = line > r.range.start.line || (line === r.range.start.line && character >= r.range.start.character);
+    const before = line < r.range.end.line || (line === r.range.end.line && character <= r.range.end.character);
+    if (after && before && (!best || r.kind === "cut")) best = r;
   }
   return best;
 }
 
 function semanticTokens(uri: string): { data: number[] } {
   const file = path.resolve(uriToPath(uri));
-  const text = openDocs.get(uri) ?? readSource(file);
+  const text = textOf(uri);
   const regions = (lastAnalysis?.regions ?? []).filter((r) => path.resolve(r.file) === file);
-
   const toks: { line: number; char: number; len: number; type: number; mods: number }[] = [];
 
-  // real tokens
   let lexed: Token[] = [];
   try { lexed = lex(text, file); } catch { lexed = []; }
 
   for (let i = 0; i < lexed.length; i++) {
     const t = lexed[i]!;
     if (t.kind === "eof") continue;
-    let type = -1;
-    let mods = 0;
+    let type = -1, mods = 0;
     const prev = lexed[i - 1];
     if (t.kind === "kw") type = 0;
     else if (t.kind === "str") type = 5;
@@ -198,39 +358,442 @@ function semanticTokens(uri: string): { data: number[] } {
       if (next && next.value === "(") type = 1;
     }
     if (type < 0) continue;
-
     const region = inRegion(regions, t.line - 1, t.col - 1);
     if (region) {
-      if (region.side === "client") mods |= 1 << 0;
-      if (region.side === "server") mods |= 1 << 1;
-      if (region.kind === "cut") mods |= 1 << 2;
-      if (region.kind === "cut") mods |= 1 << 3;
+      if (region.side === "client") mods |= 1;
+      if (region.side === "server") mods |= 2;
+      if (region.kind === "cut") mods |= 12;
     }
     toks.push({ line: t.line - 1, char: t.col - 1, len: t.value.length, type, mods });
   }
 
-  // comments (the lexer drops them)
   const re = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const before = text.slice(0, m.index);
     const line = before.split("\n").length - 1;
-    const lineStart = before.lastIndexOf("\n") + 1;
-    toks.push({ line, char: m.index - lineStart, len: m[0].length, type: 7, mods: 0 });
+    toks.push({ line, char: m.index - (before.lastIndexOf("\n") + 1), len: m[0].length, type: 7, mods: 0 });
   }
 
   toks.sort((a, b) => a.line - b.line || a.char - b.char);
-
   const data: number[] = [];
-  let prevLine = 0, prevChar = 0;
+  let pl = 0, pc = 0;
   for (const t of toks) {
-    const deltaLine = t.line - prevLine;
-    const deltaChar = deltaLine === 0 ? t.char - prevChar : t.char;
-    data.push(deltaLine, deltaChar, t.len, t.type, t.mods);
-    prevLine = t.line;
-    prevChar = t.char;
+    const dl = t.line - pl;
+    data.push(dl, dl === 0 ? t.char - pc : t.char, t.len, t.type, t.mods);
+    pl = t.line; pc = t.char;
   }
   return { data };
+}
+
+/* ------------------------------------------------------------------ */
+/* completion                                                         */
+/* ------------------------------------------------------------------ */
+
+const KEYWORDS = [
+  "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect",
+  "provide", "with", "use", "pub", "html", "true", "false", "and", "or", "not",
+];
+
+const KEYWORD_DOC: Record<string, string> = {
+  fn: "fn name(params) -> Type { body }",
+  let: "let name = value;",
+  match: "match value { Pattern => expr, … }",
+  html: "html { <div>{expr}</div> }",
+  type: "type Name = A | B(T)  — algebraic data type",
+  effect: "effect Name { fn op(x: T) -> R }  — a capability",
+  provide: "provide Effect with { op = fn(…) { … } }",
+  use: "use pkg::module::{name}",
+  pub: "pub fn f() …  — exported from this module",
+};
+
+function completion(file: string, pos: Position) {
+  const text = textOf(file);
+  const off = offsetAt(text, pos);
+  const before = text.slice(0, off);
+
+  const qualifier = /((?:[A-Za-z0-9_-]+::)+)\s*$/.exec(before);
+  const dot = /([A-Za-z0-9_.()]+)\.\s*$/.exec(before);
+  const prefixMatch = /[A-Za-z0-9_']*$/.exec(before);
+  const prefix = prefixMatch ? prefixMatch[0] : "";
+
+  // Module members: `std::list::map`
+  if (qualifier) {
+    const q = qualifier[1]!;
+    const items = (lastAnalysis?.symbols ?? [])
+      .filter((s) => s.display.startsWith(q))
+      .map((s) => ({
+        label: s.name,
+        kind: symbolKind(s.kind),
+        detail: s.display,
+        documentation: `${s.kind} from ${s.display.split("::").slice(0, -1).join("::")}`,
+        sortText: "0" + s.name,
+      }));
+    return { isIncomplete: false, items };
+  }
+
+  // Field access: `props.` / `cell.`
+  if (dot) {
+    const recvEnd = off - (dot[0].length - dot[1]!.length);
+    const recvPos = offsetToPosition(text, Math.max(0, recvEnd));
+    const node = nodeAt(file, { line: recvPos.line, character: recvPos.character });
+    const fields = node?.fields ?? [];
+    const items = fields.map((f) => ({ label: f, kind: 5, detail: "field", sortText: "0" + f }));
+    if (node?.cellElem) {
+      items.unshift(
+        { label: "get", kind: 2, detail: `() -> ${node.cellElem}`, sortText: "0get" },
+        { label: "set", kind: 2, detail: `(${node.cellElem}) -> Unit`, sortText: "0set" },
+      );
+    }
+    return { isIncomplete: false, items };
+  }
+
+  const items: unknown[] = [];
+  for (const k of KEYWORDS) {
+    if (prefix && !k.startsWith(prefix)) continue;
+    items.push({ label: k, kind: 14, detail: "keyword", documentation: KEYWORD_DOC[k], sortText: "3" + k });
+  }
+  for (const l of localsAt(file, pos)) {
+    if (prefix && !l.name.startsWith(prefix)) continue;
+    items.push({ label: l.name, kind: 6, detail: l.type || "local", sortText: "0" + l.name });
+  }
+  for (const s of lastAnalysis?.symbols ?? []) {
+    if (prefix && !s.name.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    items.push({
+      label: s.name,
+      kind: symbolKind(s.kind),
+      detail: s.kind,
+      documentation: { kind: "markdown", value: `\`${s.display}\`` },
+      sortText: "1" + s.name,
+    });
+  }
+  return { isIncomplete: false, items };
+}
+
+/* ------------------------------------------------------------------ */
+/* signature help                                                     */
+/* ------------------------------------------------------------------ */
+
+function signatureHelp(file: string, pos: Position) {
+  const a = lastAnalysis;
+  if (!a) return null;
+  const f = path.resolve(file);
+  // the innermost *call* containing the cursor (the innermost node is often the callee)
+  const call = a.nodes
+    .filter((n) => n.signature && path.resolve(n.file) === f && contains(n.range, pos))
+    .sort((x, y) => spanSize(x.range) - spanSize(y.range))[0];
+  if (!call?.signature) return null;
+  const text = textOf(file);
+  const off = offsetAt(text, pos);
+  // count commas since the opening paren to pick the active parameter
+  let depth = 0, commas = 0;
+  for (let i = off - 1; i >= 0 && off - i < 400; i--) {
+    const c = text[i];
+    if (c === ")") depth++;
+    else if (c === "(") { if (depth === 0) break; depth--; }
+    else if (c === "," && depth === 0) commas++;
+  }
+  const sig = call.signature;
+  return {
+    signatures: [{
+      label: `${sig.name}(${sig.params.map((p) => `${p.name}: ${p.type}`).join(", ")}) -> ${sig.ret}`,
+      documentation: sig.effects.length ? `effects: {${sig.effects.join(", ")}}` : undefined,
+      parameters: sig.params.map((p) => ({ label: `${p.name}: ${p.type}` })),
+    }],
+    activeSignature: 0,
+    activeParameter: Math.min(commas, Math.max(0, sig.params.length - 1)),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* inlay hints                                                        */
+/* ------------------------------------------------------------------ */
+
+function inlayHints(file: string): unknown[] {
+  const a = lastAnalysis;
+  if (!a?.program) return [];
+  const text = textOf(file);
+  const f = path.resolve(file);
+  const hints: unknown[] = [];
+
+  for (const d of a.program.decls) {
+    const span = (d as { span?: { start: number; end: number; file?: string } }).span;
+    if (!span || (span.file && path.resolve(span.file) !== f)) continue;
+    if (d.k !== "Fn") continue;
+
+    const at = text.indexOf(d.name, span.start);
+    const p = offsetToPosition(text, at >= 0 ? at : span.start);
+    const region = a.regions.find((r) =>
+      r.kind === "function" &&
+      r.range.start.line === p.line &&
+      r.range.start.character <= p.character);
+    if (!region) continue;
+    hints.push({
+      position: { line: p.line, character: p.character + d.name.length },
+      label: ` ${region.side}`,
+      kind: 1,
+      paddingLeft: true,
+      tooltip: `runs on the ${region.side}`,
+    });
+  }
+
+  // inferred types for unannotated `let` bindings
+  const addBinding = (name: string, stmtSpan: { start: number }, valueSpan: { line: number; col: number }, annotated: boolean) => {
+    if (annotated) return;
+    const node = findNodeAt(a, f, { line: valueSpan.line - 1, character: valueSpan.col - 1 });
+    if (!node) return;
+    const atName = text.indexOf(name, stmtSpan.start);
+    if (atName < 0) return;
+    const p = offsetToPosition(text, atName + name.length);
+    hints.push({
+      position: p,
+      label: `: ${node.type}`,
+      kind: 1,
+      paddingLeft: true,
+      tooltip: "inferred type",
+    });
+  };
+
+  const walk = (e: unknown) => {
+    if (!e || typeof e !== "object") return;
+    const n = e as Record<string, unknown> & { k?: string };
+    const espan = n.span as { file?: string } | undefined;
+    if (espan?.file && path.resolve(espan.file) !== f) return;
+    switch (n.k) {
+      case "Let":
+        addBinding(n.name as string, n.span as { start: number }, (n.value as { span: { line: number; col: number } }).span, !n.ann);
+        walk(n.value); walk(n.body);
+        return;
+      case "Block":
+        for (const s of (n.stmts as unknown[]) ?? []) {
+          const st = s as { k: string; name?: string; ann?: unknown; value?: unknown; e?: unknown; span: { start: number } };
+          if (st.k === "LetStmt") {
+            const v = st.value as { span: { line: number; col: number } };
+            addBinding(st.name!, st.span, v.span, !!st.ann);
+            walk(st.value);
+          } else walk(st.e);
+        }
+        walk(n.value);
+        return;
+      case "Lam": walk(n.body); return;
+      case "App": walk(n.fn); for (const x of (n.args as unknown[]) ?? []) walk(x); return;
+      case "If": walk(n.cond); walk(n.then); walk(n.else); return;
+      case "Match": walk(n.scrut); for (const a2 of (n.arms as unknown[]) ?? []) walk((a2 as { body: unknown }).body); return;
+      case "Binary": walk(n.l); walk(n.r); return;
+      case "Unary": walk(n.e); return;
+      case "Tuple": case "List": for (const x of (n.items as unknown[]) ?? []) walk(x); return;
+      case "Ctor": for (const x of (n.args as unknown[]) ?? []) walk(x); return;
+      case "Record": for (const x of (n.fields as { value: unknown }[]) ?? []) walk(x.value); return;
+      case "Field": walk(n.target); return;
+      case "Html":
+        for (const x of htmlExprs(n as never)) walk(x);
+        return;
+      default: return;
+    }
+  };
+  for (const d of a.program.decls) {
+    const body = (d as { body?: unknown }).body;
+    if (body) walk(body);
+  }
+  return hints;
+}
+
+/* ------------------------------------------------------------------ */
+/* folding / selection / highlights                                   */
+/* ------------------------------------------------------------------ */
+
+function foldingRanges(file: string) {
+  const text = textOf(file);
+  const lines = text.split("\n");
+  const ranges: unknown[] = [];
+  const stack: number[] = [];
+  let inBlock = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.includes("/*")) inBlock = true;
+    if (!inBlock) {
+      for (const c of line) {
+        if (c === "{") stack.push(i);
+        else if (c === "}") {
+          const start = stack.pop();
+          if (start !== undefined && i > start) ranges.push({ startLine: start, endLine: i - 1, kind: "region" });
+        }
+      }
+    }
+    if (line.includes("*/")) inBlock = false;
+  }
+  // comment blocks
+  const re = /\/\*[\s\S]*?\*\//g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const start = text.slice(0, m.index).split("\n").length - 1;
+    const end = start + m[0].split("\n").length - 1;
+    if (end > start) ranges.push({ startLine: start, endLine: end, kind: "comment" });
+  }
+  return ranges;
+}
+
+function selectionRanges(file: string, positions: Position[]) {
+  const a = lastAnalysis;
+  const f = path.resolve(file);
+  return positions.map((pos) => {
+    const ranges = (a?.nodes ?? [])
+      .filter((n) => path.resolve(n.file) === f && contains(n.range, pos))
+      .map((n) => n.range)
+      .sort((x, y) => spanSize(y) - spanSize(x));
+    // collapse duplicates
+    const unique: Range[] = [];
+    for (const r of ranges) {
+      if (!unique.length || spanSize(r) !== spanSize(unique[unique.length - 1]!)) unique.push(r);
+    }
+    let parent: unknown = undefined;
+    for (let i = unique.length - 1; i >= 0; i--) parent = { start: unique[i]!.start, end: unique[i]!.end, parent };
+    return parent ?? { start: pos, end: pos };
+  });
+}
+
+function contains(r: Range, p: Position): boolean {
+  const after = p.line > r.start.line || (p.line === r.start.line && p.character >= r.start.character);
+  const before = p.line < r.end.line || (p.line === r.end.line && p.character <= r.end.character);
+  return after && before;
+}
+
+const spanSize = (r: Range) => (r.end.line - r.start.line) * 100000 + (r.end.character - r.start.character);
+
+function documentHighlights(file: string, pos: Position) {
+  const node = nodeAt(file, pos);
+  if (!node?.ident) return [];
+  const a = lastAnalysis;
+  return (a?.nodes ?? [])
+    .filter((n) => n.ident === node.ident && path.resolve(n.file) === path.resolve(file))
+    .map((n) => ({ range: n.range, kind: 1 }));
+}
+
+/* ------------------------------------------------------------------ */
+/* formatting                                                         */
+/* ------------------------------------------------------------------ */
+
+function format(file: string) {
+  const text = textOf(file);
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let depth = 0;
+  let inBlock = false;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { out.push(""); continue; }
+
+    const startsClose = /^[})\)]/.test(line);
+    const isVariant = /^\|/.test(line);
+    const d = Math.max(0, depth - (startsClose ? 1 : 0));
+    const indent = "  ".repeat(d + (isVariant ? 1 : 0));
+    out.push(indent + line);
+
+    // track depth on a copy with strings/comments removed
+    if (!inBlock) {
+      let code = line.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/\/\/.*$/, "");
+      if (code.includes("/*")) { inBlock = true; code = code.slice(0, code.indexOf("/*")); }
+      for (const c of code) {
+        if (c === "{") depth++;
+        else if (c === "}") depth = Math.max(0, depth - 1);
+      }
+    }
+    if (raw.includes("*/")) inBlock = false;
+  }
+  return [{ range: { start: { line: 0, character: 0 }, end: { line: lines.length, character: 0 } }, newText: out.join("\n") }];
+}
+
+/* ------------------------------------------------------------------ */
+/* code actions / lenses / rename                                     */
+/* ------------------------------------------------------------------ */
+
+function codeActions(file: string, range: Range, diagnostics: { message: string }[]) {
+  const a = lastAnalysis;
+  const actions: unknown[] = [];
+  const text = textOf(file);
+  const lines = text.split("\n");
+
+  // "make it public": the declaration whose span covers the cursor line
+  const startLine = range?.start?.line ?? 0;
+  const sym = symbolsInFile(file).find((s) =>
+    s.range.start.line <= startLine && s.range.end.line >= startLine);
+  if (sym) {
+    const lineText = lines[sym.range.start.line] ?? "";
+    if (!/^\s*pub\b/.test(lineText)) {
+      actions.push({
+        title: `Make '${sym.name}' public`,
+        kind: "refactor.rewrite",
+        edit: { changes: { [pathToUri(file)]: [{ range: { start: sym.range.start, end: sym.range.start }, newText: "pub " }] } },
+      });
+    }
+  }
+
+  // "import 'x'" for unbound names
+  for (const d of diagnostics ?? []) {
+    const m = /unbound name '([A-Za-z_][A-Za-z0-9_]*)'/.exec(d.message);
+    if (!m) continue;
+    const name = m[1]!;
+    const target = (a?.symbols ?? []).find((s) => s.name === name);
+    if (!target) continue;
+    const modPath = target.display.split("::").slice(0, -1).join("::");
+    if (!modPath) continue;
+    const lastUse = lines.reduce((acc, l, i) => (l.startsWith("use ") ? i : acc), -1);
+    const at = { line: lastUse + 1, character: 0 };
+    actions.push({
+      title: `Import '${name}' from ${modPath}`,
+      kind: "quickfix",
+      edit: { changes: { [pathToUri(file)]: [{ range: { start: at, end: at }, newText: `use ${modPath}::{${name}}\n` }] } },
+    });
+  }
+  return actions;
+}
+
+function codeLens(file: string) {
+  const a = lastAnalysis;
+  if (!a) return [];
+  const lenses: unknown[] = [];
+  for (const sym of symbolsInFile(file)) {
+    if (sym.kind !== "function") continue;
+    const region = a.regions.find((r) => r.kind === "function" && r.range.start.line === sym.range.start.line);
+    const cuts = a.regions.filter((r) => r.kind === "cut"
+      && r.range.start.line >= sym.range.start.line
+      && r.range.start.line <= (a.regions.find((x) => x.kind === "function" && x.range.start.line === sym.range.start.line)?.range.end.line ?? sym.range.end.line));
+    const title = region ? `${region.side} · ${cuts.length} cut${cuts.length === 1 ? "" : "s"}` : `${cuts.length} cut${cuts.length === 1 ? "" : "s"}`;
+    lenses.push({
+      range: sym.range,
+      command: { title, command: "flow.cutInfo", arguments: [sym.display ?? sym.name] },
+    });
+  }
+  return lenses;
+}
+
+function rename(file: string, pos: Position, newName: string) {
+  const node = nodeAt(file, pos);
+  if (!node?.ident) return null;
+  if (!/^[A-Za-z_][A-Za-z0-9_']*$/.test(newName)) return null;
+
+  const a = lastAnalysis;
+  const isGlobal = !!symbolForName(node.ident);
+  const text = textOf(file);
+  const off = offsetAt(text, pos);
+  const decl = a?.program ? declContaining(a.program, file, off) : null;
+  const span = (decl as { span?: { start: number; end: number } } | null)?.span;
+
+  const changes: Record<string, unknown[]> = {};
+  const occ = isGlobal || !span ? occurrences(node.ident) : occurrences(node.ident, file);
+  if (!occ.length) return null;
+  for (const o of occ) {
+    if (!isGlobal && span) {
+      // a local: stay inside the declaration that binds it
+      const startLine = offsetToPosition(text, span.start).line;
+      const endLine = offsetToPosition(text, span.end).line;
+      if (o.range.start.line < startLine || o.range.start.line > endLine) continue;
+    }
+    (changes[o.uri] ??= []).push({ range: o.range, newText: newName });
+  }
+  return { changes };
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,13 +803,7 @@ function semanticTokens(uri: string): { data: number[] } {
 function boundary(uri?: string) {
   const a = lastAnalysis;
   if (!a) return { regions: [], summary: { client: 0, server: 0, cuts: 0 } };
-  // Package-wide: the client maps regions back to their own files. `uri` only
-  // tells the editor which document triggered the request.
-  const regions = a.regions.map((r) => ({
-    ...r,
-    fileUri: pathToUri(r.file),
-    label: r.label,
-  }));
+  const regions = a.regions.map((r) => ({ ...r, fileUri: pathToUri(r.file) }));
   void uri;
   return {
     regions,
@@ -267,131 +824,208 @@ const reader = new Reader();
 reader.onMessage((msg) => {
   const method = msg.method as string | undefined;
   const id = msg.id;
-  const params = (msg.params ?? {}) as Json;
+  const p = (msg.params ?? {}) as Json;
+  const docUri = (p.textDocument as Json | undefined)?.uri as string | undefined;
 
-  if (method === "initialize") {
-    workspaceRoot = params.rootUri ? uriToPath(params.rootUri as string) : null;
-    reply(id, {
-      capabilities: {
-        textDocumentSync: { openClose: true, change: 2, save: { includeText: true } },
-        semanticTokensProvider: {
-          legend: { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS },
-          full: true,
+  switch (method) {
+    case "initialize":
+      workspaceRoot = p.rootUri ? uriToPath(p.rootUri as string) : null;
+      reply(id, {
+        capabilities: {
+          textDocumentSync: { openClose: true, change: 2, save: { includeText: true } },
+          semanticTokensProvider: { legend: { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS }, full: true },
+          hoverProvider: true,
+          completionProvider: { triggerCharacters: [".", ":", "@", '"'], resolveProvider: false },
+          definitionProvider: true,
+          referencesProvider: true,
+          documentSymbolProvider: true,
+          workspaceSymbolProvider: true,
+          signatureHelpProvider: { triggerCharacters: ["(", ","] },
+          inlayHintProvider: true,
+          foldingRangeProvider: true,
+          selectionRangeProvider: true,
+          documentHighlightProvider: true,
+          documentFormattingProvider: true,
+          codeActionProvider: true,
+          codeLensProvider: { resolveProvider: false },
+          renameProvider: { prepareProvider: true },
         },
-        hoverProvider: true,
-      },
-      serverInfo: { name: "flow-lsp", version: "0.2.0" },
-    });
-    return;
-  }
+        serverInfo: { name: "flow-lsp", version: "0.3.0" },
+      });
+      return;
 
-  if (method === "initialized") {
-    if (workspaceRoot) lastEntry = null;
-    return;
-  }
+    case "initialized": return;
+    case "shutdown": reply(id, null); return;
+    case "exit": process.exit(0);
 
-  if (method === "shutdown") { reply(id, null); return; }
-  if (method === "exit") { process.exit(0); }
-
-  if (method === "textDocument/didOpen") {
-    const doc = (params.textDocument ?? {}) as Json;
-    openDocs.set(doc.uri as string, doc.text as string);
-    versions.set(doc.uri as string, doc.version as number);
-    lastEntry = null;
-    const a = reanalyze();
-    if (a) notifyBoundary(doc.uri as string);
-    return;
-  }
-
-  if (method === "textDocument/didChange") {
-    const doc = (params.textDocument ?? {}) as Json;
-    const changes = (params.contentChanges ?? []) as Json[];
-    let text = openDocs.get(doc.uri as string) ?? "";
-    for (const c of changes) {
-      if (typeof c.text !== "string") continue;
-      if (!c.range) { text = c.text; continue; }
-      const r = c.range as { start: { line: number; character: number }; end: { line: number; character: number } };
-      const lines = text.split("\n");
-      const startOffset = offsetOf(lines, r.start.line, r.start.character);
-      const endOffset = offsetOf(lines, r.end.line, r.end.character);
-      text = text.slice(0, startOffset) + c.text + text.slice(endOffset);
+    case "textDocument/didOpen": {
+      const doc = p.textDocument as Json;
+      openDocs.set(doc.uri as string, doc.text as string);
+      lastEntry = null;
+      reanalyze();
+      notify("flow/boundaryChanged", { uri: doc.uri, ...boundary(doc.uri as string) });
+      return;
     }
-    openDocs.set(doc.uri as string, text);
-    versions.set(doc.uri as string, doc.version as number);
-    reanalyze();
-    notifyBoundary(doc.uri as string);
-    return;
-  }
 
-  if (method === "textDocument/didSave") {
-    const doc = (params.textDocument ?? {}) as Json;
-    if (typeof params.text === "string") openDocs.set(doc.uri as string, params.text);
-    reanalyze();
-    notifyBoundary(doc.uri as string);
-    return;
-  }
+    case "textDocument/didChange": {
+      const doc = p.textDocument as Json;
+      const uri = doc.uri as string;
+      let text = openDocs.get(uri) ?? "";
+      for (const c of (p.contentChanges ?? []) as Json[]) {
+        if (typeof c.text !== "string") continue;
+        if (!c.range) { text = c.text; continue; }
+        const r = c.range as { start: Position; end: Position };
+        text = text.slice(0, offsetAt(text, r.start)) + c.text + text.slice(offsetAt(text, r.end));
+      }
+      openDocs.set(uri, text);
+      reanalyze();
+      notify("flow/boundaryChanged", { uri, ...boundary(uri) });
+      return;
+    }
 
-  if (method === "textDocument/didClose") {
-    const doc = (params.textDocument ?? {}) as Json;
-    openDocs.delete(doc.uri as string);
-    return;
-  }
+    case "textDocument/didSave": {
+      const doc = p.textDocument as Json;
+      if (typeof p.text === "string") openDocs.set(doc.uri as string, p.text);
+      reanalyze();
+      notify("flow/boundaryChanged", { uri: doc.uri, ...boundary(doc.uri as string) });
+      return;
+    }
 
-  if (method === "textDocument/semanticTokens/full") {
-    const doc = (params.textDocument ?? {}) as Json;
-    reply(id, semanticTokens(doc.uri as string));
-    return;
-  }
+    case "textDocument/didClose": openDocs.delete((p.textDocument as Json).uri as string); return;
 
-  if (method === "textDocument/hover") {
-    const doc = (params.textDocument ?? {}) as Json;
-    const pos = params.position as { line: number; character: number };
-    if (!lastAnalysis) reanalyze();
-    const file = path.resolve(uriToPath(doc.uri as string));
-    const node = lastAnalysis ? findNodeAt(lastAnalysis, file, pos) : null;
-    if (!node) { reply(id, null); return; }
-    const eff = node.effects.length ? `\n\nEffects: \`{${node.effects.join(", ")}}\`` : "";
-    reply(id, {
-      contents: {
-        kind: "markdown",
-        value: `**${node.type}**\n\nPlacement: \`${node.place}\`${eff}`,
-      },
-      range: node.range,
-    });
-    return;
-  }
+    case "textDocument/semanticTokens/full":
+      reply(id, semanticTokens(docUri!));
+      return;
 
-  if (method === "flow/boundary") {
-    if (!lastAnalysis) reanalyze();
-    reply(id, boundary(params.uri as string | undefined));
-    return;
-  }
+    case "textDocument/hover": {
+      if (!lastAnalysis) reanalyze();
+      const file = path.resolve(uriToPath(docUri!));
+      const node = nodeAt(file, p.position as Position);
+      if (!node) {
+        const imp = importTargetAt(file, p.position as Position);
+        if (!imp) { reply(id, null); return; }
+        const mod = imp.display.split("::").slice(0, -1).join("::");
+        reply(id, {
+          contents: { kind: "markdown", value: `**${imp.display}**\n\n\`${imp.kind}\` exported by \`${mod}\`` },
+          range: imp.range,
+        });
+        return;
+      }
+      const sym = node.ident ? symbolForName(node.ident) : undefined;
+      const eff = node.effects.length ? `\n\nEffects: \`{${node.effects.join(", ")}}\`` : "";
+      const origin = sym ? `\n\nDeclared in \`${sym.display}\` (${sym.kind})` : "";
+      reply(id, {
+        contents: { kind: "markdown", value: `**${node.type}**\n\nPlacement: \`${node.place}\`${eff}${origin}` },
+        range: node.range,
+      });
+      return;
+    }
 
-  if (method === "flow/status") {
-    reply(id, {
-      analysis: lastAnalysis ? { ok: lastAnalysis.ok, entry: lastAnalysis.entry, units: lastAnalysis.units } : null,
-    });
-    return;
-  }
+    case "textDocument/definition": {
+      if (!lastAnalysis) reanalyze();
+      const d = definition(path.resolve(uriToPath(docUri!)), p.position as Position);
+      reply(id, d ? { uri: d.uri, range: d.range } : null);
+      return;
+    }
 
-  if (id !== undefined) replyError(id, -32601, `unhandled method ${method}`);
+    case "textDocument/references": {
+      if (!lastAnalysis) reanalyze();
+      const node = nodeAt(path.resolve(uriToPath(docUri!)), p.position as Position);
+      if (!node?.ident) { reply(id, []); return; }
+      reply(id, occurrences(node.ident, (p.context as Json | undefined)?.includeDeclaration ? undefined : undefined));
+      return;
+    }
+
+    case "textDocument/documentSymbol":
+      reply(id, symbolsInFile(path.resolve(uriToPath(docUri!))).map((s) => ({
+        name: s.name,
+        detail: s.kind,
+        kind: symbolKind(s.kind),
+        range: s.range,
+        selectionRange: s.range,
+      })));
+      return;
+
+    case "workspace/symbol": {
+      if (!lastAnalysis) reanalyze();
+      const q = String(p.query ?? "").toLowerCase();
+      reply(id, (lastAnalysis?.symbols ?? [])
+        .filter((s) => !q || s.name.toLowerCase().includes(q))
+        .slice(0, 200)
+        .map((s) => ({
+          name: s.name,
+          kind: symbolKind(s.kind),
+          location: { uri: pathToUri(s.file), range: s.range },
+          containerName: s.display.split("::").slice(0, -1).join("::"),
+        })));
+      return;
+    }
+
+    case "textDocument/completion":
+      reply(id, completion(path.resolve(uriToPath(docUri!)), p.position as Position));
+      return;
+
+    case "textDocument/signatureHelp":
+      reply(id, signatureHelp(path.resolve(uriToPath(docUri!)), p.position as Position));
+      return;
+
+    case "textDocument/inlayHint":
+      reply(id, inlayHints(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/foldingRange":
+      reply(id, foldingRanges(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/selectionRange":
+      reply(id, selectionRanges(path.resolve(uriToPath(docUri!)), p.positions as Position[]));
+      return;
+
+    case "textDocument/documentHighlight":
+      reply(id, documentHighlights(path.resolve(uriToPath(docUri!)), p.position as Position));
+      return;
+
+    case "textDocument/formatting":
+      reply(id, format(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/codeAction":
+      reply(id, codeActions(path.resolve(uriToPath(docUri!)), p.range as Range, (p.context as Json | undefined)?.diagnostics as { message: string }[] ?? []));
+      return;
+
+    case "textDocument/codeLens":
+      reply(id, codeLens(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/prepareRename": {
+      const node = nodeAt(path.resolve(uriToPath(docUri!)), p.position as Position);
+      reply(id, node?.ident ? node.range : null);
+      return;
+    }
+
+    case "textDocument/rename": {
+      const res = rename(path.resolve(uriToPath(docUri!)), p.position as Position, String(p.newName ?? ""));
+      reply(id, res);
+      return;
+    }
+
+    case "flow/boundary":
+      if (!lastAnalysis) reanalyze();
+      reply(id, boundary(p.uri as string | undefined));
+      return;
+
+    case "flow/status":
+      reply(id, {
+        analysis: lastAnalysis ? { ok: lastAnalysis.ok, entry: lastAnalysis.entry, units: lastAnalysis.units } : null,
+      });
+      return;
+
+    default:
+      if (id !== undefined) replyError(id, -32601, `unhandled method ${method}`);
+  }
 });
 
-function notifyBoundary(uri: string) {
-  notify("flow/boundaryChanged", { uri, ...boundary(uri) });
-}
-
-function offsetOf(lines: string[], line: number, character: number): number {
-  let offset = 0;
-  for (let i = 0; i < line && i < lines.length; i++) offset += lines[i]!.length + 1;
-  return offset + character;
-}
-
-process.stdin.on("data", (chunk: Buffer) => reader.push(chunk));
+process.stdin.on("data", (c: Buffer) => reader.push(c));
 process.stdin.on("end", () => process.exit(0));
-
-if (process.argv.includes("--selftest")) {
-  // handled by test/lsp.test.mjs spawning the server
-}
 
 console.error("[flow-lsp] ready");

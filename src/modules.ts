@@ -45,11 +45,36 @@ export interface SourceUnit {
   declares: Map<string, Decl>;
 }
 
+export type SymKind = "function" | "type" | "constructor" | "trait" | "effect" | "record" | "alias";
+
+export interface SymInfo {
+  name: string;
+  finalName: string;
+  kind: SymKind;
+  file: string;
+  span: Span;
+  unit: string;
+}
+
+function kindOf(decl: Decl, name: string): SymKind {
+  switch (decl.k) {
+    case "Fn": return "function";
+    case "Adt": return decl.name === name ? "type" : "constructor";
+    case "RecordType": return "record";
+    case "Alias": return "alias";
+    case "Trait": return "trait";
+    case "Effect": return "effect";
+    default: return "type";
+  }
+}
+
 export interface LinkedProgram {
   program: Program;
   units: SourceUnit[];
   /** final name -> "pkg::mod::name" for diagnostics */
   display: Map<string, string>;
+  /** final name -> declaration site (for go-to-definition, references, symbols) */
+  symbols: Map<string, SymInfo>;
   entry: SourceUnit;
 }
 
@@ -328,11 +353,24 @@ export class Linker {
 
     // 2. final names: keep the simple name when unique, otherwise qualify
     const finalName = new Map<string, string>(); // `${unit.id}::${name}` -> final
+    const symbols = new Map<string, SymInfo>();
     for (const [name, entries] of byName) {
       const unique = entries.length === 1;
       for (const e of entries) {
         const key = `${e.unit.id}::${e.name}`;
-        finalName.set(key, unique ? name : `${name}$${e.unit.id.replace(/::/g, "$")}`);
+        const final = unique ? name : `${name}$${e.unit.id.replace(/::/g, "$")}`;
+        finalName.set(key, final);
+        const span = e.decl.k === "Adt" && e.name !== e.decl.name
+          ? (e.decl.variants.find((v) => v.name === e.name)?.span ?? e.decl.span)
+          : e.decl.span;
+        symbols.set(final, {
+          name: e.name,
+          finalName: final,
+          kind: kindOf(e.decl, e.name),
+          file: e.unit.file,
+          span,
+          unit: e.unit.id,
+        });
       }
     }
 
@@ -376,6 +414,7 @@ export class Linker {
       program: { decls: out, file: this.entry.file },
       units,
       display,
+      symbols,
       entry: this.entry,
     };
   }
@@ -439,8 +478,11 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
         trait: values.get(d.trait) ?? d.trait,
         traitArgs: d.traitArgs.map((t) => rwType(t, types)),
         target: rwType(d.target, types),
-        methods: { ...rwSig(d.methods, types), body: rwExpr(d.methods.body, new Set(d.methods.params.map((p) => p.name)), values, types) },
-      } as Decl;
+        methods: d.methods.map((m) => ({
+          ...rwSig(m, types),
+          body: rwExpr(m.body, new Set(m.params.map((p) => p.name)), values, types),
+        })),
+      };
     case "Provide":
       return {
         ...d,

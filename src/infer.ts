@@ -48,6 +48,8 @@ export interface ProvideInfo { effect: string; ops: Map<string, Expr>; target?: 
 export interface FnInfo {
   name: string; scheme: Type; params: Param[]; ret?: TypeExpr;
   eff?: EffRow; body: Expr; pub: boolean; synthetic?: boolean;
+  /** declaration span, for editor features */
+  span?: { start: number; end: number; line: number; col: number; file?: string };
 }
 
 export interface EnvEntry { ty: Type; envVars: Set<number>; place: Place }
@@ -66,6 +68,8 @@ export interface Module {
   varTypes: Map<object, Type>;
   methodIndex: Map<string, string>;
   diagnostics: string[];
+  /** type errors collected for the editor (the CLI rethrows the first one) */
+  errors: FlowError[];
 }
 
 const BUILTIN_FNS: { name: string; scheme: (f: () => Type) => Type; emit: string }[] = [
@@ -108,6 +112,7 @@ export class Infer {
       info: new Map(), implChoices: new Map(), methodIndex: new Map(),
       varTypes: new Map(),
       diagnostics: [],
+      errors: [],
     };
   }
 
@@ -120,6 +125,20 @@ export class Infer {
   }
 
   lastSpan: { line?: number; col?: number; file?: string } | undefined;
+
+  /** Run a checking step, recording type errors instead of aborting the whole
+   *  analysis — an editor wants every error, not just the first. */
+  private collect(step: () => void) {
+    try {
+      step();
+    } catch (e) {
+      if (!(e instanceof FlowError)) throw e;
+      const key = `${e.file}:${e.line}:${e.col}:${e.message}`;
+      if (!this.mod.errors.some((x) => `${x.file}:${x.line}:${x.col}:${x.message}` === key)) {
+        this.mod.errors.push(e);
+      }
+    }
+  }
 
   /* ---------------------------------------------------------------- */
   /* driver                                                           */
@@ -151,9 +170,9 @@ export class Infer {
 
     for (let pass = 0; pass < 8; pass++) {
       const before = this.placementFingerprint();
-      for (const d of prog.decls) if (d.k === "Fn") this.checkFnBody(d);
-      for (const d of prog.decls) if (d.k === "Impl") this.checkImplBodies(d);
-      this.checkProvides(prog);
+      for (const d of prog.decls) if (d.k === "Fn") this.collect(() => this.checkFnBody(d));
+      for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.checkImplBodies(d));
+      this.collect(() => this.checkProvides(prog));
       for (const d of prog.decls) if (d.k === "Provide") this.registerProvide(d);
       for (const e of this.mod.effects.values()) e.place = this.effectPlace(e.name);
       if (this.placementFingerprint() === before) break;
@@ -322,7 +341,7 @@ export class Infer {
       methods.set(m.name, { params: m.params, ret: m.ret, eff: m.eff, body: m.body });
       this.mod.fns.set(fname, {
         name: fname, scheme: fnT([], fresh(0)), params: m.params, ret: m.ret,
-        eff: m.eff, body: m.body, pub: false, synthetic: true,
+        eff: m.eff, body: m.body, pub: false, synthetic: true, span: m.span,
       });
     }
     this.mod.impls.push({ trait: d.trait, target: d.target, index, methods, mangled });
@@ -402,7 +421,7 @@ export class Infer {
     const ty = fnT(paramTypes, ret, eff);
     markGeneric(ty);
     this.mod.fns.set(d.name, {
-      name: d.name, scheme: ty, params: d.params, ret: d.ret, eff: d.eff, body: d.body, pub: d.pub,
+      name: d.name, scheme: ty, params: d.params, ret: d.ret, eff: d.eff, body: d.body, pub: d.pub, span: d.span,
     });
   }
 
@@ -1053,7 +1072,10 @@ export class Infer {
           place = joinPlace(place, r.place);
           eff = mergeEff(eff, r.eff);
         }
-        return { ty: HTML, place: joinPlace(place, "client"), eff: mergeEff(eff, inst.eff) };
+        const res: ResInfo = { ty: HTML, place: joinPlace(place, "client"), eff: mergeEff(eff, inst.eff) };
+        // record component calls so editor features can resolve their names
+        this.mod.info.set(n, res);
+        return res;
       }
     }
   }

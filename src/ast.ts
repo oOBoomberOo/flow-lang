@@ -92,7 +92,7 @@ export type Decl =
   | { k: "RecordType"; name: string; params: string[]; fields: { name: string; type: TypeExpr }[]; pub: boolean; span: Span }
   | { k: "Alias"; name: string; params: string[]; type: TypeExpr; pub: boolean; span: Span }
   | { k: "Trait"; name: string; params: string[]; methods: FnSig[]; pub: boolean; span: Span }
-  | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; methods: FnSig & { body: Expr }; span: Span }
+  | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; methods: (FnSig & { body: Expr })[]; span: Span }
   | { k: "Effect"; name: string; ops: FnSig[]; pub: boolean; span: Span }
   | { k: "Provide"; effect: string; target?: TypeExpr; ops: { name: string; fn: Expr; span: Span }[]; span: Span }
   | { k: "Extern"; sig: FnSig; implName: string; span: Span }

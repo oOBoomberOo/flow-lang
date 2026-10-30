@@ -1,8 +1,10 @@
-// Flow VS Code extension: syntax highlighting (TextMate grammar), diagnostics,
-// hover, and — the point of the thing — colouring the inferred client/server
-// boundary directly in the editor.
+// Flow VS Code extension.
 //
-// It speaks LSP to src/lsp/server.ts over stdio. No npm dependencies.
+// A complete language client: syntax highlighting (TextMate) + every LSP
+// provider the server implements (completion, hover, definition, references,
+// symbols, signature help, inlay hints, folding, selection, highlights,
+// formatting, code actions, code lens, rename), plus Flow's own feature —
+// colouring the inferred client/server boundary.
 
 const vscode = require("vscode");
 const cp = require("child_process");
@@ -15,8 +17,8 @@ let statusBar = null;
 let output = null;
 let deco = null;
 let enabled = true;
-let regionCache = new Map(); // uri -> {client:[], server:[], cut:[]}
 let extensionPath = null;
+let regionCache = new Map(); // uri -> {client:[], server:[], cut:[]}
 
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
@@ -27,13 +29,10 @@ class LspClient {
     this.nextId = 1;
     this.pending = new Map();
     this.buf = Buffer.alloc(0);
-    this.proc = cp.spawn(process.execPath, [serverPath], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    this.proc = cp.spawn(process.execPath, [serverPath], { cwd, stdio: ["pipe", "pipe", "pipe"] });
     this.proc.stdout.on("data", (c) => this.feed(c));
     this.proc.stderr.on("data", (d) => output && output.appendLine(`[server] ${d.toString().trim()}`));
-    this.proc.on("exit", () => { this.pending.clear(); });
+    this.proc.on("exit", () => this.pending.clear());
   }
 
   feed(chunk) {
@@ -41,8 +40,7 @@ class LspClient {
     for (;;) {
       const idx = this.buf.indexOf("\r\n\r\n");
       if (idx < 0) return;
-      const header = this.buf.slice(0, idx).toString("utf8");
-      const m = /Content-Length:\s*(\d+)/i.exec(header);
+      const m = /Content-Length:\s*(\d+)/i.exec(this.buf.slice(0, idx).toString("utf8"));
       if (!m) { this.buf = this.buf.slice(idx + 4); continue; }
       const len = Number(m[1]);
       if (this.buf.length < idx + 4 + len) return;
@@ -84,19 +82,42 @@ class LspClient {
     });
   }
 
-  stop() { try { this.proc.kill(); } catch { /* ignore */ } }
+  stop() { try { this.proc.kill(); } catch { /* already gone */ } }
 }
 
 /* ------------------------------------------------------------------ */
-/* diagnostics                                                        */
+/* conversions                                                        */
+/* ------------------------------------------------------------------ */
+
+const P = (p) => new vscode.Position(p.line, p.character);
+const R = (r) => new vscode.Range(P(r.start), P(r.end));
+const back = (r) => ({ start: { line: r.start.line, character: r.start.character }, end: { line: r.end.line, character: r.end.character } });
+const backPos = (p) => ({ line: p.line, character: p.character });
+
+const KINDS = {
+  function: vscode.SymbolKind.Function,
+  type: vscode.SymbolKind.Class,
+  constructor: vscode.SymbolKind.Constructor,
+  trait: vscode.SymbolKind.Interface,
+  effect: vscode.SymbolKind.Interface,
+  record: vscode.SymbolKind.Struct,
+  alias: vscode.SymbolKind.TypeParameter,
+};
+
+async function ask(method, params, fallback) {
+  if (!client) return fallback;
+  try { return await client.request(method, params); } catch (e) { output?.appendLine(`[flow] ${method}: ${e.message}`); return fallback; }
+}
+
+/* ------------------------------------------------------------------ */
+/* diagnostics + boundary                                             */
 /* ------------------------------------------------------------------ */
 
 function publishDiagnostics(params) {
   const uri = vscode.Uri.parse(params.uri);
   const list = (params.diagnostics || []).map((d) => {
     const v = new vscode.Diagnostic(
-      new vscode.Range(d.range.start.line, d.range.start.character, d.range.end.line, d.range.end.character),
-      d.message,
+      R(d.range), d.message,
       d.severity === 1 ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
     );
     v.source = "flow";
@@ -105,10 +126,6 @@ function publishDiagnostics(params) {
   });
   diagnostics.set(uri, list);
 }
-
-/* ------------------------------------------------------------------ */
-/* boundary colouring                                                 */
-/* ------------------------------------------------------------------ */
 
 function makeDecorations() {
   const cfg = vscode.workspace.getConfiguration("flow");
@@ -135,27 +152,21 @@ function makeDecorations() {
   };
 }
 
-function toRange(r) {
-  return new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
-}
-
 function applyBoundary(payload) {
   const uri = payload.uri || (payload.regions && payload.regions[0] && payload.regions[0].fileUri);
-  const regions = payload.regions || [];
   const byFile = new Map();
-  for (const r of regions) {
+  for (const r of payload.regions || []) {
     const key = r.fileUri || uri;
     if (!key) continue;
     if (!byFile.has(key)) byFile.set(key, { client: [], server: [], cut: [] });
     const bucket = byFile.get(key);
-    const range = toRange(r.range);
+    const range = R(r.range);
     if (r.kind === "cut") bucket.cut.push({ range, hoverMessage: r.label });
     else if (r.side === "client") bucket.client.push({ range, hoverMessage: r.label });
     else if (r.side === "server") bucket.server.push({ range, hoverMessage: r.label });
   }
   regionCache = byFile;
   paintAll();
-
   const s = payload.summary || { client: 0, server: 0, cuts: 0 };
   statusBar.text = `$(radio-tower) Flow · client ${s.client} · server ${s.server} · cuts ${s.cuts}`;
   statusBar.tooltip = "Flow: inferred placement. Click to explain.";
@@ -163,8 +174,7 @@ function applyBoundary(payload) {
 
 function paint(editor) {
   if (!deco) return;
-  const key = editor.document.uri.toString();
-  const buckets = regionCache.get(key);
+  const buckets = regionCache.get(editor.document.uri.toString());
   if (!enabled || !buckets) {
     editor.setDecorations(deco.client, []);
     editor.setDecorations(deco.server, []);
@@ -182,12 +192,181 @@ function paintAll() {
 
 async function refresh(uri) {
   if (!client) return;
-  try {
-    const payload = await client.request("flow/boundary", uri ? { uri } : {});
-    applyBoundary({ ...payload, uri });
-  } catch (e) {
-    output.appendLine(`[flow] boundary request failed: ${e.message}`);
-  }
+  const payload = await ask("flow/boundary", uri ? { uri } : {}, null);
+  if (payload) applyBoundary({ ...payload, uri });
+}
+
+/* ------------------------------------------------------------------ */
+/* providers                                                          */
+/* ------------------------------------------------------------------ */
+
+function registerProviders(context) {
+  const doc = (d) => ({ uri: d.uri.toString() });
+  const push = (d) => context.subscriptions.push(d);
+
+  push(vscode.languages.registerCompletionItemProvider("flow", {
+    async provideCompletionItems(document, position) {
+      const res = await ask("textDocument/completion", { textDocument: doc(document), position: backPos(position) }, { items: [] });
+      const list = new vscode.CompletionList([], false);
+      for (const it of res.items || []) {
+        const item = new vscode.CompletionItem(it.label, it.kind ?? vscode.CompletionItemKind.Text);
+        if (it.detail) item.detail = it.detail;
+        if (it.documentation) item.documentation = typeof it.documentation === "string" ? it.documentation : it.documentation.value;
+        if (it.sortText) item.sortText = it.sortText;
+        list.items.push(item);
+      }
+      return list;
+    },
+  }, ".", ":", "@"));
+
+  push(vscode.languages.registerHoverProvider("flow", {
+    async provideHover(document, position) {
+      const h = await ask("textDocument/hover", { textDocument: doc(document), position: backPos(position) }, null);
+      if (!h || !h.contents) return null;
+      return new vscode.Hover(new vscode.MarkdownString(h.contents.value), h.range ? R(h.range) : undefined);
+    },
+  }));
+
+  push(vscode.languages.registerDefinitionProvider("flow", {
+    async provideDefinition(document, position) {
+      const d = await ask("textDocument/definition", { textDocument: doc(document), position: backPos(position) }, null);
+      return d ? new vscode.Location(vscode.Uri.parse(d.uri), R(d.range)) : null;
+    },
+  }));
+
+  push(vscode.languages.registerReferenceProvider("flow", {
+    async provideReferences(document, position, ctx) {
+      const refs = await ask("textDocument/references", {
+        textDocument: doc(document), position: backPos(position),
+        context: { includeDeclaration: ctx.includeDeclaration },
+      }, []);
+      return (refs || []).map((r) => new vscode.Location(vscode.Uri.parse(r.uri), R(r.range)));
+    },
+  }));
+
+  push(vscode.languages.registerDocumentSymbolProvider("flow", {
+    async provideDocumentSymbols(document) {
+      const syms = await ask("textDocument/documentSymbol", { textDocument: doc(document) }, []);
+      return (syms || []).map((s) => {
+        const ds = new vscode.DocumentSymbol(s.name, s.detail ?? "", KINDS[s.detail] ?? s.kind, R(s.range), R(s.selectionRange));
+        return ds;
+      });
+    },
+  }));
+
+  push(vscode.languages.registerWorkspaceSymbolProvider({
+    async provideWorkspaceSymbols(query) {
+      const syms = await ask("workspace/symbol", { query }, []);
+      return (syms || []).map((s) =>
+        new vscode.SymbolInformation(s.name, s.kind, s.containerName ?? "", new vscode.Location(vscode.Uri.parse(s.location.uri), R(s.location.range))));
+    },
+  }));
+
+  push(vscode.languages.registerSignatureHelpProvider("flow", {
+    async provideSignatureHelp(document, position) {
+      const h = await ask("textDocument/signatureHelp", { textDocument: doc(document), position: backPos(position) }, null);
+      if (!h) return null;
+      const help = new vscode.SignatureHelp();
+      help.signatures = (h.signatures || []).map((s) => {
+        const sig = new vscode.SignatureInformation(s.label, s.documentation);
+        sig.parameters = (s.parameters || []).map((p) => new vscode.ParameterInformation(p.label));
+        return sig;
+      });
+      help.activeSignature = h.activeSignature ?? 0;
+      help.activeParameter = h.activeParameter ?? 0;
+      return help;
+    },
+  }, "(", ","));
+
+  push(vscode.languages.registerInlayHintsProvider("flow", {
+    async provideInlayHints(document, range) {
+      const hints = await ask("textDocument/inlayHint", { textDocument: doc(document), range: back(range) }, []);
+      return (hints || []).map((h) => {
+        const hint = new vscode.InlayHint(P(h.position), h.label, h.kind);
+        if (h.tooltip) hint.tooltip = h.tooltip;
+        if (h.paddingLeft) hint.paddingLeft = true;
+        if (h.paddingRight) hint.paddingRight = true;
+        return hint;
+      });
+    },
+  }));
+
+  push(vscode.languages.registerFoldingRangeProvider("flow", {
+    async provideFoldingRanges(document) {
+      const ranges = await ask("textDocument/foldingRange", { textDocument: doc(document) }, []);
+      return (ranges || []).map((r) => new vscode.FoldingRange(r.startLine, r.endLine, r.kind));
+    },
+  }));
+
+  push(vscode.languages.registerSelectionRangeProvider("flow", {
+    async provideSelectionRanges(document, positions) {
+      const res = await ask("textDocument/selectionRange", { textDocument: doc(document), positions: positions.map(backPos) }, null);
+      if (!res) return null;
+      const convert = (r) => r ? new vscode.SelectionRange(R(r), r.parent ? convert(r.parent) : undefined) : undefined;
+      return res.map(convert).filter(Boolean);
+    },
+  }));
+
+  push(vscode.languages.registerDocumentHighlightProvider("flow", {
+    async provideDocumentHighlights(document, position) {
+      const hits = await ask("textDocument/documentHighlight", { textDocument: doc(document), position: backPos(position) }, []);
+      return (hits || []).map((h) => new vscode.DocumentHighlight(R(h.range), h.kind));
+    },
+  }));
+
+  push(vscode.languages.registerDocumentFormattingEditProvider("flow", {
+    async provideDocumentFormattingEdits(document) {
+      const edits = await ask("textDocument/formatting", {
+        textDocument: doc(document), options: { tabSize: 2, insertSpaces: true },
+      }, []);
+      return (edits || []).map((e) => vscode.TextEdit.replace(R(e.range), e.newText));
+    },
+  }));
+
+  push(vscode.languages.registerCodeActionsProvider("flow", {
+    async provideCodeActions(document, range, ctx) {
+      const actions = await ask("textDocument/codeAction", {
+        textDocument: doc(document), range: back(range),
+        context: { diagnostics: ctx.diagnostics.map((d) => ({ message: d.message })) },
+      }, []);
+      return (actions || []).map((a) => {
+        const action = new vscode.CodeAction(a.title, a.kind === "quickfix" ? vscode.CodeActionKind.QuickFix : vscode.CodeActionKind.RefactorRewrite);
+        const edit = new vscode.WorkspaceEdit();
+        for (const [uri, edits] of Object.entries(a.edit.changes || {})) {
+          for (const e of edits) edit.replace(vscode.Uri.parse(uri), R(e.range), e.newText);
+        }
+        action.edit = edit;
+        return action;
+      });
+    },
+  }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite] }));
+
+  push(vscode.languages.registerCodeLensProvider("flow", {
+    async provideCodeLenses(document) {
+      const lenses = await ask("textDocument/codeLens", { textDocument: doc(document) }, []);
+      return (lenses || []).map((l) => new vscode.CodeLens(R(l.range), {
+        title: l.command.title,
+        command: "flow.cutInfo",
+        arguments: l.command.arguments,
+      }));
+    },
+  }));
+
+  push(vscode.languages.registerRenameProvider("flow", {
+    async prepareRename(document, position) {
+      const r = await ask("textDocument/prepareRename", { textDocument: doc(document), position: backPos(position) }, null);
+      return r ? R(r) : null;
+    },
+    async provideRenameEdits(document, position, newName) {
+      const res = await ask("textDocument/rename", { textDocument: doc(document), position: backPos(position), newName }, null);
+      if (!res) return null;
+      const edit = new vscode.WorkspaceEdit();
+      for (const [uri, changes] of Object.entries(res.changes || {})) {
+        for (const c of changes) edit.replace(vscode.Uri.parse(uri), R(c.range), c.newText);
+      }
+      return edit;
+    },
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,19 +376,14 @@ async function refresh(uri) {
 function findServer(context) {
   const cfg = vscode.workspace.getConfiguration("flow").get("serverPath");
   if (cfg && fs.existsSync(cfg)) return cfg;
-  // 1. self-contained install: the compiler is bundled with the extension
   const bundled = path.join(context.extensionPath, "vendor", "src", "lsp", "server.ts");
   if (fs.existsSync(bundled)) return bundled;
-  // 2. workspace checkout
-  const roots = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
-  for (const root of roots) {
+  for (const root of (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath)) {
     const candidate = path.join(root, "src", "lsp", "server.ts");
     if (fs.existsSync(candidate)) return candidate;
   }
-  // 3. extension installed next to the repo
   const sibling = path.join(context.extensionPath, "..", "src", "lsp", "server.ts");
-  if (fs.existsSync(sibling)) return sibling;
-  return null;
+  return fs.existsSync(sibling) ? sibling : null;
 }
 
 async function start(context) {
@@ -224,16 +398,20 @@ async function start(context) {
     await client.request("initialize", {
       processId: process.pid,
       rootUri: vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null,
-      capabilities: { textDocument: { hover: { contentFormat: ["markdown"] } } },
+      capabilities: {
+        textDocument: {
+          hover: { contentFormat: ["markdown"] },
+          completion: { completionItem: { documentationFormat: ["markdown", "plaintext"] } },
+          publishDiagnostics: { relatedInformation: false },
+        },
+        workspace: { symbol: {} },
+      },
     });
     client.notify("initialized", {});
   } catch (e) {
     vscode.window.showErrorMessage(`Flow language server failed: ${e.message}`);
   }
-
-  for (const doc of vscode.workspace.textDocuments) {
-    if (doc.languageId === "flow") openDoc(doc);
-  }
+  for (const doc of vscode.workspace.textDocuments) if (doc.languageId === "flow") openDoc(doc);
   const active = vscode.window.activeTextEditor;
   if (active && active.document.languageId === "flow") await refresh(active.document.uri.toString());
 }
@@ -256,9 +434,7 @@ function activate(context) {
   makeDecorations();
 
   context.subscriptions.push(
-    diagnostics,
-    statusBar,
-    output,
+    diagnostics, statusBar, output,
     vscode.workspace.onDidOpenTextDocument(openDoc),
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (!client || e.document.languageId !== "flow") return;
@@ -290,21 +466,13 @@ function activate(context) {
       enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
       paintAll();
     }),
-    vscode.languages.registerHoverProvider("flow", {
-      async provideHover(document, position) {
-        if (!client) return null;
-        try {
-          const h = await client.request("textDocument/hover", {
-            textDocument: { uri: document.uri.toString() },
-            position: { line: position.line, character: position.character },
-          });
-          if (!h || !h.contents) return null;
-          const md = new vscode.MarkdownString(typeof h.contents === "string" ? h.contents : h.contents.value);
-          return new vscode.Hover(md, h.range ? toRange(h.range) : undefined);
-        } catch { return null; }
-      },
-    }),
     vscode.commands.registerCommand("flow.explain", () => explainCurrent()),
+    vscode.commands.registerCommand("flow.cutInfo", (name) => {
+      const cuts = [...regionCache.entries()]
+        .filter(([uri]) => uri === vscode.window.activeTextEditor?.document.uri.toString())
+        .flatMap(([, b]) => b.cut);
+      vscode.window.showInformationMessage(`Flow: ${name ?? "this function"} — ${cuts.length} inferred cut(s) in this file.`);
+    }),
     vscode.commands.registerCommand("flow.toggleBoundary", () => {
       enabled = !enabled;
       paintAll();
@@ -316,6 +484,7 @@ function activate(context) {
     }),
   );
 
+  registerProviders(context);
   start(context);
 }
 
@@ -341,16 +510,13 @@ function explainCurrent() {
     output.appendLine("flow: cannot find bin/flow.mjs (workspace or bundled).");
     return;
   }
-  const cwd = path.dirname(path.dirname(bin));
-  cp.execFile(process.execPath, [bin, "explain", file], { cwd }, (err, stdout, stderr) => {
+  cp.execFile(process.execPath, [bin, "explain", file], { cwd: path.dirname(path.dirname(bin)) }, (err, stdout, stderr) => {
     output.appendLine(stdout || "");
     if (stderr) output.appendLine(stderr);
     if (err) output.appendLine(`exit ${err.code}`);
   });
 }
 
-function deactivate() {
-  client?.stop();
-}
+function deactivate() { client?.stop(); }
 
 module.exports = { activate, deactivate };
