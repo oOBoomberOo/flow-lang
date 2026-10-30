@@ -47,6 +47,10 @@ pub fn random() -> Float { f_random() }
 
 pub fn abs(n: Int) -> Int { if (n < 0) { -n } else { n } }
 
+pub fn div(a: Int, b: Int) -> Int { a / b }
+
+pub fn mod(a: Int, b: Int) -> Int { a % b }
+
 pub fn minInt(a: Int, b: Int) -> Int { if (a < b) { a } else { b } }
 
 pub fn maxInt(a: Int, b: Int) -> Int { if (a > b) { a } else { b } }

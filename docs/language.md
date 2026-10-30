@@ -443,6 +443,12 @@ use std::time::{nowMs, duration}
 use std::math::{sqrt, floor, pow}
 ```
 
+The compiler registers no callable primitives. `std::prelude` declares `Option`,
+`Server` / `Client` / `Store`, `CellOps`, and the list, string, conversion and
+equality helpers as ordinary Flow over these bindings; the runtime only exposes
+raw host primitives (`__flow.show`, `__flow.eq`, `__flow.get`, `__flow.set`, and
+`__flow.host.*`).
+
 ---
 
 ## 13. Limits of 0.1

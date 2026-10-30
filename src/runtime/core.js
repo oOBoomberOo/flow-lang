@@ -319,6 +319,7 @@ export function createRuntime() {
     eq: (a, b) => R.eq(a, b),
     get: (x) => R.get(x),
     set: (x, v) => R.set(x, v),
+    divInt: (a, b) => Math.trunc(a / b),
     host: {
       now: () => Date.now(),
       cell: (v) => R.cell(v),

@@ -16,7 +16,7 @@ import type {
 } from "./ast.ts";
 import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
-  freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf, optionOf,
+  freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
   cellOf, eventOf, typeStr, joinPlace, typePlace,
   snapshotSubst, restoreSubst, markGeneric,
 } from "./types.ts";

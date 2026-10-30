@@ -305,3 +305,12 @@ fn main() -> Html {
   assert.match(r.client, /R\.ffiCall\("@toUpperCase"/);
   assert.deepEqual(r.diagnostics, []);
 });
+
+test("ffi: Int division lowers through the host primitive", () => {
+  const { entry } = packageWith({
+    "main.flow": `fn main() -> Html { html { <p>{str(7 / 2)}</p> } }\n`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /R\.ffiCall\("__flow\.divInt"/);
+  assert.ok(!r.client.includes("Math.trunc"), "no direct library call");
+});
