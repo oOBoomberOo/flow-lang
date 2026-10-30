@@ -11,6 +11,8 @@ export function installDom(R) {
     if (typeof DocumentFragment !== "undefined" && v instanceof DocumentFragment) return [...v.childNodes];
     if (typeof window !== "undefined" && v instanceof window.Node) return [v];
     if (Array.isArray(v)) {
+      // an empty list has no elements to render, whatever its element type
+      if (v.length === 0) return [];
       // a list of markup renders as markup; a list of values renders structurally
       return v.some((x) => x && typeof x === "object" && "nodeType" in x)
         ? v.flatMap(toNodes)

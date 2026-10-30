@@ -92,7 +92,7 @@ stdlib/                  std::prelude, list, option, math, random, string, html,
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **226 tests** across grammar, types, boundaries, modules, packages,
+Tests: `npm test` — **229 tests** across grammar, types, boundaries, modules, packages,
 the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
 algebraic effects, cell sugar, monads, currying, qualified paths, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 

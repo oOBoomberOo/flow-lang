@@ -1,0 +1,50 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createRuntime } from "../src/runtime/core.js";
+import { installDom } from "../src/runtime/dom.js";
+
+/** The smallest DOM the renderer touches, so node kinds can be asserted. */
+function fakeDocument() {
+  const make = (nodeType, tagName) => ({
+    nodeType,
+    tagName,
+    style: {},
+    textContent: "",
+    childNodes: [],
+    appendChild(n) { this.childNodes.push(n); return n; },
+    replaceChildren(...n) { this.childNodes = n; },
+    setAttribute() {},
+    addEventListener() {},
+  });
+  globalThis.document = {
+    createElement: (tag) => make(1, tag),
+    createTextNode: (text) => { const n = make(3, undefined); n.textContent = text; return n; },
+    createDocumentFragment: () => make(11, undefined),
+  };
+}
+
+function runtime() {
+  fakeDocument();
+  return installDom(createRuntime());
+}
+
+test("dom: an empty list renders no elements", () => {
+  const R = runtime();
+  assert.deepEqual(R._toNodes([]), []);
+  assert.equal(R.el("ul", {}, [[]]).childNodes.length, 0, "empty list child adds nothing");
+  assert.equal(R.el("ul", {}, [[], []]).childNodes.length, 0, "nested empty lists add nothing");
+});
+
+test("dom: a list of markup renders its elements, empty lists included", () => {
+  const R = runtime();
+  const nodes = [document.createElement("li"), document.createElement("li")];
+  assert.equal(R._toNodes([[], ...nodes]).length, 2, "an empty list inside markup contributes nothing");
+  assert.equal(R.el("ul", {}, [nodes]).childNodes.length, 2);
+});
+
+test("dom: a non-empty list of plain values still renders structurally", () => {
+  const R = runtime();
+  const nodes = R._toNodes([1, 2, 3]);
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].textContent, "[1, 2, 3]");
+});
