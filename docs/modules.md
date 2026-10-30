@@ -188,6 +188,33 @@ A program opts in with `fn routes() -> Unit { Router.mount([...]) }`; the host
 calls it at startup and serves matching HTTP requests. Full reference:
 [`docs/http.md`](http.md).
 
+### `std::fs`
+
+Server-side filesystem access through the `Fs @ server` effect capability:
+
+```flow
+use std::fs::{
+  readText, tryReadText, writeText, appendText, exists, listDir,
+  makeDir, removeFile, removeDir, stat, tmpDir, FileInfo,
+}
+```
+
+| function | type |
+|---|---|
+| `readText` | `(Str) -> Str` — throws if missing |
+| `tryReadText` | `(Str) -> Option<Str>` |
+| `writeText` / `appendText` | `(Str, Str) -> Unit` (UTF-8) |
+| `exists` | `(Str) -> Bool` |
+| `listDir` | `(Str) -> List<Str>` — sorted names |
+| `makeDir` | `(Str) -> Unit` — recursive |
+| `removeFile` / `removeDir` | `(Str) -> Unit` — `removeDir` is recursive |
+| `stat` | `(Str) -> FileInfo` (`size`, `isDir`, `modified`) |
+| `tmpDir` | `() -> Str` — OS temporary directory |
+
+The server runtime provides `Fs` with Node's synchronous `fs` module. Calls are
+server-placed; paths are server paths and are not sandboxed. The client bundle
+never receives filesystem primitives.
+
 ### `std::log`
 
 ```flow

@@ -1,0 +1,73 @@
+// std::fs — server-side filesystem access.
+//
+// `Fs` is a server effect capability. The server runtime provides it with
+// Node's fs module; the client bundle never receives these primitives, so a
+// filesystem call is placed on the server by the effect's `@ server` authority.
+
+pub type FileInfo = {
+  size: Int,
+  isDir: Bool,
+  modified: Int,
+}
+
+pub effect Fs @ server {
+  fn readText(path: Str) -> Str
+  fn tryReadText(path: Str) -> Option<Str>
+  fn writeText(path: Str, contents: Str) -> Unit
+  fn appendText(path: Str, contents: Str) -> Unit
+  fn exists(path: Str) -> Bool
+  fn listDir(path: Str) -> List<Str>
+  fn makeDir(path: Str) -> Unit
+  fn removeFile(path: Str) -> Unit
+  fn removeDir(path: Str) -> Unit
+  fn stat(path: Str) -> FileInfo
+  fn tmpDir() -> Str
+}
+
+unsafe extern js fn host_read_text(path: Str) -> Str = "__flow.host.fsReadText"
+unsafe extern js fn host_try_read_text(path: Str) -> Option<Str> = "__flow.host.fsTryReadText"
+unsafe extern js fn host_write_text(path: Str, contents: Str) -> Unit = "__flow.host.fsWriteText"
+unsafe extern js fn host_append_text(path: Str, contents: Str) -> Unit = "__flow.host.fsAppendText"
+unsafe extern js fn host_exists(path: Str) -> Bool = "__flow.host.fsExists"
+unsafe extern js fn host_list_dir(path: Str) -> List<Str> = "__flow.host.fsListDir"
+unsafe extern js fn host_make_dir(path: Str) -> Unit = "__flow.host.fsMakeDir"
+unsafe extern js fn host_remove_file(path: Str) -> Unit = "__flow.host.fsRemoveFile"
+unsafe extern js fn host_remove_dir(path: Str) -> Unit = "__flow.host.fsRemoveDir"
+unsafe extern js fn host_stat(path: Str) -> FileInfo = "__flow.host.fsStat"
+unsafe extern js fn host_tmp_dir() -> Str = "__flow.host.fsTmpDir"
+
+provide Fs with {
+  readText = host_read_text,
+  tryReadText = host_try_read_text,
+  writeText = host_write_text,
+  appendText = host_append_text,
+  exists = host_exists,
+  listDir = host_list_dir,
+  makeDir = host_make_dir,
+  removeFile = host_remove_file,
+  removeDir = host_remove_dir,
+  stat = host_stat,
+  tmpDir = host_tmp_dir,
+}
+
+pub fn readText(path: Str) -> Str { Fs.readText(path) }
+
+pub fn tryReadText(path: Str) -> Option<Str> { Fs.tryReadText(path) }
+
+pub fn writeText(path: Str, contents: Str) -> Unit { Fs.writeText(path, contents) }
+
+pub fn appendText(path: Str, contents: Str) -> Unit { Fs.appendText(path, contents) }
+
+pub fn exists(path: Str) -> Bool { Fs.exists(path) }
+
+pub fn listDir(path: Str) -> List<Str> { Fs.listDir(path) }
+
+pub fn makeDir(path: Str) -> Unit { Fs.makeDir(path) }
+
+pub fn removeFile(path: Str) -> Unit { Fs.removeFile(path) }
+
+pub fn removeDir(path: Str) -> Unit { Fs.removeDir(path) }
+
+pub fn stat(path: Str) -> FileInfo { Fs.stat(path) }
+
+pub fn tmpDir() -> Str { Fs.tmpDir() }

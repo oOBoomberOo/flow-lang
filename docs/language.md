@@ -48,7 +48,7 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
 `std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
-`std::log`, `std::time`, `std::http` — see [`docs/modules.md`](modules.md). A single
+`std::log`, `std::time`, `std::http`, `std::fs` — see [`docs/modules.md`](modules.md). A single
 file without a manifest still works. Host access goes through explicitly `unsafe`
 FFI bindings (§12).
 
@@ -509,7 +509,7 @@ flow add flow-time    # add the best matching version from the registry
 ```
 
 The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`.
+`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::fs`.
 Full reference: [`docs/modules.md`](modules.md).
 
 ---

@@ -1,0 +1,26 @@
+// std::fs — server-side filesystem access through the Fs effect capability.
+
+use std::fs::{tmpDir, makeDir, writeText, readText, tryReadText, exists, stat, listDir}
+
+fn demo() -> Str {
+  let dir = tmpDir() + "/flow-fs-demo";
+  makeDir(dir);
+  let path = dir + "/hello.txt";
+  writeText(path, "server fs works");
+  let text = readText(path);
+  let again = match tryReadText(path) { Some(value) => value, None => "missing" };
+  let present = exists(path);
+  let info = stat(path);
+  let names = listDir(dir);
+  "text=" + text + ", again=" + again + ", size=" + str(info.size) +
+    ", files=" + str(names) + ", exists=" + str(present)
+}
+
+fn main() -> Html {
+  html {
+    <div class="card">
+      <h1>{"Filesystem"}</h1>
+      <p class="fs">{demo()}</p>
+    </div>
+  }
+}
