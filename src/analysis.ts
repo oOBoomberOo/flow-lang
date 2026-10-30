@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileFile } from "./compile.ts";
+import { parse } from "./parser.ts";
 import { FlowError } from "./lexer.ts";
 import { prune, typeStr } from "./types.ts";
 import type { Type } from "./types.ts";
@@ -76,6 +77,10 @@ export interface SymbolInfo {
   range: Range;
 }
 
+/** One public declaration of a module, for completion without compiling it. */
+export interface ModuleMember { name: string; kind: SymKind }
+export interface ModuleIndex { id: string; file: string; members: ModuleMember[] }
+
 export interface Analysis {
   ok: boolean;
   entry: string;
@@ -85,19 +90,80 @@ export interface Analysis {
   nodes: NodeInfo[];
   symbols: SymbolInfo[];
   units: { id: string; file: string }[];
+  /** Every std module and its public members, indexed once without type-checking. */
+  modules: ModuleIndex[];
   program?: Program;
   display?: Map<string, string>;
   importedByFile?: Map<string, Set<string>>;
 }
 
+const STDLIB_DIR = path.join(import.meta.dirname, "..", "stdlib");
+const isStd = (file: string) => {
+  const abs = path.resolve(file);
+  return abs === STDLIB_DIR || abs.startsWith(STDLIB_DIR + path.sep);
+};
+
+/** File contents, reused while the file is unchanged (the editor asks constantly). */
+const sourceCache = new Map<string, { mtimeMs: number; src: string }>();
+
 export function readSource(file: string, overlay?: Map<string, string>): string {
   const abs = path.resolve(file);
   if (overlay?.has(abs)) return overlay.get(abs)!;
   try {
-    return fs.readFileSync(abs, "utf8");
+    const st = fs.statSync(abs);
+    const hit = sourceCache.get(abs);
+    if (hit && hit.mtimeMs === st.mtimeMs) return hit.src;
+    const src = fs.readFileSync(abs, "utf8");
+    sourceCache.set(abs, { mtimeMs: st.mtimeMs, src });
+    return src;
   } catch {
     return "";
   }
+}
+
+let STD_MODULES: ModuleIndex[] | null = null;
+
+/**
+ * The std library as completion sees it: module ids plus their public members,
+ * parsed once. Compiling every std module on each keystroke was the main reason
+ * the language server felt slow while typing.
+ */
+export function stdModules(): ModuleIndex[] {
+  if (STD_MODULES) return STD_MODULES;
+  const modules: ModuleIndex[] = [];
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(STDLIB_DIR).filter((f) => f.endsWith(".flow") && f !== "builtins.flow").sort();
+  } catch { /* no std */ }
+  for (const f of files) {
+    const file = path.join(STDLIB_DIR, f);
+    try {
+      const program = parse(fs.readFileSync(file, "utf8"), file, { recover: true });
+      const members: ModuleMember[] = [];
+      const add = (name: string, kind: SymKind) => {
+        if (!members.some((m) => m.name === name)) members.push({ name, kind });
+      };
+      for (const d of program.decls) {
+        if (!(d as { pub?: boolean }).pub) continue;
+        switch (d.k) {
+          case "Fn": add(d.name, "function"); break;
+          case "Extern": add(d.sig.name, "function"); break;
+          case "Adt":
+            add(d.name, "type");
+            for (const v of d.variants) add(v.name, "constructor");
+            break;
+          case "RecordType": add(d.name, "record"); break;
+          case "Alias": add(d.name, "alias"); break;
+          case "Trait": add(d.name, "trait"); break;
+          case "Effect": add(d.name, "effect"); break;
+          default: break;
+        }
+      }
+      modules.push({ id: `std::${f.replace(/\.flow$/, "")}`, file, members });
+    } catch { /* a broken std file must not disable completion */ }
+  }
+  STD_MODULES = modules;
+  return modules;
 }
 
 export function offsetToPosition(src: string, offset: number): Position {
@@ -120,7 +186,9 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
   const abs = path.resolve(entry);
 
   try {
-    const result = compileFile(abs, { overlay, collectErrors: true, requireMain: false, recover: true, allStd: true });
+    // Only the modules this program actually reaches. Preloading the whole std
+    // library made every keystroke cost 10-20x more; completion reads stdModules().
+    const result = compileFile(abs, { overlay, collectErrors: true, requireMain: false, recover: true });
     const srcCache = new Map<string, string>();
     const srcFor = (file: string) => {
       let s = srcCache.get(file);
@@ -143,6 +211,8 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
     for (const [node, info] of result.mod.info) {
       const span = (node as { span?: Span }).span;
       if (!span || !span.file) continue;
+      // Std implementation details are only interesting if the user opened one.
+      if (isStd(span.file) && !overlay?.has(path.resolve(span.file))) continue;
       const src = srcFor(span.file);
       const ty = prune(info.ty);
       const entry: NodeInfo = {
@@ -199,7 +269,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
 
     // Primitive types live in the compiler/runtime; point navigation at the
     // builtins documentation so `Html`, `Int`, `List`, … have a definition.
-    const builtinsFile = path.join(import.meta.dirname, "..", "stdlib", "builtins.flow");
+    const builtinsFile = path.join(STDLIB_DIR, "builtins.flow");
     if (fs.existsSync(builtinsFile)) {
       const builtins = fs.readFileSync(builtinsFile, "utf8");
       for (const name of ["Html", "Int", "Float", "Str", "Bool", "Unit", "List", "Cell", "Event", "Dom"]) {
@@ -304,6 +374,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         if (info.place !== "cross") continue;
         const span = (node as { span?: Span }).span;
         if (!span?.file) continue;
+        if (isStd(span.file) && !overlay?.has(path.resolve(span.file))) continue;
         if (!crossingKinds.has((node as { k?: string }).k ?? "")) continue;
         const ty = prune(info.ty);
         if (ty.k === "fun") continue;
@@ -351,6 +422,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       nodes,
       symbols,
       units: result.units,
+      modules: stdModules(),
       program: result.program,
       display: result.display,
       importedByFile: result.importedByFile,
@@ -376,6 +448,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       nodes: [],
       symbols: [],
       units: [],
+      modules: stdModules(),
     };
   }
 }

@@ -99,21 +99,96 @@ function entryFor(file: string): string {
   } catch { return file; }
 }
 
+function overlayKey(o: Map<string, string>): string {
+  const parts: string[] = [];
+  for (const k of [...o.keys()].sort()) parts.push(`${k}\u0000${o.get(k)}`);
+  return parts.join("\u0001");
+}
+
+let lastInputKey = "";
+let reanalyzeTimer: ReturnType<typeof setTimeout> | null = null;
+let analysisStale = false;
+
+/** Discard the cache (a file changed on disk). */
+function invalidateAnalysis(): void {
+  lastInputKey = "";
+}
+
 function reanalyze(): Analysis | null {
   const first = [...openDocs.keys()][0];
   if (!first && !lastEntry) return null;
   const file = lastEntry ?? uriToPath(first!);
   const entry = entryFor(file);
   lastEntry = entry;
+  const ov = overlay();
+  // The same text is analysed once: didSave after didChange is free, and a
+  // debounced timer that lands on unchanged input does not recompile.
+  const key = `${entry}\u0002${overlayKey(ov)}`;
+  if (key === lastInputKey && lastAnalysis) {
+    for (const uri of openDocs.keys()) {
+      publishDiagnostics(uri, lastAnalysis);
+      notify("flow/boundaryChanged", { uri, ...boundary(uri) });
+    }
+    return lastAnalysis;
+  }
   try {
-    lastAnalysis = analyze(entry, overlay());
+    const started = performance.now();
+    lastAnalysis = analyze(entry, ov);
+    lastInputKey = key;
+    if (process.env.FLOW_LSP_DEBUG) {
+      console.error(`[flow-lsp] analyze ${(performance.now() - started).toFixed(1)}ms`);
+    }
   } catch (e) {
     console.error("[flow-lsp]", e);
     return null;
   }
-  for (const uri of openDocs.keys()) publishDiagnostics(uri, lastAnalysis);
+  for (const uri of openDocs.keys()) {
+    publishDiagnostics(uri, lastAnalysis);
+    notify("flow/boundaryChanged", { uri, ...boundary(uri) });
+  }
   return lastAnalysis;
 }
+
+/**
+ * Coalesce a burst of keystrokes into one analysis. Recompiling synchronously on
+ * every `didChange` was what made typing feel slow.
+ */
+function scheduleReanalyze(delay = 150): void {
+  analysisStale = true;
+  if (reanalyzeTimer) clearTimeout(reanalyzeTimer);
+  reanalyzeTimer = setTimeout(() => {
+    reanalyzeTimer = null;
+    reanalyze();
+    analysisStale = false;
+  }, delay);
+}
+
+/** Requests the user initiated get a fresh analysis; background ones reuse it. */
+function flushAnalysis(): void {
+  if (!analysisStale) return;
+  if (reanalyzeTimer) {
+    clearTimeout(reanalyzeTimer);
+    reanalyzeTimer = null;
+  }
+  reanalyze();
+  analysisStale = false;
+}
+
+const FRESH_METHODS = new Set([
+  "textDocument/completion",
+  "textDocument/hover",
+  "textDocument/definition",
+  "textDocument/typeDefinition",
+  "textDocument/references",
+  "textDocument/documentSymbol",
+  "textDocument/documentHighlight",
+  "textDocument/signatureHelp",
+  "textDocument/prepareRename",
+  "textDocument/rename",
+  "textDocument/codeAction",
+  "textDocument/codeLens",
+  "workspace/symbol",
+]);
 
 function publishDiagnostics(uri: string, a: Analysis) {
   const file = path.resolve(uriToPath(uri));
@@ -501,14 +576,15 @@ function completion(file: string, pos: Position) {
     const prefixLower = prefix.toLowerCase();
 
     const modules = new Map<string, string>();
-    for (const u of a?.units ?? []) {
-      if (!u.id.startsWith(q) || u.id === q) continue;
-      const rest = u.id.slice(q.length);
-      if (!rest) continue;
+    const addModule = (id: string) => {
+      if (!id.startsWith(q) || id === q) return;
+      const rest = id.slice(q.length);
       const cut = rest.indexOf("::");
       const seg = cut >= 0 ? rest.slice(0, cut) : rest;
-      if (seg) modules.set(seg, cut >= 0 ? `${q}${seg}` : u.id);
-    }
+      if (seg) modules.set(seg, cut >= 0 ? `${q}${seg}` : id);
+    };
+    for (const u of a?.units ?? []) addModule(u.id);
+    for (const m of a?.modules ?? []) addModule(m.id);
     const moduleItems = [...modules]
       .filter(([name]) => !prefix || name.toLowerCase().startsWith(prefixLower))
       .map(([name, id]) => ({
@@ -521,21 +597,29 @@ function completion(file: string, pos: Position) {
 
     const seen = new Set<string>();
     const memberItems: Record<string, unknown>[] = [];
+    const addMember = (name: string, kind: number, detail: string) => {
+      if (prefix && !name.toLowerCase().startsWith(prefixLower)) return;
+      if (seen.has(name)) return;
+      seen.add(name);
+      memberItems.push({
+        label: name,
+        kind,
+        detail,
+        documentation: { kind: "markdown", value: `\`${detail}\`` },
+        sortText: "1" + name,
+      });
+    };
+    // Loaded modules have real declaration sites.
     for (const s of a?.symbols ?? []) {
       if (!s.display.startsWith(q)) continue;
       const rest = s.display.slice(q.length);
       if (!rest || rest.includes("::")) continue;
-      if (prefix && !s.name.toLowerCase().startsWith(prefixLower)) continue;
-      const key = `${s.name}|${s.display}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      memberItems.push({
-        label: s.name,
-        kind: symbolKind(s.kind),
-        detail: s.display,
-        documentation: { kind: "markdown", value: `\`${s.display}\`` },
-        sortText: "1" + s.name,
-      });
+      addMember(s.name, symbolKind(s.kind), s.display);
+    }
+    // Modules the program does not import yet come from the std index.
+    for (const m of a?.modules ?? []) {
+      if (`${m.id}::` !== q) continue;
+      for (const mem of m.members) addMember(mem.name, symbolKind(mem.kind), `${m.id}::${mem.name}`);
     }
     return { isIncomplete: false, items: [...moduleItems, ...memberItems] };
   }
@@ -640,6 +724,34 @@ function completion(file: string, pos: Position) {
       }];
     }
     items.push(item);
+  }
+
+  // Public std members from modules this file does not import yet. The cheap
+  // index keeps this working without compiling the whole standard library.
+  const loaded = new Set((lastAnalysis?.units ?? []).map((u) => u.id));
+  for (const m of lastAnalysis?.modules ?? []) {
+    if (loaded.has(m.id)) continue;
+    for (const mem of m.members) {
+      if (prefix) {
+        const name = mem.name.toLowerCase();
+        if (!name.startsWith(prefixLower) && !name.includes(prefixLower)) continue;
+      }
+      const key = `${mem.name}|${m.id}`;
+      if (seenSymbols.has(key)) continue;
+      seenSymbols.add(key);
+      const at = { line: lastUseLine + 1, character: 0 };
+      items.push({
+        label: mem.name,
+        kind: symbolKind(mem.kind),
+        detail: `${mem.kind} · ${m.id}`,
+        documentation: { kind: "markdown", value: `\`${m.id}::${mem.name}\`` },
+        sortText: `2${mem.name.toLowerCase().startsWith(prefixLower) ? "0" : "1"}${mem.name}`,
+        additionalTextEdits: [{
+          range: { start: at, end: at },
+          newText: `use ${m.id}::{${mem.name}}\n`,
+        }],
+      });
+    }
   }
   return { isIncomplete: false, items };
 }
@@ -1072,6 +1184,10 @@ reader.onMessage((msg) => {
   const p = (msg.params ?? {}) as Json;
   const docUri = (p.textDocument as Json | undefined)?.uri as string | undefined;
 
+  // Typing schedules a debounced analysis; a real request brings it up to date
+  // first so completion and hover still see the text the user just typed.
+  if (method && FRESH_METHODS.has(method)) flushAnalysis();
+
   switch (method) {
     case "initialize":
       workspaceRoot = p.rootUri ? uriToPath(p.rootUri as string) : null;
@@ -1110,7 +1226,6 @@ reader.onMessage((msg) => {
       openDocs.set(doc.uri as string, doc.text as string);
       lastEntry = null;
       reanalyze();
-      notify("flow/boundaryChanged", { uri: doc.uri, ...boundary(doc.uri as string) });
       return;
     }
 
@@ -1125,8 +1240,7 @@ reader.onMessage((msg) => {
         text = text.slice(0, offsetAt(text, r.start)) + c.text + text.slice(offsetAt(text, r.end));
       }
       openDocs.set(uri, text);
-      reanalyze();
-      notify("flow/boundaryChanged", { uri, ...boundary(uri) });
+      scheduleReanalyze();
       return;
     }
 
@@ -1134,7 +1248,6 @@ reader.onMessage((msg) => {
       const doc = p.textDocument as Json;
       if (typeof p.text === "string") openDocs.set(doc.uri as string, p.text);
       reanalyze();
-      notify("flow/boundaryChanged", { uri: doc.uri, ...boundary(doc.uri as string) });
       return;
     }
 
@@ -1265,11 +1378,8 @@ reader.onMessage((msg) => {
     }
 
     case "workspace/didChangeWatchedFiles": {
+      invalidateAnalysis();
       reanalyze();
-      if (lastAnalysis) {
-        for (const uri of openDocs.keys()) publishDiagnostics(uri, lastAnalysis);
-        notify("flow/boundaryChanged", boundary());
-      }
       return;
     }
 

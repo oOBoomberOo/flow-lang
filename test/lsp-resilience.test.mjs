@@ -216,6 +216,34 @@ fn main() -> Html { html { <p>{str(good())}</p> } }
   } finally { c.proc.kill(); }
 });
 
+test("lsp: a burst of keystrokes is coalesced into one analysis", async () => {
+  const text = `fn main() -> Html { html { <p>{"x"}</p> } }\n`;
+  const file = fileWith(text);
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, file, text);
+    // consume both notifications produced by didOpen before counting
+    await c.waitFor((m) => m.method === "flow/boundaryChanged");
+    c.inbox = c.inbox.filter((m) => m.method !== "flow/boundaryChanged");
+
+    const pos = { line: 1, character: 0 };
+    for (const ch of "// typing") {
+      c.notify("textDocument/didChange", {
+        textDocument: { uri: uri(file), version: 2 },
+        contentChanges: [{ range: { start: pos, end: pos }, text: ch }],
+      });
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+    // let any wrongly-scheduled analyses fire before counting
+    await new Promise((r) => setTimeout(r, 400));
+
+    const boundaryUpdates = c.inbox.filter((m) => m.method === "flow/boundaryChanged").length;
+    assert.equal(boundaryUpdates, 1, "10 keystrokes produce one analysis, not ten");
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: cell dot completion offers value/get/set/update", async () => {
   const text = `fn main() -> Html {
   let c = Client.state(0);

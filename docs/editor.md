@@ -21,7 +21,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 
 | LSP request / notification | Behaviour |
 |---|---|
-| `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly** |
+| `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly**. `didChange` is debounced (150 ms) and bursts of keystrokes are coalesced; the analysis is compared against the previous input so identical text is not recompiled |
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
@@ -40,6 +40,32 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
 | `flow/boundary` | placement regions for the whole package, one entry per file |
+
+### Typing latency
+
+Typing must never wait for a full compile:
+
+* **Debounced analysis.** `didChange` schedules one analysis 150 ms after the
+  last keystroke; another keystroke replaces the pending one. Requests the user
+  initiates (completion, hover, definition, symbols, rename, …) flush the pending
+  analysis first, so they still see the text just typed. Semantic tokens and
+  inlay hints never flush — they answer immediately from the current text and the
+  last analysis.
+* **No std preload.** Analysis compiles only the modules the program imports.
+  Completion's view of `std::…` comes from a cached index that parses the std
+  library once (`stdModules()`), instead of type-checking all of it on every
+  keystroke.
+* **No shared unification state.** Type variables and their bindings are reset at
+  the start of each compile. They used to be process-global and accumulate, so
+  every speculative `snapshotSubst()` copied the bindings of all previous
+  compiles; a long editing session got slower and slower.
+* **Cached inputs.** File contents are cached by mtime, and unchanged input skips
+  the compile entirely.
+
+Measured on this repository (`examples/http.flow`, release Node): 452–578 ms per
+analysis before, 66–80 ms after; a 20-module/882-declaration package went from
+3.4 s growing to 19.4 s across runs to ~1–2 s stable. With a 150 ms debounce a
+typing burst produces one analysis, and completion answers in single-digit ms.
 
 ### Error resilience
 
@@ -180,7 +206,7 @@ picked up live.
 |---|---|
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
 | `test/lsp-features.test.mjs` | completion (3 kinds), definition, references, highlights, rename, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, code lens, multi-error reporting |
-| `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, Cell dot completion |
+| `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
 | `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results |
 
 ```

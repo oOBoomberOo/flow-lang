@@ -18,7 +18,7 @@ import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
   cellOf, eventOf, typeStr, joinPlace, typePlace,
-  snapshotSubst, restoreSubst, markGeneric,
+  snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds,
 } from "./types.ts";
 
 export interface ResInfo { ty: Type; place: Place; eff: Eff }
@@ -189,6 +189,12 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   run(prog: Program): Module {
+    // Unification state is process-global so `prune` can follow bindings by id.
+    // It must start empty per compilation: leaving it behind made every
+    // speculative `snapshotSubst()` copy grow with all previous compiles, which
+    // turned each editor reanalysis into seconds of work.
+    resetSubst();
+    resetIds();
     this.failedNames.clear();
     this.collect(() => this.checkDuplicateDeclarations(prog));
     for (const d of prog.decls) {

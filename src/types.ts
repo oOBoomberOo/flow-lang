@@ -132,6 +132,8 @@ export function prune(t: Type): Type {
 
 const subst = new Map<number, Type>();
 export function resetSubst() { subst.clear(); }
+/** Size of the live unification state (regression test: it must not grow per compile). */
+export function substSize(): number { return subst.size; }
 export function snapshotSubst(): Map<number, Type> { return new Map(subst); }
 export function restoreSubst(m: Map<number, Type>) { subst.clear(); for (const [k, v] of m) subst.set(k, v); }
 
