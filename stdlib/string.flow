@@ -1,0 +1,64 @@
+// std::string
+//
+// The primitive operations live in the prelude (`trim`, `upper`, `lower`,
+// `split`, `replace`, `contains`, `join`, `chars`, `len`). This module adds the
+// composed helpers, with names that do not shadow the prelude.
+
+pub fn length(s: Str) -> Int { len(chars(s)) }
+
+pub fn isEmptyStr(s: Str) -> Bool { len(chars(s)) == 0 }
+
+pub fn joinWith(xs: List<Str>, sep: Str) -> Str { join(xs, sep) }
+
+pub fn repeat(s: Str, n: Int) -> Str {
+  if (n <= 0) { "" } else { s + repeat(s, n - 1) }
+}
+
+pub fn padLeft(s: Str, width: Int, fill: Str) -> Str {
+  if (length(s) >= width) { s } else { repeat(fill, width - length(s)) + s }
+}
+
+pub fn words(s: Str) -> List<Str> {
+  filterBlank(split(trim(s), " "))
+}
+
+fn filterBlank(xs: List<Str>) -> List<Str> {
+  match xs {
+    [] => [],
+    [x, ..rest] => if (isEmptyStr(x)) { filterBlank(rest) } else { concat([x], filterBlank(rest)) },
+  }
+}
+
+pub fn startsWith(s: Str, prefix: Str) -> Bool {
+  if (length(prefix) > length(s)) { false }
+  else { takeStr(s, length(prefix)) == prefix }
+}
+
+fn takeStr(s: Str, n: Int) -> Str {
+  join(take(chars(s), n), "")
+}
+
+pub fn capitalize(s: Str) -> Str {
+  if (isEmptyStr(s)) { s }
+  else { upper(join(take(chars(s), 1), "")) + join(drop(chars(s), 1), "") }
+}
+
+pub fn take<a>(xs: List<a>, n: Int) -> List<a> {
+  if (n <= 0) { [] }
+  else {
+    match xs {
+      [] => [],
+      [x, ..rest] => concat([x], take(rest, n - 1)),
+    }
+  }
+}
+
+pub fn drop<a>(xs: List<a>, n: Int) -> List<a> {
+  if (n <= 0) { xs }
+  else {
+    match xs {
+      [] => [],
+      [_, ..rest] => drop(rest, n - 1),
+    }
+  }
+}

@@ -1,0 +1,83 @@
+// std::list — list transforms, written in Flow itself.
+
+pub fn length<a>(xs: List<a>) -> Int { len(xs) }
+
+pub fn isEmptyList<a>(xs: List<a>) -> Bool { isEmpty(xs) }
+
+pub fn map<a, b>(xs: List<a>, f: (a) -> b) -> List<b> {
+  match xs {
+    [] => [],
+    [x, ..rest] => concat([f(x)], map(rest, f)),
+  }
+}
+
+pub fn filter<a>(xs: List<a>, keep: (a) -> Bool) -> List<a> {
+  match xs {
+    [] => [],
+    [x, ..rest] => if (keep(x)) { concat([x], filter(rest, keep)) } else { filter(rest, keep) },
+  }
+}
+
+pub fn fold<a, b>(xs: List<a>, init: b, step: (b, a) -> b) -> b {
+  match xs {
+    [] => init,
+    [x, ..rest] => fold(rest, step(init, x), step),
+  }
+}
+
+pub fn forEach<a, b>(xs: List<a>, f: (a) -> b) -> Unit {
+  match xs {
+    [] => (),
+    [x, ..rest] => { f(x); forEach(rest, f) }
+  }
+}
+
+pub fn headOf<a>(xs: List<a>) -> Option<a> { head(xs) }
+
+pub fn take<a>(xs: List<a>, n: Int) -> List<a> {
+  if (n <= 0) { [] }
+  else {
+    match xs {
+      [] => [],
+      [x, ..rest] => concat([x], take(rest, n - 1)),
+    }
+  }
+}
+
+pub fn drop<a>(xs: List<a>, n: Int) -> List<a> {
+  if (n <= 0) { xs }
+  else {
+    match xs {
+      [] => [],
+      [_, ..rest] => drop(rest, n - 1),
+    }
+  }
+}
+
+pub fn range(n: Int) -> List<Int> {
+  if (n <= 0) { [] } else { concat(range(n - 1), [n - 1]) }
+}
+
+pub fn zip<a, b>(xs: List<a>, ys: List<b>) -> List<(a, b)> {
+  match xs {
+    [] => [],
+    [x, ..xr] => match ys {
+      [] => [],
+      [y, ..yr] => concat([(x, y)], zip(xr, yr)),
+    },
+  }
+}
+
+pub fn any<a>(xs: List<a>, p: (a) -> Bool) -> Bool {
+  match xs {
+    [] => false,
+    [x, ..rest] => if (p(x)) { true } else { any(rest, p) },
+  }
+}
+
+pub fn all<a>(xs: List<a>, p: (a) -> Bool) -> Bool {
+  match xs {
+    [] => true,
+    [x, ..rest] => if (p(x)) { all(rest, p) } else { false },
+  }
+}

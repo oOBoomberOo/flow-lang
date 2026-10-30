@@ -1,0 +1,27 @@
+// std::option
+
+pub fn map<a, b>(o: Option<a>, f: (a) -> b) -> Option<b> {
+  match o {
+    None => None,
+    Some(x) => Some(f(x)),
+  }
+}
+
+pub fn withDefault<a>(o: Option<a>, fallback: a) -> a {
+  match o {
+    None => fallback,
+    Some(x) => x,
+  }
+}
+
+pub fn isSome<a>(o: Option<a>) -> Bool {
+  match o { None => false, Some(_) => true }
+}
+
+pub fn isNone<a>(o: Option<a>) -> Bool {
+  match o { None => true, Some(_) => false }
+}
+
+pub fn toList<a>(o: Option<a>) -> List<a> {
+  match o { None => [], Some(x) => [x] }
+}
