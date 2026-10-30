@@ -5,7 +5,7 @@ type Shape =
   | Rect(Float, Float)
   | Triangle(Float, Float, Float)
 
-type Option<a> = None | Some(a)
+type Maybe<a> = Nothing | Just(a)
 
 fn pi() -> Float { 3.141592653589793 }
 
@@ -26,8 +26,8 @@ fn describe(o: Option<Shape>) -> Str {
   }
 }
 
-fn safeDiv(a: Int, b: Int) -> Option<Int> {
-  if (b == 0) { None } else { Some(a / b) }
+fn safeDiv(a: Int, b: Int) -> Maybe<Int> {
+  if (b == 0) { Nothing } else { Just(a / b) }
 }
 
 fn view(shapes: List<Shape>) -> Html {
@@ -45,7 +45,7 @@ fn main() -> Html {
     <div class="card">
       <h1>{"ADTs"}</h1>
       {view(shapes)}
-      <p>{"division: "}{match safeDiv(10, 2) { Some(n) => str(n), None => "undefined" }}</p>
+      <p>{"division: "}{match safeDiv(10, 2) { Just(n) => str(n), Nothing => "undefined" }}</p>
     </div>
   }
 }
