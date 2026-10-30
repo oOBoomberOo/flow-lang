@@ -1,0 +1,11 @@
+# Normalize line endings in the repository; check out native.
+* text=auto
+
+*.flow text
+*.ts text
+*.js text
+*.mjs text
+*.json text
+*.md text
+*.ebnf text
+*.cmd text eol=crlf

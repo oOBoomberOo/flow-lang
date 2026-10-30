@@ -1,0 +1,15 @@
+{
+  "name": "flow",
+  "version": "0.1.0",
+  "description": "Flow: a tierless language with a type-inferred client/server boundary",
+  "type": "module",
+  "bin": { "flow": "./bin/flow.mjs" },
+  "engines": { "node": ">=22.6" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build": "node bin/flow.mjs build examples/counter.flow --out dist",
+    "package:extension": "node scripts/build-vsix.mjs"
+  },
+  "license": "MIT",
+  "private": true
+}
