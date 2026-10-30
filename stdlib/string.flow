@@ -4,9 +4,9 @@
 // `split`, `replace`, `contains`, `join`, `chars`, `len`). This module adds the
 // composed helpers, with names that do not shadow the prelude.
 
-pub fn length(s: Str) -> Int { len(chars(s)) }
+pub fn length(s: Str) -> Int { strLen(s) }
 
-pub fn isEmptyStr(s: Str) -> Bool { len(chars(s)) == 0 }
+pub fn isEmptyStr(s: Str) -> Bool { strLen(s) == 0 }
 
 pub fn joinWith(xs: List<Str>, sep: Str) -> Str { join(xs, sep) }
 

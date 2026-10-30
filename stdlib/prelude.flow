@@ -90,6 +90,9 @@ pub fn join(xs: List<Str>, sep: Str) -> Str { s_join(xs, sep) }
 
 pub fn chars(s: Str) -> List<Str> { charsFrom(s, 0, s_length(s), []) }
 
+/// Host `#length` for strings (O(1) instead of walking the characters).
+pub fn strLen(s: Str) -> Int { s_length(s) }
+
 fn charsFrom(s: Str, i: Int, n: Int, acc: List<Str>) -> List<Str> {
   if (i >= n) { acc } else { charsFrom(s, i + 1, n, push(acc, s_char_at(s, i))) }
 }
