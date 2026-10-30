@@ -1,0 +1,15 @@
+{
+  "packages": {
+    "flow-charts": {
+      "versions": {
+        "1.0.0": { "path": "packages/flow-charts/1.0.0" }
+      }
+    },
+    "flow-time": {
+      "versions": {
+        "1.0.0": { "path": "packages/flow-time/1.0.0" },
+        "1.2.0": { "path": "packages/flow-time/1.2.0" }
+      }
+    }
+  }
+}
