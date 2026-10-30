@@ -1,4 +1,0 @@
-flow: examples/lists.flow
-  serving http://localhost:4230
-  0 cut(s) inferred across the boundary
-  ctrl-c to stop
