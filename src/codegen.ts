@@ -417,8 +417,8 @@ export class Codegen {
     if (e.op === "!=") return `(!R.eq(${l}, ${r}))`;
     if (e.op === "/") {
       const t = prune(this.mod.info.get(e)?.ty ?? { k: "var", id: -1, level: 0 });
-      // Int / Int is integer division; JS '/' is float division.
-      if (t.k === "con" && t.name === "Int") return `Math.trunc(${l} / ${r})`;
+      // Int / Int is integer division; the host provides the truncation.
+      if (t.k === "con" && t.name === "Int") return `R.ffiCall("Math.trunc", [${l} / ${r}])`;
     }
     const op = e.op === "and" || e.op === "&&" ? "&&" : e.op === "or" || e.op === "||" ? "||" : e.op;
     return `(${l} ${op} ${r})`;

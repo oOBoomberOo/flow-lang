@@ -362,11 +362,14 @@ export class Linker {
     }
 
     // 2. final names: keep the simple name when unique, otherwise qualify
-    const PINNED = new Set(["Server", "Client", "Store"]); // runtime capability names
     const finalName = new Map<string, string>(); // `${unit.id}::${name}` -> final
     const symbols = new Map<string, SymInfo>();
     for (const [name, entries] of byName) {
-      const unique = entries.length === 1 || PINNED.has(name);
+      // Two declarations of the same effect name are the same capability (std
+      // declares Server/Client/Store; a program may redeclare them), so effects
+      // keep their simple name instead of being qualified apart.
+      const sameEffect = entries.every((e) => e.decl.k === "Effect");
+      const unique = entries.length === 1 || sameEffect;
       for (const e of entries) {
         const key = `${e.unit.id}::${e.name}`;
         const final = unique ? name : `${name}$${e.unit.id.replace(/::/g, "$")}`;

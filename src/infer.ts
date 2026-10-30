@@ -1085,12 +1085,10 @@ export function mergeEff(...rows: Eff[]): Eff {
 export function placeFromEffects(eff: Eff, inf: Infer): Place {
   let p: Place = "neutral";
   for (const l of eff.labels) {
-    if (l === "Client") p = joinPlace(p, "client");
-    else if (l === "Server") p = joinPlace(p, "server");
-    else {
-      const e = inf.mod.effects.get(l);
-      if (e) p = joinPlace(p, e.place);
-    }
+    // Every effect carries its own placement (declared `@ client`/`@ server`, or
+    // the provider's), so there is no name-based special casing here.
+    const e = inf.mod.effects.get(l);
+    if (e) p = joinPlace(p, e.place);
   }
   return p;
 }
