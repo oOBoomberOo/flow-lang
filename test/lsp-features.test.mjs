@@ -422,3 +422,23 @@ test("lsp: prelude primitives resolve into std, not a compiler builtin", async (
     }
   } finally { c.proc.kill(); }
 });
+
+test("lsp: unsafe extern declarations are first-class symbols", async () => {
+  const { entry } = packageWith({
+    "main.flow": `unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
+fn main() -> Html { html { <p>{str(hypot(3.0, 4.0))}</p> } }
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "hypot(3.0", 1);
+    const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
+    assert.ok(def, "definition found");
+    assert.equal(path.basename(new URL(def.uri).pathname), "main.flow");
+    assert.equal(def.range.start.line, 0);
+    const syms = await c.request("textDocument/documentSymbol", { textDocument: { uri: uri(entry) } });
+    assert.ok(syms.some((s) => s.name === "hypot"), "extern appears in the outline");
+  } finally { c.proc.kill(); }
+});

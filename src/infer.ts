@@ -729,18 +729,25 @@ export class Infer {
   }
 
   inferApp(e: Expr & { k: "App" }): ResInfo {
-    // Cell.get() / Cell.set(value) — std trait methods over the host primitives
-    if (e.fn.k === "Field" && (e.fn.name === "get" || e.fn.name === "set")) {
-      const target = this.infer(e.fn.target);
-      const tt = prune(target.ty);
-      if (tt.k === "con" && tt.name === "Cell") {
-        const tname = this.mod.methodIndex.get(e.fn.name);
-        if (tname) {
-          const tr = this.mod.traits.get(tname)!;
-          const m = tr.methods.get(e.fn.name)!;
-          return this.inferTraitCall(tname, e.fn.name, m.ty, [e.fn.target, ...e.args], e);
+    // Method-call syntax: `receiver.method(args)` dispatches to a trait method
+    // when the receiver is not a record with a field of that name. Cell.get /
+    // Cell.set are just `CellOps` methods under this rule — no compiler special
+    // case and no hardcoded method names.
+    {
+      const qn0 = e.fn.k === "Field" ? this.qualName(e.fn.target) : null;
+      const qualified0 = qn0 && (this.mod.effects.has(qn0) || this.mod.traits.has(qn0));
+      if (e.fn.k === "Field" && !qualified0) {
+        const target = this.infer(e.fn.target);
+        const tt = prune(target.ty);
+        const recordField = tt.k === "rec" && Object.prototype.hasOwnProperty.call(tt.fields, e.fn.name);
+        if (!recordField) {
+          const tname = this.mod.methodIndex.get(e.fn.name);
+          if (tname) {
+            const tr = this.mod.traits.get(tname)!;
+            const m = tr.methods.get(e.fn.name)!;
+            return this.inferTraitCall(tname, e.fn.name, m.ty, [e.fn.target, ...e.args], e);
+          }
         }
-        this.fail(`no Cell operation '${e.fn.name}' in std`, e.span);
       }
     }
 
