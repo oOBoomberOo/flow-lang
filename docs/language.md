@@ -331,6 +331,24 @@ server  →  Server.log("clicked 1")
 
 One expression, two crossings, no annotations.
 
+Placement is inferred, but a type may carry an explicit `@client` / `@server`
+intent:
+
+```flow
+fn view(x: Str) -> Html@client { html { <p>{x}</p> } }
+fn save(x: Str@server) -> Unit { Server.log(x) }
+fn main() -> Html {
+  let secret: Str@server = Server.secret("k");
+  html { <p>{str(save(secret))}</p> }
+}
+```
+
+These annotations are checked, not inferred: a return must agree with its body,
+a direct call argument must agree with its parameter, and a `let` value must
+agree with its binding. A neutral value is compatible with either side; a
+`cross` expression contains a cut and is also allowed. The compiler still
+decides every cut; an annotation only rejects a mismatch.
+
 ---
 
 ## 9. What gets emitted
@@ -459,7 +477,12 @@ Honest list, so you do not discover them by surprise:
 * Traits dispatch on one parameter; no superclasses or instance constraints.
 * No effect handlers (no `handle … with …`); effects are capabilities.
 * No `String` interpolation — use `+`.
-* Effect rows over-approximate through unification (may place extra code on the server).
 * Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.
 * One logical session per server; no auth model.
-* `@client`/`@server` type annotations parse but do not affect inference.
+
+Placement annotations are enforced: `τ@client` / `τ@server` on a function
+return, parameter or `let` binding is checked against inference, and direct call
+arguments are checked against annotated parameters. Effect rows are
+per-instantiation, so a polymorphic function used with a server callback at one
+call site is not forced server-side at another. See
+[`docs/type-system.md`](type-system.md) §8.

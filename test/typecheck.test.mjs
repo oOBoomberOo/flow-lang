@@ -226,3 +226,76 @@ type Weird = W(Int)
 ${page(`<p>{W(1)}</p>`)}`);
   assert.match(r.client, /R\.ctor\("W"/);
 });
+
+/* ------------------------- placement annotations ------------------------- */
+
+test("placement annotations: matching signatures are accepted", () => {
+  ok(`
+fn view() -> Html@client { html { <p>{"x"}</p> } }
+fn needClient(x: Str@client) -> Str { x }
+fn needServer(x: Str@server) -> Str { x }
+fn main() -> Html {
+  let c = Client.state("x");
+  let a = needClient(c.get());
+  let b = needServer(Server.secret("k"));
+  let lit: Str@client = "hi";
+  html { <div>{view()}<p>{a}{b}{lit}</p></div> }
+}`);
+});
+
+test("placement annotations: a client return cannot be server-placed", () => {
+  bad(`
+fn bad() -> Int@client { Server.now() }
+fn main() -> Html { html { <p>{str(bad())}</p> } }
+`, /placement mismatch: fn bad is annotated @client, but is placed server/);
+});
+
+test("placement annotations: a server return cannot be client-placed", () => {
+  bad(`
+fn bad() -> Html@server { html { <p>{"x"}</p> } }
+fn main() -> Html { html { <p>{str(1)}</p> } }
+`, /placement mismatch: fn bad is annotated @server, but is placed client/);
+});
+
+test("placement annotations: call arguments must match annotated parameters", () => {
+  bad(`
+fn need(x: Str@server) -> Str { x }
+fn main() -> Html {
+  let c = Client.state("x");
+  html { <p>{need(c.get())}</p> }
+}
+`, /placement mismatch: argument 1 to need is annotated @server, but is placed client/);
+});
+
+test("placement annotations: let bindings are checked", () => {
+  bad(`
+fn main() -> Html {
+  let x: Str@server = Client.state("x").get();
+  html { <p>{x}</p> }
+}
+`, /placement mismatch: 'x' is annotated @server, but is placed client/);
+});
+
+test("effect rows are per-instantiation, so one server callback does not poison others", () => {
+  const r = ok(`
+fn call(g: (Int) -> Int, x: Int) -> Int { g(x) }
+fn serverUse() -> Int { call(fn(n: Int) -> Int { Server.now() }, 1) }
+fn clientUse() -> Int {
+  let pure = fn(n: Int) -> Int { n + 1 };
+  let ignored = call(pure, 2);
+  pure(3) + ignored
+}
+fn main() -> Html { html { <p>{str(clientUse())}</p> } }
+`);
+  const call = r.mod.fns.get("call");
+  const clientUse = r.mod.fns.get("clientUse");
+  assert.deepEqual([...call.scheme.eff.labels], [], "call is not forced Server");
+  assert.deepEqual([...clientUse.scheme.eff.labels], [], "clientUse is not forced Server");
+  assert.equal(r.codegen.home(call.body), "neutral");
+  assert.equal(r.codegen.home(clientUse.body), "neutral");
+  const pureCall = [...r.mod.info.entries()].find(
+    ([n]) => n.k === "App" && n.fn.k === "Var" && n.fn.name === "pure",
+  );
+  assert.ok(pureCall, "pure(3) node exists");
+  assert.equal(pureCall[1].place, "neutral", "pure(3) stays neutral");
+});

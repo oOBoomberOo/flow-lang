@@ -340,27 +340,27 @@ Two cuts, opposite directions, one expression — with no annotation anywhere.
 4. **Exhaustive matches.** Missing constructors are reported at compile time.
 5. **Deterministic cuts.** `home` is a pure function of the typed tree; `flow explain` prints
    exactly what the compiler will do.
+6. **Per-instantiation effect rows.** Each use of a polymorphic function gets a fresh row, so a
+   server callback at one call site does not force another call site server-side.
+7. **Checked placement annotations.** `@client` / `@server` on returns, parameters and `let`
+   bindings is checked against inference, and direct call arguments against parameters.
 
 **Not guaranteed (0.1).**
 
-1. **Effect rows are over-approximated.** Rows accumulate through unification, so a
-   polymorphic function used once with a server value is marked `Server` everywhere. This can
-   place *more* code on the server than necessary; it never places code on the wrong side of
-   its authority.
-2. **No latency model.** The type system does not distinguish "cheap" from "one round trip".
+1. **No latency model.** The type system does not distinguish "cheap" from "one round trip".
    A `call` cut inside a handler is a real network wait. `flow explain` shows it; nothing
    prevents it.
-3. **No at-most-once guarantee.** A `reactive` cut whose body performs an effect will re-run
+2. **No at-most-once guarantee.** A `reactive` cut whose body performs an effect will re-run
    when its inputs change. Keep effects in `call` cuts (handlers), where they run once per
    event.
-4. **Single session.** The server keeps one logical session; multi-user isolation is future
+3. **Single session.** The server keeps one logical session; multi-user isolation is future
    work.
-5. **No separate compilation.** The cut requires whole-program analysis, exactly as in
+4. **No separate compilation.** The cut requires whole-program analysis, exactly as in
    Ur/Web and Electric. Client and server must be deployed atomically.
 
 ---
 
-## 8. Placement annotations (reserved)
+## 8. Placement annotations
 
 A type may carry an explicit placement:
 
@@ -368,9 +368,16 @@ A type may carry an explicit placement:
 fn render(x: Str) -> Html@client { … }
 ```
 
-In 0.1 this is parsed and **does not affect inference** — it is reserved syntax so that
-programs can record intent. It is documented here rather than silently accepted: `flow
-explain` remains the authoritative view of placement.
+The annotation is checked against inference:
+
+* a function return annotation must agree with the body's inferred placement;
+* a parameter annotation must agree with each direct call argument;
+* a `let` binding annotation must agree with the value's placement.
+
+Neutral and `cross` expressions remain compatible with either side; the compiler
+reports `placement mismatch` when a concrete client value is annotated `@server`
+or vice versa. The annotation records and checks intent; it does not decide the
+cut — `flow explain` remains the authoritative view of placement.
 
 ---
 

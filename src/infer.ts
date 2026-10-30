@@ -45,9 +45,20 @@ export interface EffectInfo {
 
 export interface ProvideInfo { effect: string; ops: Map<string, Expr>; target?: TypeExpr; place: Place }
 
+/** The only placement annotations a type may carry in source. */
+export type AnnPlace = "client" | "server";
+
+/** Top-level `@client` / `@server` on a type expression, if written. */
+export function annotatedPlace(te: TypeExpr | undefined): AnnPlace | undefined {
+  return te && te.k === "TPlaced" ? te.place : undefined;
+}
+
 export interface FnInfo {
   name: string; scheme: Type; params: Param[]; ret?: TypeExpr;
   eff?: EffRow; body?: Expr; pub: boolean; synthetic?: boolean;
+  /** top-level placement annotations on the signature, if written */
+  paramPlaces?: (AnnPlace | undefined)[];
+  retPlace?: AnnPlace;
   /** native (JavaScript) implementation, for `unsafe extern` declarations */
   extern?: { target: "js"; implName: string };
   /** declaration span, for editor features */
@@ -293,6 +304,8 @@ export class Infer {
       this.mod.fns.set(fname, {
         name: fname, scheme: fnT([], fresh(0)), params: m.params, ret: m.ret,
         eff: m.eff, body: m.body, pub: false, synthetic: true, span: m.span,
+        paramPlaces: m.params.map((p) => annotatedPlace(p.type)),
+        retPlace: annotatedPlace(m.ret),
       });
     }
     this.mod.impls.push({ trait: d.trait, target: d.target, index, methods, mangled });
@@ -364,6 +377,8 @@ export class Infer {
     markGeneric(ty);
     this.mod.fns.set(d.name, {
       name: d.name, scheme: ty, params: d.params, ret: d.ret, eff: d.eff, body: d.body, pub: d.pub, span: d.span,
+      paramPlaces: d.params.map((p) => annotatedPlace(p.type)),
+      retPlace: annotatedPlace(d.ret),
     });
   }
 
@@ -389,9 +404,34 @@ export class Infer {
       ret: d.sig.ret,
       eff: d.sig.eff,
       pub: d.pub,
+      paramPlaces: d.sig.params.map((p) => annotatedPlace(p.type)),
+      retPlace: annotatedPlace(d.sig.ret),
       extern: { target: d.target, implName: d.implName },
       span: d.span,
     });
+  }
+
+  /** A top-level placement annotation constrains the inferred placement.
+   *  Neutral and cross expressions are not rejected: they either can run on
+   *  either side or contain a cut, which is checked separately by codegen. */
+  private checkPlacement(
+    expected: AnnPlace | undefined,
+    actual: string,
+    span: { line?: number; col?: number; file?: string },
+    what: string,
+  ) {
+    if (!expected || actual === "neutral" || actual === "cross" || actual === expected) return;
+    this.fail(`placement mismatch: ${what} is annotated @${expected}, but is placed ${actual}`, span);
+  }
+
+  /** The place of a call argument, resolving locals from the environment so an
+   *  annotated parameter sees the value the binding actually carries. */
+  private exprPlace(e: Expr, fallback: string): string {
+    if (e.k === "Var") {
+      const env = this.env.get(e.name);
+      if (env) return env.place;
+    }
+    return fallback;
   }
 
   private checkNamedBody(name: string, params: Param[], body: Expr, ret?: TypeExpr, declaredEff?: EffRow) {
@@ -413,6 +453,7 @@ export class Infer {
       if (e instanceof FlowError) this.fail(`${e.message}\n  in fn ${name}`, e.span ? { line: e.span.line, col: e.span.col } : undefined);
       throw e;
     }
+    this.checkPlacement(info.retPlace, r.place, body.span, `fn ${name}`);
     try {
       unify(r.ty, t.ret);
       if (declaredEff) {
@@ -570,7 +611,10 @@ export class Infer {
 
       case "Let": {
         const v = this.infer(e.value);
-        if (e.ann) unify(v.ty, this.resolveType(e.ann, new Map()));
+        if (e.ann) {
+          unify(v.ty, this.resolveType(e.ann, new Map()));
+          this.checkPlacement(annotatedPlace(e.ann), v.place, e.ann.span, `'${e.name}'`);
+        }
         const envVars = new Set<number>();
         for (const s of this.env.values()) for (const x of freeVars(s.ty)) envVars.add(x);
         const gen = generalize(v.ty, envVars);
@@ -698,7 +742,10 @@ export class Infer {
         for (const s of e.stmts) {
           if (s.k === "LetStmt") {
             const v = this.infer(s.value);
-            if (s.ann) unify(v.ty, this.resolveType(s.ann, new Map()));
+            if (s.ann) {
+              unify(v.ty, this.resolveType(s.ann, new Map()));
+              this.checkPlacement(annotatedPlace(s.ann), v.place, s.ann.span, `'${s.name}'`);
+            }
             this.env.set(s.name, { ty: v.ty, envVars: new Set(), place: v.place });
             place = joinPlace(place, v.place);
             eff = mergeEff(eff, v.eff);
@@ -804,6 +851,8 @@ export class Infer {
     if (ft.k !== "fun") this.fail(`attempt to call a value of type ${typeStr(ft)}`, e.fn.span);
     if (e.args.length !== ft.params.length) this.fail(`expected ${ft.params.length} argument(s), got ${e.args.length}`, e.span);
 
+    // Direct calls to a named function can check annotated parameter placements.
+    const callee = e.fn.k === "Var" && !this.env.has(e.fn.name) ? this.mod.fns.get(e.fn.name) : undefined;
     let place = joinPlace(fnInfo.place, typePlace(ft));
     let eff = mergeEff(fnInfo.eff, ft.eff);
     e.args.forEach((a, i) => {
@@ -812,6 +861,10 @@ export class Infer {
       catch (err) {
         if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
         throw err;
+      }
+      const expected = callee?.paramPlaces?.[i];
+      if (expected) {
+        this.checkPlacement(expected, this.exprPlace(a, r.place), a.span, `argument ${i + 1} to ${callee!.name}`);
       }
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);

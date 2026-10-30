@@ -138,6 +138,9 @@ fn area(s: Shape) -> Float {
 * **Traits** with static dictionary dispatch and generic instances
 * **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds
 * **Placement inference** - the thing no other mainstream language does
+* **Checked placement annotations** - `@client` / `@server` on returns, parameters and
+  `let` bindings; effect rows are per-instantiation, so one server call does not poison
+  unrelated call sites
 * **Unsafe FFI** - `unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"`; the
   standard library (logging, timing, arithmetic, strings, lists) is built on it rather
   than on compiler-emitted primitives
@@ -236,14 +239,15 @@ test/
 Compile-time: no un-sendable value crosses a cut; `Html` can never be produced on the server;
 every effect call has a provider whose signature matches; every `match` is exhaustive; every
 imported name exists and is `pub`; installed packages match their lockfile hashes; cuts are
-deterministic and printable.
+deterministic and printable; annotated placements are checked and effect rows are
+per-instantiation.
 
 Not in 0.1: latency is not modelled (a handler cut is a real round trip); reactive cuts re-run
-their body when inputs change, so side effects belong in handler cuts; effect rows
-over-approximate; one session per server; whole-program compilation means client and server
-deploy atomically; no publishing command (copy into `registry/`).
+their body when inputs change, so side effects belong in handler cuts; one session per server;
+whole-program compilation means client and server deploy atomically; no publishing command
+(copy into `registry/`).
 
-`docs/language.md §12` lists every limitation explicitly.
+`docs/language.md §13` lists every remaining limitation explicitly.
 
 ---
 

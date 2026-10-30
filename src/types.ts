@@ -235,7 +235,14 @@ export function mapType(t: Type, f: (t: Type) => Type): Type {
   switch (p.k) {
     case "var": return f(p);
     case "con": return { k: "con", name: p.name, args: p.args.map((a) => mapType(a, f)) };
-    case "fun": return { k: "fun", params: p.params.map((a) => mapType(a, f)), ret: mapType(p.ret, f), eff: p.eff };
+    case "fun": return {
+      k: "fun",
+      params: p.params.map((a) => mapType(a, f)),
+      ret: mapType(p.ret, f),
+      // Effect rows are per-instantiation: cloning prevents one call site's
+      // unification from leaking labels into every other use of the scheme.
+      eff: { labels: new Set(p.eff.labels), ...(p.eff.tail !== undefined ? { tail: p.eff.tail } : {}) },
+    };
     case "rec": {
       const fields: Record<string, Type> = {};
       for (const [k, v] of Object.entries(p.fields)) fields[k] = mapType(v, f);
