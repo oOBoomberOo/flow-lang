@@ -121,3 +121,14 @@ ${page(`<p>{str(pi())}{str(e())}</p>`)}`,
   assert.ok(r.client.includes('R.ffiCall("Math.PI"'), "pi reads Math.PI");
   assert.ok(r.client.includes('R.ffiCall("Math.E"'), "e reads Math.E");
 });
+
+test("std::random is built on the FFI-backed random source", () => {
+  const { entry } = packageWith({
+    "main.flow": `use std::random::{int, bool, pick, chance}
+
+${page(`<p>{str(int(1, 10))}{str(bool())}{str(pick([1, 2, 3]))}{str(chance(50))}</p>`)}`,
+  });
+  const r = compileFile(entry);
+  assert.ok(r.client.includes('R.ffiCall("Math.random"'), "random uses the host");
+  assert.deepEqual(r.diagnostics, []);
+});

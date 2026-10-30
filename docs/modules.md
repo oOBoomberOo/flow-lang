@@ -162,6 +162,11 @@ Int helpers in Flow: `abs`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign
 Float primitives through the FFI: `sqrt`, `pow`, `floor`, `ceil`, `round`, `absF`,
 `minF`, `maxF`, `logF`, `expF`, `sinF`, `cosF`, `random`, `pi`, `e`.
 
+### `std::random`
+
+`int(lo, hi)`, `bool()`, `chance(percent)`, `pick(xs)` — uniform helpers built
+on the FFI-backed `std::math::random()`.
+
 ### `std::log`
 
 ```flow

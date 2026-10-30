@@ -69,7 +69,7 @@ examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, string, html, log, time
+stdlib/                  std::prelude, list, option, math, random, string, html, log, time
 registry/                a small package registry (index.json + packages/)
 ```
 
@@ -210,7 +210,7 @@ src/
     dom.js        el / text / hole / attr / mount
     client.js     browser entry (served at /runtime/client.js)
     server.js     server entry + SSE hub
-stdlib/           prelude, list, option, math, string, html, log, time (written in Flow)
+stdlib/           prelude, list, option, math, random, string, html, log, time (written in Flow)
 registry/         index.json + packages/{flow-charts,flow-time}
 packages/         demo (local modules), app (registry dependencies)
 vscode-extension/ package.json, tmLanguage grammar, extension.js

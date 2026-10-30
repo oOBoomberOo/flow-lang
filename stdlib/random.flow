@@ -1,0 +1,26 @@
+// std::random — uniform helpers over the FFI-backed random source in std::math.
+
+use std::math::{random, floor, clamp}
+
+/// Uniform integer in [lo, hi]. Returns lo when the range is empty.
+pub fn int(lo: Int, hi: Int) -> Int {
+  if (hi <= lo) { lo }
+  else { lo + floor(random() * float(str(hi - lo + 1))) }
+}
+
+pub fn bool() -> Bool { random() < 0.5 }
+
+/// True with the given percentage chance (0 = never, 100 = always).
+pub fn chance(percent: Int) -> Bool { int(1, 100) <= clamp(percent, 0, 100) }
+
+fn atIndex<a>(xs: List<a>, i: Int) -> Option<a> {
+  match xs {
+    [] => None,
+    [x, ..rest] => if (i <= 0) { Some(x) } else { atIndex(rest, i - 1) },
+  }
+}
+
+/// Pick an element uniformly, or None for an empty list.
+pub fn pick<a>(xs: List<a>) -> Option<a> {
+  if (len(xs) == 0) { None } else { atIndex(xs, int(0, len(xs) - 1)) }
+}
