@@ -76,7 +76,7 @@ export interface Module {
 
 // The language surface that used to be injected here now lives in
 // std/prelude.flow and reaches the host through `unsafe extern js` bindings.
-const BUILTIN_FNS: { name: string; scheme: (f: () => Type) => Type; emit: string }[] = [];
+// No callable primitive is registered by the compiler.
 
 export const implFnName = (trait: string, index: number, method: string) =>
   `$impl_${trait}_${index}_${method}`;
@@ -88,7 +88,6 @@ const BUILTIN_TYPES = new Set([
 export class Infer {
   mod: Module;
   env = new Map<string, EnvEntry>();
-  builtins = new Map<string, { scheme: Type; emit: string }>();
 
   constructor(file: string) {
     this.mod = {
@@ -185,11 +184,6 @@ export class Infer {
   /* ---------------------------------------------------------------- */
 
   registerBuiltins() {
-    for (const b of BUILTIN_FNS) {
-      const scheme = b.scheme(() => { const v = fresh(0); v.generic = true; return v; });
-      this.builtins.set(b.name, { scheme, emit: b.emit });
-    }
-
     // Option is a builtin type, so its constructors are built in too.
     const a = fresh(0);
     a.generic = true;
@@ -207,8 +201,6 @@ export class Infer {
   lookupVar(name: string, span?: { line: number; col: number }): Type {
     const local = this.env.get(name);
     if (local) return instantiate(local.ty, 0);
-    const bi = this.builtins.get(name);
-    if (bi) return instantiate(bi.scheme, 0);
     const fn = this.mod.fns.get(name);
     if (fn) return instantiate(fn.scheme, 0);
     const ctor = this.mod.ctors.get(name);
@@ -815,7 +807,7 @@ export class Infer {
     if (e.fn.k === "Var") {
       const nm = e.fn.name;
       const tname = this.mod.methodIndex.get(nm);
-      if (tname && !this.env.has(nm) && !this.mod.fns.has(nm) && !this.builtins.has(nm)) {
+      if (tname && !this.env.has(nm) && !this.mod.fns.has(nm)) {
         const tr = this.mod.traits.get(tname)!;
         const m = tr.methods.get(nm)!;
         return this.inferTraitCall(tname, nm, m.ty, e.args, e);

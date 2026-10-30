@@ -172,7 +172,7 @@ export class Codegen {
   }
 
   private isRuntimeLocal(name: string): boolean {
-    if (this.mod.fns.has(name) || this.mod.ctors.has(name) || this.inf.builtins.has(name)) return false;
+    if (this.mod.fns.has(name) || this.mod.ctors.has(name)) return false;
     if (this.mod.effects.has(name) || this.mod.traits.has(name)) return false;
     return true;
   }

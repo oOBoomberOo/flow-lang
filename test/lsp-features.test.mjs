@@ -405,3 +405,20 @@ test("lsp: watched-file changes re-analyse the package", async () => {
     assert.match(note.params.diagnostics[0].message, /private in app::util/);
   } finally { c.proc.kill(); }
 });
+
+test("lsp: prelude primitives resolve into std, not a compiler builtin", async () => {
+  const { entry } = packageWith({
+    "main.flow": `fn main() -> Html { html { <p>{str(1)}{str(len([1, 2]))}</p> } }\n`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    for (const [needle, name] of [["str(1)", "str"], ["len(", "len"]]) {
+      const at = pos(text, needle, 1);
+      const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
+      assert.ok(def, `definition for ${name}`);
+      assert.match(new URL(def.uri).pathname, /stdlib\/prelude\.flow$/, `${name} is std code`);
+    }
+  } finally { c.proc.kill(); }
+});
