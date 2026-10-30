@@ -1,0 +1,19 @@
+// std::net — the Net capability has no fixed placement; this callback uses
+// client state, so the request runs on the client with browser fetch.
+
+use std::net::{get, NetResult}
+
+fn main() -> Html {
+  let status = Client.state("loading");
+
+  get("/__flow/cuts", fn(result: NetResult) -> Unit {
+    status.set(if (result.ok) { result.body } else { "error: " + result.error })
+  });
+
+  html {
+    <div class="card">
+      <h1>{"Network"}</h1>
+      <p class="net">{status.get()}</p>
+    </div>
+  }
+}

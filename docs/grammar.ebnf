@@ -149,6 +149,9 @@ type            = type-atom [ '@' placement ] [ '->' type ] ;
 
 placement       = 'client' | 'server' ;
 
+; Effect declarations may also be neutral: calls follow their arguments/callbacks.
+effect-placement = 'client' | 'server' | 'neutral' ;
+
 type-atom       = constructor [ '<' type { ',' type } '>' ]   ; named / generic
                 | '(' ')'                                      ; Unit
                 | '(' type { ',' type } ')'                    ; tuple
@@ -181,7 +184,7 @@ impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' eff
 where-clause    = 'where' where-bound { ',' where-bound } ;
 where-bound     = identifier ':' trait-bound { '+' trait-bound } ;
 
-effect-decl     = 'effect' constructor [ '@' placement ] '{' { fn-signature [ ';' ] } '}' ;
+effect-decl     = 'effect' constructor [ '@' effect-placement ] '{' { fn-signature [ ';' ] } '}' ;
 
 provide-decl    = 'provide' constructor [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
 provide-op      = identifier '=' expr [ ',' | ';' ] ;

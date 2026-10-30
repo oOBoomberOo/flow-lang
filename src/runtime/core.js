@@ -348,6 +348,23 @@ export function createRuntime() {
       now: () => Date.now(),
       cell: (v) => R.cell(v),
       ctor: (tag, args) => R.ctor(tag, args),
+      /** Used by std::net on both sides; `fetch` exists in browsers and Node 18+. */
+      netRequest: (method, url, headers, body, callback) => {
+        const init = { method: String(method ?? "GET"), headers: {} };
+        for (const pair of headers ?? []) {
+          if (Array.isArray(pair) && pair.length >= 2) init.headers[String(pair[0])] = String(pair[1]);
+        }
+        if (body != null && String(body).length > 0) init.body = String(body);
+        const done = (result) => {
+          try { callback(result); }
+          catch (e) { console.error("[flow] net callback error:", e); }
+        };
+        Promise.resolve()
+          .then(() => fetch(String(url), init))
+          .then(async (res) => done({ ok: res.ok, status: res.status, body: await res.text(), error: "" }))
+          .catch((e) => done({ ok: false, status: 0, body: "", error: String(e && e.message ? e.message : e) }));
+        return null;
+      },
     },
   };
 

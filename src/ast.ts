@@ -15,7 +15,7 @@ export type TypeExpr =
   | { k: "TTuple"; items: TypeExpr[]; span: Span }
   | { k: "TPlaced"; inner: TypeExpr; place: Place; span: Span };
 
-export type Place = "client" | "server";
+export type Place = "client" | "server" | "neutral";
 
 export interface EffRow { effects: string[]; var?: string }
 

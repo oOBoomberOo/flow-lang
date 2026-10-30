@@ -68,18 +68,19 @@ examples/traits.flow     trait dispatch, generic instances, list patterns
 examples/bounds.flow     trait bounds, bounded generic instances, dictionaries
 examples/hkt.flow        higher-kinded type parameters (Functor for List/Option)
 examples/handler.flow    scoped and nested local capability handlers
+examples/net.flow        server-or-client network effect capability
 examples/fs.flow         server-side filesystem effect capability
 examples/http.flow       request/routing effect capabilities and easy routing
 examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, fs
+stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **154 tests** across grammar, types, boundaries, modules, packages,
-the language server, HTTP capabilities, filesystem capabilities, trait bounds,
+Tests: `npm test` — **155 tests** across grammar, types, boundaries, modules, packages,
+the language server, HTTP capabilities, network capabilities, filesystem capabilities, trait bounds,
 higher-kinded types, local handlers and the VS Code extension.
 
 ---
@@ -151,6 +152,8 @@ fn area(s: Shape) -> Float {
   provider, nests/restores correctly, and removes the handled effect from the row
 * **HTTP capabilities** - `std::http` declares `Request` and `Router` as effect
   capabilities, with easy `get`/`post` route helpers and a host-backed dispatcher
+* **Network** - `std::net` is a placement-neutral `Net` effect capability with
+  callback-based `get`/`post`/`put`/`del` requests on the client or the server
 * **Server filesystem** - `std::fs` is an `Fs @ server` effect capability over Node
   `fs`: text read/write/append, directories, stat, existence and temp paths
 * **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds

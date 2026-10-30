@@ -188,6 +188,27 @@ A program opts in with `fn routes() -> Unit { Router.mount([...]) }`; the host
 calls it at startup and serves matching HTTP requests. Full reference:
 [`docs/http.md`](http.md).
 
+### `std::net`
+
+Placement-neutral network requests through the `Net @ neutral` effect capability:
+
+```flow
+use std::net::{request, get, post, put, del, getText, NetResult}
+```
+
+| function | type |
+|---|---|
+| `request` | `(Str, Str, List<(Str, Str)>, Str, (NetResult) -> Unit) -> Unit` |
+| `get` / `del` | `(Str, (NetResult) -> Unit) -> Unit` |
+| `post` / `put` | `(Str, Str, (NetResult) -> Unit) -> Unit` |
+| `getText` | `(Str, (Option<Str>) -> Unit) -> Unit` |
+
+`NetResult = { ok: Bool, status: Int, body: Str, error: Str }`. The host
+provides `fetch` on both sides (browser or Node), so the callback decides where
+the work runs: a callback using client state places the request on the client;
+one using server capabilities places it on the server. The API is callback-based
+because `fetch` is asynchronous.
+
 ### `std::fs`
 
 Server-side filesystem access through the `Fs @ server` effect capability:

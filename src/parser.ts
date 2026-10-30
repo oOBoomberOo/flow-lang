@@ -282,7 +282,7 @@ export class Parser {
     let place: Place | undefined;
     if (this.eatSym("@")) {
       const p = this.word();
-      if (p !== "client" && p !== "server") this.err(`unknown placement '${p}' (expected client|server)`);
+      if (p !== "client" && p !== "server" && p !== "neutral") this.err(`unknown placement '${p}' (expected client|server|neutral)`);
       place = p as Place;
     }
     this.expectSym("{");
