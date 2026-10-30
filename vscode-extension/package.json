@@ -1,0 +1,65 @@
+{
+  "name": "flow-language",
+  "displayName": "Flow",
+  "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and boundary colouring.",
+  "version": "0.2.0",
+  "publisher": "flow-lang",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages", "Linters"],
+  "activationEvents": ["onLanguage:flow", "workspaceContains:**/*.flow"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "flow",
+        "aliases": ["Flow", "flow"],
+        "extensions": [".flow"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "flow",
+        "scopeName": "source.flow",
+        "path": "./syntaxes/flow.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      { "command": "flow.explain", "title": "Flow: Explain Boundary" },
+      { "command": "flow.toggleBoundary", "title": "Flow: Toggle Boundary Colouring" },
+      { "command": "flow.restart", "title": "Flow: Restart Language Server" }
+    ],
+    "configuration": {
+      "title": "Flow",
+      "properties": {
+        "flow.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to src/lsp/server.ts. Empty = auto-detect in the workspace."
+        },
+        "flow.clientColor": {
+          "type": "string",
+          "default": "rgba(80, 140, 255, 0.16)",
+          "description": "Background colour for client-placed code."
+        },
+        "flow.serverColor": {
+          "type": "string",
+          "default": "rgba(255, 150, 60, 0.16)",
+          "description": "Background colour for server-placed code."
+        },
+        "flow.cutColor": {
+          "type": "string",
+          "default": "rgba(190, 90, 255, 0.55)",
+          "description": "Colour of the underline marking an inferred boundary cut."
+        },
+        "flow.enableDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour client/server regions in the editor."
+        }
+      }
+    }
+  },
+  "scripts": { "vscode:prepublish": "node -e \"process.exit(0)\"" }
+}
