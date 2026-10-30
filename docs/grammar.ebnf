@@ -38,7 +38,7 @@ block-comment   = "/*" { any character | block-comment } "*/" ;
 whitespace      = " " | "\t" | "\r" | "\n" ;
 
 ; Keywords (reserved, may not be used as identifiers)
-;   fn let mut if else match type trait impl effect provide with
+;   fn let mut if else match type trait impl effect algebraic provide with
 ;   use extern unsafe html handle pub return for in true false and or not
 
 ; Multi-character symbols
@@ -58,7 +58,7 @@ declaration     = use-decl
                 | [ 'pub' ] type-decl
                 | [ 'pub' ] trait-decl
                 | impl-decl
-                | [ 'pub' ] effect-decl
+                | [ 'pub' ] [ 'algebraic' ] effect-decl
                 | provide-decl
                 | [ 'pub' ] extern-decl
                 | [ 'pub' ] fn-decl ;
@@ -185,6 +185,9 @@ where-clause    = 'where' where-bound { ',' where-bound } ;
 where-bound     = identifier ':' trait-bound { '+' trait-bound } ;
 
 effect-decl     = 'effect' constructor [ '@' effect-placement ] '{' { fn-signature [ ';' ] } '}' ;
+; An algebraic effect has no placement marker:
+;   algebraic effect State { fn get() -> Int  fn put(x: Int) -> Unit }
+; Its handler operations may call `resume(value)`.
 
 provide-decl    = 'provide' constructor [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
 provide-op      = identifier '=' expr [ ',' | ';' ] ;

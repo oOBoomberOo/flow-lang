@@ -1,0 +1,55 @@
+// std::state — mutable state as an algebraic effect.
+//
+// `State` suspends at `get`/`put`; `withState`/`runState` install a handler that
+// keeps the current value in a local `Ref`, so the same code runs on the client
+// or the server.
+
+use std::ref::{Ref, newRef}
+
+pub algebraic effect State {
+  fn get() -> Int
+  fn put(x: Int) -> Unit
+}
+
+pub fn get() -> Int ! {State} { State.get() }
+
+pub fn put(x: Int) -> Unit ! {State} { State.put(x) }
+
+pub fn modify(f: (Int) -> Int) -> Unit ! {State} {
+  State.put(f(State.get()))
+}
+
+/// Run `action` with an initial state and return only its result.
+pub fn withState<a>(init: Int, action: () -> a ! {State}) -> a {
+  let cell: Ref<Int> = newRef(init);
+  handle State with {
+    get = fn() -> a { resume(cell.get()) },
+    put = fn(x: Int) -> a { cell.set(x); resume(()) }
+  } {
+    action()
+  }
+}
+
+/// Run `action` and return both its result and the final state.
+pub fn runState<a>(init: Int, action: () -> a ! {State}) -> (a, Int) {
+  let cell: Ref<Int> = newRef(init);
+  let value = handle State with {
+    get = fn() -> a { resume(cell.get()) },
+    put = fn(x: Int) -> a { cell.set(x); resume(()) }
+  } {
+    action()
+  };
+  (value, cell.get())
+}
+
+/// Run `action` and return only the final state.
+pub fn execState<a>(init: Int, action: () -> a ! {State}) -> Int {
+  let cell: Ref<Int> = newRef(init);
+  handle State with {
+    get = fn() -> a { resume(cell.get()) },
+    put = fn(x: Int) -> a { cell.set(x); resume(()) }
+  } {
+    action()
+  };
+  cell.get()
+}

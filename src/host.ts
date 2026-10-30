@@ -32,7 +32,15 @@ export async function createHost(opts: HostOptions): Promise<Host> {
 
   // A program opts into HTTP routing by exporting a `routes()` function.
   if (typeof serverModule.routes === "function") {
-    try { await serverModule.routes(); }
+    try {
+      const started = serverModule.routes();
+      // A routes() function that handles algebraic effects is a generator.
+      if (started && typeof (started as { next?: unknown }).next === "function") {
+        (R as { run: (value: unknown) => unknown }).run(started);
+      } else {
+        await started;
+      }
+    }
     catch (e) { console.error("[flow] routes() failed:", e); }
   }
   const routes: HttpRoute[] = typeof R._routes === "function" ? R._routes() : [];
@@ -212,7 +220,10 @@ async function handleRoute(
   request: HttpRequest,
   res: http.ServerResponse,
 ): Promise<void> {
-  const runtime = R as { _setRequest?: (request: HttpRequest | null) => void };
+  const runtime = R as {
+    _setRequest?: (request: HttpRequest | null) => void;
+    run?: (value: unknown) => unknown;
+  };
   if (typeof route.handler !== "function") {
     res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
     res.end("route has no handler");
@@ -220,8 +231,12 @@ async function handleRoute(
   }
   runtime._setRequest?.(request);
   try {
-    const response = await route.handler(request);
-    sendResponse(res, response);
+    let response = route.handler(request);
+    // A handler that performs algebraic effects compiles to a generator.
+    if (response && typeof (response as { next?: unknown }).next === "function") {
+      response = runtime.run ? runtime.run(response) : response;
+    }
+    sendResponse(res, await response);
   } catch (e) {
     console.error("[flow] route error:", e);
     if (!res.headersSent) {

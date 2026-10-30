@@ -1,0 +1,37 @@
+// std::exn — abortive algebraic effects.
+//
+// `Exn.fail` suspends; a handler may resume (recovering) or return a fallback,
+// which aborts the rest of the handled computation.
+
+pub algebraic effect Exn {
+  fn fail<a>(msg: Str) -> a
+}
+
+pub fn fail<a>(msg: Str) -> a ! {Exn} { Exn.fail(msg) }
+
+/// Run `action`, returning `fallback` when it fails.
+pub fn attempt<a>(fallback: a, action: () -> a ! {Exn}) -> a {
+  handle Exn with {
+    fail = fn(msg: Str) -> a { fallback }
+  } {
+    action()
+  }
+}
+
+/// Run `action`, mapping a failure message to a value.
+pub fn recoverWith<a>(onFail: (Str) -> a, action: () -> a ! {Exn}) -> a {
+  handle Exn with {
+    fail = fn(msg: Str) -> a { onFail(msg) }
+  } {
+    action()
+  }
+}
+
+/// Run `action`, recovering at the failure point with `value`.
+pub fn recover<a>(value: a, action: () -> a ! {Exn}) -> a {
+  handle Exn with {
+    fail = fn(_msg: Str) -> a { resume(value) }
+  } {
+    action()
+  }
+}

@@ -96,7 +96,7 @@ export type Decl =
   | { k: "Alias"; name: string; params: string[]; paramBounds?: Record<string, string[]>; type: TypeExpr; pub: boolean; span: Span }
   | { k: "Trait"; name: string; params: string[]; paramBounds?: Record<string, string[]>; methods: FnSig[]; pub: boolean; span: Span }
   | { k: "Impl"; trait: string; traitArgs: TypeExpr[]; target: TypeExpr; where?: { name: string; bounds: string[] }[]; methods: (FnSig & { body: Expr })[]; span: Span }
-  | { k: "Effect"; name: string; ops: FnSig[]; pub: boolean; place?: Place; span: Span }
+  | { k: "Effect"; name: string; ops: FnSig[]; pub: boolean; place?: Place; algebraic?: boolean; span: Span }
   | { k: "Provide"; effect: string; target?: TypeExpr; ops: { name: string; fn: Expr; span: Span }[]; span: Span }
   | { k: "Extern"; sig: FnSig; target: "js"; implName: string; unsafe: true; pub: boolean; span: Span }
   | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };

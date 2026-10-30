@@ -69,7 +69,7 @@
           }
         },
         {
-          "match": "\\b(trait|impl|effect|provide)\\b",
+          "match": "\\\\b(trait|impl|effect|algebraic|provide)\\\\b",
           "name": "storage.type.flow"
         }
       ]
@@ -132,7 +132,7 @@
         },
         {
           "name": "keyword.other.flow",
-          "match": "\\b(fn|let|mut|type|trait|impl|effect|provide|with|use|as|pub|unsafe|extern|html|handle|and|or|not|in|for)\\b"
+          "match": "\\b(fn|let|mut|type|trait|impl|effect|algebraic|provide|with|use|as|pub|unsafe|extern|html|handle|and|or|not|in|for|resume)\\b"
         },
         {
           "name": "constant.language.flow",

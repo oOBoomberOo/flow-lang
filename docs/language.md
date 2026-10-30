@@ -48,7 +48,7 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
 `std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
-`std::log`, `std::time`, `std::http`, `std::net`, `std::fs` — see [`docs/modules.md`](modules.md). A single
+`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref` — see [`docs/modules.md`](modules.md). A single
 file without a manifest still works. Host access goes through explicitly `unsafe`
 FFI bindings (§12).
 
@@ -320,6 +320,69 @@ fn main() -> Html {
 * Handler operations are capability implementations, not continuations: there is
   no `resume`. The handler runs the operation and the call returns normally.
 
+### Algebraic effects
+
+An `algebraic effect` is not a capability: its operations **suspend** the caller and
+return control to the nearest `handle`. Handler operations receive a `resume`
+continuation, the way algebraic effect handlers do in Koka.
+
+```flow
+algebraic effect State {
+  fn get() -> Int
+  fn put(x: Int) -> Unit
+}
+
+fn counter() -> Int ! {State} {
+  State.put(State.get() + 1);
+  State.get()
+}
+
+fn withState<a>(init: Int, action: () -> a ! {State}) -> a {
+  let cell: Ref<Int> = newRef(init);           // std::ref
+  handle State with {
+    get = fn() -> a { resume(cell.get()) },
+    put = fn(x: Int) -> a { cell.set(x); resume(()) }
+  } {
+    action()
+  }
+}
+```
+
+Calling an operation suspends the body; the handler runs **with a `resume`
+continuation**. `resume(v)` continues the body from the operation site, with `v`
+as the operation's result, and returns what the rest of the body returns.
+
+Rules:
+
+1. **A handler operation returns the handled result.** Every operation handler in
+   an algebraic `handle` must produce the same type as the `handle` expression
+   itself, because its return value is that expression's value.
+2. **Not resuming aborts.** A handler that returns without calling `resume`
+   abandons the rest of the body and supplies the result — this is how errors and
+   defaults are implemented (`std::exn`).
+3. **Handlers are deep.** Operations performed by the continuation are handled by
+   the same handler; nested handlers shadow outer ones and restore afterwards.
+4. **One-shot.** `resume` may be called once; a second call is a runtime error.
+5. **Forwarding.** An operation of a different algebraic effect is forwarded to
+   the enclosing handler.
+6. **Rows.** The handled effect leaves the body's row; operation handlers'
+   effects stay. `! {State}` on a function says it may suspend at `State`.
+7. **No placement.** Algebraic effects are neutral: they run wherever the handler
+   runs. They cannot cross a tier cut, and cannot be performed in lazy slots
+   (HTML holes and attributes, event listeners, reactive blocks, providers,
+   components). Wrap that work in `handle … with … { … }` inside an eager
+   expression, or move it out of the lazy slot.
+8. **No `provide`.** A file-level provider supplies a capability implementation;
+   an algebraic effect has to be handled (`provide Exn with …` is a type error).
+9. **Effectful callbacks need a row.** A function that may suspend can only be
+   passed to a parameter whose declared type admits the effect, e.g.
+   `action: () -> a ! {State}`. Passing it to `List.map` (whose parameter has no
+   row) is a type error rather than a runtime surprise.
+
+The standard library ships two of them: `std::state` (`State` with
+`withState`/`runState`/`execState`) and `std::exn` (`Exn` with
+`attempt`/`recoverWith`/`recover`).
+
 ---
 
 ## 7. HTML and events
@@ -513,7 +576,7 @@ flow add flow-time    # add the best matching version from the registry
 ```
 
 The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`.
+`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`.
 Full reference: [`docs/modules.md`](modules.md).
 
 ---
@@ -578,7 +641,9 @@ Honest list, so you do not discover them by surprise:
 * Traits dispatch on one parameter; supertraits and associated types are not supported.
   Trait bounds, bounded generic instances and higher-kinded type parameters are supported
   (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`, `trait Functor<f>`).
-* Local capability handlers are scoped providers; there is no `resume` / continuation-based effect handler.
+* Local capability handlers are scoped providers. Algebraic effects have real
+  `resume` continuations, but handlers are **one-shot**: `resume` may be called
+  once (multi-shot/nondeterminism handlers are not supported).
 * No `String` interpolation — use `+`.
 * Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.
 * One logical session per server; no auth model.

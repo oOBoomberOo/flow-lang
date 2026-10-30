@@ -1,0 +1,19 @@
+// std::ref — a small mutable box that works on either side of the boundary.
+//
+// `Ref` is not reactive and not placed: it is a local mutable slot, used to
+// implement stateful algebraic handlers (`std::state`) on the client or server.
+
+pub type Ref<a> = {
+  get: () -> a,
+  set: (a) -> Unit,
+}
+
+unsafe extern js fn host_ref_new<a>(init: a) -> Ref<a> = "__flow.host.refNew"
+
+pub fn newRef<a>(init: a) -> Ref<a> { host_ref_new(init) }
+
+pub fn get<a>(ref: Ref<a>) -> a { ref.get() }
+
+pub fn set<a>(ref: Ref<a>, value: a) -> Unit { ref.set(value) }
+
+pub fn modify<a>(ref: Ref<a>, f: (a) -> a) -> Unit { ref.set(f(ref.get())) }

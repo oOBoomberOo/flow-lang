@@ -98,6 +98,11 @@ export class Parser {
     if (this.atKw("type")) return this.parseTypeDecl(t, pub);
     if (this.atKw("trait")) return this.parseTrait(t, pub);
     if (this.atKw("impl")) return this.parseImpl(t);
+    if (this.atKw("algebraic")) {
+      this.next();
+      if (!this.atKw("effect")) this.err("expected 'effect' after 'algebraic'");
+      return this.parseEffect(t, pub, true);
+    }
     if (this.atKw("effect")) return this.parseEffect(t, pub);
     if (this.atKw("provide")) return this.parseProvide(t);
 
@@ -276,7 +281,7 @@ export class Parser {
     return { k: "Impl", trait, traitArgs, target, where, methods, span: this.spanFrom(start) };
   }
 
-  parseEffect(start: Token, pub = false): Decl {
+  parseEffect(start: Token, pub = false, algebraic = false): Decl {
     this.expectKw("effect");
     const name = this.expect("Con").value;
     let place: Place | undefined;
@@ -285,6 +290,7 @@ export class Parser {
       if (p !== "client" && p !== "server" && p !== "neutral") this.err(`unknown placement '${p}' (expected client|server|neutral)`);
       place = p as Place;
     }
+    if (algebraic && place) this.err("an algebraic effect has no placement: it is handled where it is performed", start);
     this.expectSym("{");
     const ops: FnSig[] = [];
     while (!this.atSym("}")) {
@@ -295,7 +301,7 @@ export class Parser {
       ops.push({ ...sig, span: this.spanFrom(t) });
     }
     this.expectSym("}");
-    return { k: "Effect", name, ops, pub, place, span: this.spanFrom(start) };
+    return { k: "Effect", name, ops, pub, place, algebraic, span: this.spanFrom(start) };
   }
 
   parseProvide(start: Token): Decl {
@@ -425,6 +431,8 @@ export class Parser {
 
   parseType(): TypeExpr {
     const start = this.tok;
+    // `() -> T` is a nullary function type; `(Unit) -> T` takes `Unit`.
+    const nullary = this.atSym("(") && this.peek().value === ")";
     let t = this.parseTypeAtom();
     if (this.atSym("@")) {
       this.next();
@@ -437,7 +445,7 @@ export class Parser {
       let eff: EffRow = { effects: [] };
       if (this.atSym("!")) { this.next(); eff = this.parseEffRow(); }
       // `(a, b) -> c` is a two-argument function; `((a, b)) -> c` takes a tuple.
-      const params = t.k === "TTuple" ? t.items : [t];
+      const params = nullary ? [] : t.k === "TTuple" ? t.items : [t];
       return { k: "TFun", params, ret, eff, span: this.spanFrom(start) };
     }
     return t;

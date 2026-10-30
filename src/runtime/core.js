@@ -232,6 +232,75 @@ export function createRuntime() {
       };
     },
 
+    /* ---------- algebraic effects ---------- */
+
+    /** A performed operation: a request that suspends the nearest handler. */
+    perform(effect, name, args) {
+      return { effect, name, args: args ?? [] };
+    },
+
+    /** Drive a generator (or plain value) to completion; unhandled operations throw. */
+    run(value) {
+      const it = typeof value === "function" ? value() : value;
+      if (!it || typeof it.next !== "function") return it;
+      const step = it.next();
+      if (!step.done) {
+        const req = step.value ?? {};
+        throw new Error(`flow: unhandled algebraic effect ${req.effect}.${req.name}`);
+      }
+      return step.value;
+    },
+
+    /**
+     * Deep handler for an algebraic effect.
+     *
+     * The handled body is a generator. An operation it performs suspends there;
+     * the handler operation receives the arguments plus `resume`, which drives
+     * the rest of the body and returns its result. The handler's return value is
+     * the result of the whole `handle` expression, so a handler that never
+     * resumes aborts. Operations for other effects are forwarded outward.
+     */
+    *handle(effect, ops, body) {
+      const gen = body();
+      const invoke = function* (req) {
+        const impl = ops && ops[req.name];
+        if (typeof impl !== "function") throw new Error(`flow: no handler for ${effect}.${req.name}`);
+        let used = false;
+        const resume = function* (value) {
+          if (used) throw new Error(`flow: resume for ${effect}.${req.name} called more than once (handlers are one-shot)`);
+          used = true;
+          return yield* drive(value, true);
+        };
+        return yield* impl(...req.args, resume);
+      };
+      const drive = function* (input, hasInput) {
+        let step = hasInput ? gen.next(input) : gen.next();
+        while (!step.done) {
+          const req = step.value;
+          if (!req || req.effect !== effect) {
+            const v = yield req;
+            step = gen.next(v);
+            continue;
+          }
+          return yield* invoke(req);
+        }
+        return step.value;
+      };
+      return yield* drive(undefined, false);
+    },
+
+    /** Scoped capability handler whose body performs algebraic effects. */
+    *withEffectGen(effect, impl, fn) {
+      const prev = provides.get(effect);
+      provides.set(effect, { ...(prev ?? {}), ...(impl ?? {}) });
+      try {
+        return yield* fn();
+      } finally {
+        if (prev) provides.set(effect, prev);
+        else provides.delete(effect);
+      }
+    },
+
     /* ---------- transport ---------- */
 
     _attach(send, sessionId) {
@@ -348,6 +417,14 @@ export function createRuntime() {
       now: () => Date.now(),
       cell: (v) => R.cell(v),
       ctor: (tag, args) => R.ctor(tag, args),
+      /** Mutable box used by `std::ref` (neutral: works on client and server). */
+      refNew: (init) => {
+        let value = init;
+        return {
+          get: () => value,
+          set: (next) => { value = next; return null; },
+        };
+      },
       /** Used by std::net on both sides; `fetch` exists in browsers and Node 18+. */
       netRequest: (method, url, headers, body, callback) => {
         const init = { method: String(method ?? "GET"), headers: {} };

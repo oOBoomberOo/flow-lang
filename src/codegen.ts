@@ -19,6 +19,7 @@ import type { Module, Infer, DictParam } from "./infer.ts";
 import { implFnName } from "./infer.ts";
 import type { Place, Type } from "./types.ts";
 import { prune, typeStr, typePlace, sendable } from "./types.ts";
+import type { Eff } from "./types.ts";
 import { FlowError } from "./lexer.ts";
 
 export type Side = "client" | "server";
@@ -50,11 +51,60 @@ export class Codegen {
   private tmp = 0;
   /** type-variable id -> dictionary parameter name while emitting a function */
   private currentDicts = new Map<number, string>();
+  /** effects that suspend and resume (`algebraic effect`) */
+  private algebraicEffects = new Set<string>();
+  /** true while emitting the body of a JS generator function */
+  private genMode = false;
 
   constructor(mod: Module, inf: Infer, prog: Program) {
     this.mod = mod;
     this.inf = inf;
     this.prog = prog;
+    for (const e of mod.effects.values()) if (e.algebraic) this.algebraicEffects.add(e.name);
+  }
+
+  private isAlgebraic(effect: string): boolean {
+    return this.algebraicEffects.has(effect);
+  }
+
+  private rowHasAlgebraic(eff: Eff | undefined | null): boolean {
+    if (!eff) return false;
+    for (const l of eff.labels) if (this.isAlgebraic(l)) return true;
+    return false;
+  }
+
+  private typeHasAlgebraic(t: Type | undefined): boolean {
+    const p = t ? prune(t) : undefined;
+    return Boolean(p && p.k === "fun" && this.rowHasAlgebraic(p.eff));
+  }
+
+  private effOf(e: object): Eff | undefined {
+    return this.mod.info.get(e)?.eff;
+  }
+
+  /** Emit `js` as a value of the enclosing generator, or explain why not. */
+  private yieldStar(js: string, span?: { line: number; col: number }, what = "this call"): string {
+    if (!this.genMode) {
+      this.fail(
+        `${what} performs an algebraic effect, but it is evaluated in a lazy or foreign slot ` +
+        `(a reactive block, an HTML attribute/hole, an event listener, a provider, or a component). ` +
+        `Handle the effect in a plain expression instead.`,
+        span,
+      );
+    }
+    return `(yield* ${js})`;
+  }
+
+  private perform(effect: string, op: string, args: string, span?: { line: number; col: number }): string {
+    if (!this.genMode) {
+      this.fail(
+        `algebraic effect ${effect}.${op} is performed in a lazy or foreign slot ` +
+        `(a reactive block, an HTML attribute/hole, an event listener, a provider, or a component). ` +
+        `Algebraic effects are scoped to 'handle … with …' and must run inside a plain expression.`,
+        span,
+      );
+    }
+    return `(yield R.perform(${ev(effect)}, ${ev(op)}, [${args}]))`;
   }
 
   fail(msg: string, span?: { line: number; col: number }): never {
@@ -126,6 +176,13 @@ export class Codegen {
   private walk(e: Expr, ctxHome: Side | "neutral", inHandler: boolean, top: Expr): void {
     const h = this.home(e);
     if (h !== "neutral" && ctxHome !== "neutral" && h !== ctxHome) {
+      if (this.rowHasAlgebraic(this.effOf(e))) {
+        this.fail(
+          `an algebraic effect cannot cross the ${h} tier boundary: handle it before the cut ` +
+          `('handle … with { … } { … }' must run on the side that performs it)`,
+          e.span,
+        );
+      }
       const cut: CutInfo = {
         id: `cut${++this.counter}`,
         node: e,
@@ -222,6 +279,7 @@ export class Codegen {
   /* ---------------------------------------------------------------- */
 
   compile(): Compiled {
+    this.checkEntryEffects();
     this.collect();
     return {
       client: this.emitModule("client"),
@@ -229,6 +287,20 @@ export class Codegen {
       cuts: this.cutList,
       diagnostics: this.diagnostics,
     };
+  }
+
+  /** `main` is mounted by the renderer, outside any handler scope. */
+  private checkEntryEffects(): void {
+    const main = this.mod.fns.get("main");
+    if (!main || main.scheme.k !== "fun") return;
+    const unhandled = [...main.scheme.eff.labels].filter((l) => this.isAlgebraic(l));
+    if (unhandled.length) {
+      this.fail(
+        `main performs algebraic effect(s) {${unhandled.sort().join(", ")}} without handling them: ` +
+        `wrap the work in 'handle ${unhandled[0]} with { … } { … }'`,
+        main.span,
+      );
+    }
   }
 
   private emitModule(side: Side): string {
@@ -260,6 +332,13 @@ export class Codegen {
       if (d.k !== "Provide") continue;
       const ops = d.ops
         .map((o) => {
+          if (this.rowHasAlgebraic(this.effOf(o.fn))) {
+            this.fail(
+              `provider for capability ${d.effect}.${o.name} cannot perform an algebraic effect: ` +
+              `providers are called from anywhere, so there is no handler scope`,
+              o.span,
+            );
+          }
           const h = this.home(o.fn);
           if (h !== side && h !== "neutral") return null;
           return `${ev(o.name)}: ${this.emitExpr(o.fn, side, "neutral", new Set())}`;
@@ -280,7 +359,7 @@ export class Codegen {
 
     if (side === "client") {
       out.push("");
-      out.push(`export function __flow_start(root) { R.mount(root, () => R.v(main())); }`);
+      out.push(`export function __flow_start(root) { R.mount(root, () => R.v(R.run(() => main()))); }`);
       out.push(`export { R };`);
     } else {
       const routesFn = this.prog.decls.find((d) => d.k === "Fn" && d.name === "routes");
@@ -299,16 +378,28 @@ export class Codegen {
     const dictParams = (dicts ?? []).map((d) => d.name);
     const env = new Set([...params.map((p) => p.name), ...dictParams]);
     const savedDicts = this.currentDicts;
+    const savedGen = this.genMode;
     this.currentDicts = new Map((dicts ?? []).map((d) => [d.varId, d.name]));
+    const info = this.mod.fns.get(name);
+    const gen = Boolean(info && info.scheme.k === "fun" && this.rowHasAlgebraic(info.scheme.eff));
+    this.genMode = gen;
     let js: string;
     try {
       js = this.emitExpr(body, side, side, env);
     } finally {
       this.currentDicts = savedDicts;
+      this.genMode = savedGen;
+    }
+    if (gen && this.hasCallCut(body)) {
+      this.fail(
+        `fn ${name} both performs an algebraic effect and needs a request/response cut; ` +
+        `handle the effect before the cut`,
+        body.span,
+      );
     }
     const asyncKw = this.hasCallCut(body) ? "async " : "";
     const allParams = [...params.map((p) => p.name), ...dictParams];
-    return `${asyncKw}function ${name}(${allParams.join(", ")}) { return ${js}; }`;
+    return `${asyncKw}function${gen ? "*" : ""} ${name}(${allParams.join(", ")}) { return ${js}; }`;
   }
 
   /** True when evaluating `e` needs `await`, i.e. it contains a request/response cut. */
@@ -337,14 +428,41 @@ export class Codegen {
       case "Lam": {
         const inner = new Set(env);
         for (const p of e.params) inner.add(p.name);
+        const gen = this.typeHasAlgebraic(this.mod.info.get(e)?.ty);
+        if (gen && this.hasCallCut(e.body)) {
+          this.fail("a function that performs an algebraic effect cannot also contain a request/response cut", e.span);
+        }
+        const savedGen = this.genMode;
+        this.genMode = gen;
+        let bodyJs: string;
+        try {
+          bodyJs = this.emitExpr(e.body, side, ctxHome, inner);
+        } finally {
+          this.genMode = savedGen;
+        }
+        if (gen) return `(function* (${e.params.map((p) => p.name).join(", ")}) { return ${bodyJs}; })`;
         const asyncKw = this.hasCallCut(e.body) ? "async " : "";
-        return `(${asyncKw}(${e.params.map((p) => p.name).join(", ")}) => ${this.emitExpr(e.body, side, ctxHome, inner)})`;
+        return `(${asyncKw}(${e.params.map((p) => p.name).join(", ")}) => ${bodyJs})`;
       }
       case "App": return this.emitApp(e, side, ctxHome, env);
       case "If":
         return `(${this.val(e.cond, side, ctxHome, env)} ? ${this.emitExpr(e.then, side, ctxHome, env)} : ${this.emitExpr(e.else, side, ctxHome, env)})`;
       case "Match": return this.emitMatch(e, side, ctxHome, env);
       case "Let": {
+        const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
+        if (gen) {
+          if (this.hasCallCut(e)) this.fail("a block that performs an algebraic effect cannot also contain a request/response cut", e.span);
+          const savedGen = this.genMode;
+          this.genMode = true;
+          const vJs = this.emitExpr(e.value, side, ctxHome, env);
+          const inner = new Set(env); inner.add(e.name);
+          const bind = gen || this.rowHasAlgebraic(this.effOf(e.value))
+            ? `const ${e.name} = ${vJs};`
+            : `const ${e.name} = R.sig(() => ${vJs});`;
+          const bodyJs = this.emitExpr(e.body, side, ctxHome, inner);
+          this.genMode = savedGen;
+          return `(yield* (function* () { ${bind} return ${bodyJs}; })())`;
+        }
         const vJs = this.emitExpr(e.value, side, ctxHome, env);
         const inner = new Set(env); inner.add(e.name);
         const bind = this.hasCallCut(e.value) ? `const ${e.name} = ${vJs};` : `const ${e.name} = R.sig(() => ${vJs});`;
@@ -355,30 +473,114 @@ export class Codegen {
           : `((() => { ${bind} return ${bodyJs}; })())`;
       }
       case "Record":
-        return `({ ${e.fields.map((f) => `${ev(f.name)}: ${this.emitExpr(f.value, side, ctxHome, env)}`).join(", ")} })`;
+        return `({ ${e.fields.map((f) => `${ev(f.name)}: ${this.val(f.value, side, ctxHome, env)}`).join(", ")} })`;
       case "Field":
         if (/^\d+$/.test(e.name)) return `${this.emitExpr(e.target, side, ctxHome, env)}[${e.name}]`;
         return `R.v(${this.emitExpr(e.target, side, ctxHome, env)}).${e.name}`;
-      case "Tuple": return `[${e.items.map((i) => this.emitExpr(i, side, ctxHome, env)).join(", ")}]`;
-      case "List": return `[${e.items.map((i) => this.emitExpr(i, side, ctxHome, env)).join(", ")}]`;
-      case "Ctor": return `R.ctor(${ev(e.name)}, [${e.args.map((a) => this.emitExpr(a, side, ctxHome, env)).join(", ")}])`;
+      case "Tuple": return `[${e.items.map((i) => this.val(i, side, ctxHome, env)).join(", ")}]`;
+      case "List": return `[${e.items.map((i) => this.val(i, side, ctxHome, env)).join(", ")}]`;
+      case "Ctor": return `R.ctor(${ev(e.name)}, [${e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ")}])`;
       case "Binary": return this.emitBinary(e, side, ctxHome, env);
       case "Unary":
         return e.op === "not" || e.op === "!" ? `(!${this.val(e.e, side, ctxHome, env)})` : `(-${this.val(e.e, side, ctxHome, env)})`;
       case "Html": return this.emitHtml(e.nodes, side, ctxHome, env);
-      case "Handle": {
-        const ops = e.ops
-          .map((op) => `${ev(op.name)}: ${this.emitExpr(op.fn, side, ctxHome, env)}`)
-          .join(", ");
-        const asyncKw = this.hasCallCut(e.body) ? "async " : "";
-        return `R.withEffect(${ev(e.effect)}, { ${ops} }, ${asyncKw}() => ${this.emitExpr(e.body, side, ctxHome, env)})`;
-      }
+      case "Handle": return this.emitHandle(e, side, ctxHome, env);
       case "Block": return this.emitBlock(e, side, ctxHome, env);
     }
   }
 
   private val(e: Expr, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     return `R.v(${this.emitExpr(e, side, ctxHome, env)})`;
+  }
+
+  /**
+   * `handle E with { … } { body }`.
+   *
+   * Capability effects stay scoped providers (`R.withEffect`). Algebraic
+   * effects suspend: the body becomes a generator, the handler operations
+   * receive `resume`, and the handle is driven by `R.handle`, or by the
+   * enclosing handler when the body performs an outer algebraic effect.
+   */
+  private emitHandle(
+    e: Expr & { k: "Handle" },
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string {
+    if (this.isAlgebraic(e.effect)) {
+      const ops = e.ops
+        .map((op) => `${ev(op.name)}: ${this.emitAlgebraicOp(op, side, ctxHome, env)}`)
+        .join(", ");
+      const savedGen = this.genMode;
+      this.genMode = true;
+      let bodyJs: string;
+      try {
+        bodyJs = this.emitExpr(e.body, side, ctxHome, env);
+      } finally {
+        this.genMode = savedGen;
+      }
+      const call = `R.handle(${ev(e.effect)}, { ${ops} }, function* () { return ${bodyJs}; })`;
+      return this.genMode ? `(yield* ${call})` : `R.run(${call})`;
+    }
+
+    const ops = e.ops
+      .map((op) => {
+        if (this.rowHasAlgebraic(this.effOf(op.fn))) {
+          this.fail(
+            `provider for capability ${e.effect}.${op.name} cannot perform an algebraic effect: ` +
+            `providers are called from anywhere, so there is no handler scope`,
+            op.span,
+          );
+        }
+        return `${ev(op.name)}: ${this.emitExpr(op.fn, side, ctxHome, env)}`;
+      })
+      .join(", ");
+
+    if (this.rowHasAlgebraic(this.effOf(e.body))) {
+      const savedGen = this.genMode;
+      this.genMode = true;
+      let bodyJs: string;
+      try {
+        bodyJs = this.emitExpr(e.body, side, ctxHome, env);
+      } finally {
+        this.genMode = savedGen;
+      }
+      return this.yieldStar(
+        `R.withEffectGen(${ev(e.effect)}, { ${ops} }, function* () { return ${bodyJs}; })`,
+        e.span,
+        `a capability handler body`,
+      );
+    }
+
+    const asyncKw = this.hasCallCut(e.body) ? "async " : "";
+    return `R.withEffect(${ev(e.effect)}, { ${ops} }, ${asyncKw}() => ${this.emitExpr(e.body, side, ctxHome, env)})`;
+  }
+
+  /** An algebraic operation handler: a generator that also receives `resume`. */
+  private emitAlgebraicOp(
+    op: { name: string; fn: Expr; span: { line: number; col: number } },
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string {
+    if (op.fn.k !== "Lam") this.fail(`the handler for an algebraic operation must be a function literal`, op.span);
+    const lam = op.fn;
+    if (this.hasCallCut(lam.body)) {
+      this.fail(`a handler operation cannot contain a request/response cut`, lam.span);
+    }
+    const inner = new Set(env);
+    for (const p of lam.params) inner.add(p.name);
+    inner.add("resume");
+    const savedGen = this.genMode;
+    this.genMode = true;
+    let bodyJs: string;
+    try {
+      bodyJs = this.emitExpr(lam.body, side, ctxHome, inner);
+    } finally {
+      this.genMode = savedGen;
+    }
+    const params = [...lam.params.map((p) => p.name), "resume"].join(", ");
+    return `function* (${params}) { return ${bodyJs}; }`;
   }
 
   private emitCutRef(cut: CutInfo): string {
@@ -399,13 +601,22 @@ export class Codegen {
   }
 
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    // `resume(v)` inside an algebraic operation handler: the continuation.
+    if (e.fn.k === "Var" && this.mod.resumeVars.has(e.fn)) {
+      const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
+      return this.yieldStar(`resume(${args})`, e.span, `resume`);
+    }
+
+    const genCall = (js: string): string =>
+      this.mod.genCalls.has(e) ? this.yieldStar(js, e.span, `'${this.callName(e)}'`) : js;
+
     const bound = this.mod.boundChoices.get(e);
     if (bound) {
       const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
       const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
       const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
       if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
-      return `${bound.dictName}.${bound.method}(${parts.join(", ")})`;
+      return genCall(`${bound.dictName}.${bound.method}(${parts.join(", ")})`);
     }
 
     const choice = this.mod.implChoices.get(e);
@@ -417,7 +628,7 @@ export class Codegen {
       const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
       if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
       for (const d of choice.dicts ?? []) parts.push(this.emitDict(d.trait, d.type));
-      return `${choice.mangled}(${parts.join(", ")})`;
+      return genCall(`${choice.mangled}(${parts.join(", ")})`);
     }
 
     const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
@@ -432,11 +643,13 @@ export class Codegen {
 
     const qual = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
     if (e.fn.k === "Field" && qual && this.mod.effects.has(qual)) {
+      if (this.isAlgebraic(qual)) return this.perform(qual, e.fn.name, args, e.span);
       return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
     }
     if (e.fn.k === "Var") {
       const qual = this.effectOfOp(e.fn.name);
       if (qual && !env.has(e.fn.name) && !this.mod.fns.has(e.fn.name)) {
+        if (this.isAlgebraic(qual)) return this.perform(qual, e.fn.name, args, e.span);
         return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
       }
     }
@@ -444,7 +657,13 @@ export class Codegen {
     const callArgs = [args, ...dicts.map((d) => this.emitDict(d.trait, d.type))]
       .filter((x) => x.length > 0)
       .join(", ");
-    return `${this.emitExpr(e.fn, side, ctxHome, env)}(${callArgs})`;
+    return genCall(`${this.emitExpr(e.fn, side, ctxHome, env)}(${callArgs})`);
+  }
+
+  private callName(e: Expr & { k: "App" }): string {
+    if (e.fn.k === "Var") return e.fn.name;
+    if (e.fn.k === "Field") return e.fn.name;
+    return "call";
   }
 
   /** Emit a dictionary object for a trait instance, closing over inner
@@ -492,18 +711,25 @@ export class Codegen {
   }
 
   private emitMatch(e: Expr & { k: "Match" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
+    if (gen && this.hasCallCut(e)) {
+      this.fail("a match that performs an algebraic effect cannot also contain a request/response cut", e.span);
+    }
+    const savedGen = this.genMode;
+    if (gen) this.genMode = true;
     const scrut = `R.v(${this.emitExpr(e.scrut, side, ctxHome, env)})`;
-    const lines: string[] = ["((() => {", `  const $m${++this.tmp} = ${scrut};`];
+    const body: string[] = [`const $m${++this.tmp} = ${scrut};`];
     const m = `$m${this.tmp}`;
     for (const arm of e.arms) {
       const inner = new Set(env);
-      const body = this.emitExpr(arm.body, side, ctxHome, inner);
+      const armBody = this.emitExpr(arm.body, side, ctxHome, inner);
       const guard = arm.guard ? this.val(arm.guard, side, ctxHome, inner) : null;
-      lines.push(this.emitArm(arm.pat, m, body, guard));
+      body.push(this.emitArm(arm.pat, m, armBody, guard));
     }
-    lines.push(`  throw new Error(${ev("non-exhaustive match at runtime")});`);
-    lines.push("})())");
-    return lines.join("\n");
+    body.push(`throw new Error(${ev("non-exhaustive match at runtime")});`);
+    this.genMode = savedGen;
+    if (gen) return `(yield* (function* () { ${body.join("\n")} })())`;
+    return ["((() => {", ...body.map((l) => "  " + l), "})())"].join("\n");
   }
 
   /** Emits `if`-nested statements that bind pattern variables, ending in `inner`. */
@@ -554,18 +780,27 @@ export class Codegen {
   }
 
   private emitBlock(e: Expr & { k: "Block" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
+    if (gen && this.hasCallCut(e)) {
+      this.fail("a block that performs an algebraic effect cannot also contain a request/response cut", e.span);
+    }
+    const savedGen = this.genMode;
+    if (gen) this.genMode = true;
     const stmts: string[] = [];
     const inner = new Set(env);
     for (const s of e.stmts) {
       if (s.k === "LetStmt") {
         const v = this.emitExpr(s.value, side, ctxHome, inner);
-        stmts.push(this.hasCallCut(s.value) ? `const ${s.name} = ${v};` : `const ${s.name} = R.sig(() => ${v});`);
+        const eager = gen || this.hasCallCut(s.value);
+        stmts.push(eager ? `const ${s.name} = ${v};` : `const ${s.name} = R.sig(() => ${v});`);
         inner.add(s.name);
       } else {
         stmts.push(`${this.emitExpr(s.e, side, ctxHome, inner)};`);
       }
     }
     const value = e.value ? this.emitExpr(e.value, side, ctxHome, inner) : "null";
+    this.genMode = savedGen;
+    if (gen) return `(yield* (function* () { ${stmts.join(" ")} return ${value}; })())`;
     return this.hasCallCut(e)
       ? `(await (async () => { ${stmts.join(" ")} return ${value}; })())`
       : `((() => { ${stmts.join(" ")} return ${value}; })())`;
@@ -583,19 +818,48 @@ export class Codegen {
   private emitHtmlNode(n: HtmlNode, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     switch (n.k) {
       case "Text": return n.v.length ? `R.text(${ev(n.v)})` : "null";
-      case "Hole": return `R.hole(() => ${this.emitExpr(n.e, side, ctxHome, env)})`;
+      case "Hole":
+        if (this.rowHasAlgebraic(this.effOf(n.e))) {
+          this.fail(
+            "an algebraic effect cannot be performed in an HTML hole: holes are evaluated lazily, " +
+            "outside the handler's scope. Handle the effect before the hole.",
+            n.span,
+          );
+        }
+        return `R.hole(() => ${this.emitExpr(n.e, side, ctxHome, env)})`;
       case "Element": {
         const attrs = n.attrs.map((a) => {
           if (a.name.startsWith("on") && a.value.k === "expr") {
+            if (this.typeHasAlgebraic(this.mod.info.get(a.value.e)?.ty) || this.rowHasAlgebraic(this.effOf(a.value.e))) {
+              this.fail(
+                `the '${a.name}' listener cannot perform an algebraic effect: listeners run after the ` +
+                `handler's scope has ended. Handle the effect inside the listener instead.`,
+                n.span,
+              );
+            }
             return `${ev("on:" + a.name.slice(2).toLowerCase())}: ${this.emitExpr(a.value.e, side, ctxHome, env)}`;
           }
           if (a.value.k === "static") return `${ev(a.name)}: ${ev(a.value.v)}`;
+          if (this.rowHasAlgebraic(this.effOf(a.value.e))) {
+            this.fail(
+              `an algebraic effect cannot be performed in the '${a.name}' attribute: attributes are ` +
+              `evaluated lazily. Handle the effect before the attribute.`,
+              n.span,
+            );
+          }
           return `${ev(a.name)}: R.attr(() => ${this.emitExpr(a.value.e, side, ctxHome, env)})`;
         });
         const kids = n.children.map((c) => this.emitHtmlNode(c, side, ctxHome, env)).filter((x) => x !== "null");
         return `R.el(${ev(n.tag)}, { ${attrs.join(", ")} }, [${kids.join(", ")}])`;
       }
       case "Component": {
+        if (this.rowHasAlgebraic(this.effOf(n))) {
+          this.fail(
+            `component '${n.name}' performs an algebraic effect without handling it: components are ` +
+            `called by the renderer, outside any handler scope. Wrap the effect in 'handle … with' inside the component.`,
+            n.span,
+          );
+        }
         const fields: string[] = [];
         for (const a of n.attrs) {
           fields.push(`${ev(a.name)}: ${a.value.k === "static" ? ev(a.value.v) : this.emitExpr(a.value.e, side, ctxHome, env)}`);

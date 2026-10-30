@@ -209,6 +209,82 @@ the work runs: a callback using client state places the request on the client;
 one using server capabilities places it on the server. The API is callback-based
 because `fetch` is asynchronous.
 
+### `std::state` — algebraic state
+
+`State` is an **algebraic effect**: `get`/`put` suspend the caller, and the
+handler resumes at the operation site. State lives in a neutral `Ref` inside the
+handler, so the same code runs on the client or the server.
+
+```flow
+use std::state::{withState, runState, execState, State}
+
+fn counter() -> Int ! {State} {
+  State.put(State.get() + 1);
+  State.get()
+}
+
+withState(0, fn() -> Int { counter() })   // 1
+runState(0, fn() -> Int { counter() })    // (1, 1)
+```
+
+| function | type |
+|---|---|
+| `withState` | `(Int, () -> a ! {State}) -> a` |
+| `runState` | `(Int, () -> a ! {State}) -> (a, Int)` |
+| `execState` | `(Int, () -> a ! {State}) -> Int` |
+
+Handlers:
+
+```flow
+handle State with {
+  get = fn() -> a { resume(cell.get()) },
+  put = fn(x: Int) -> a { cell.set(x); resume(()) }
+} { action() }
+```
+
+### `std::exn` — abortive algebraic effects
+
+`Exn` suspends at `fail`; a handler may resume with a value (`recover`) or return
+a fallback, aborting the rest of the computation (`attempt`, `recoverWith`).
+
+```flow
+use std::exn::{attempt, recoverWith, recover, fail, Exn}
+
+fn risky(n: Int) -> Int ! {Exn} {
+  if (n < 0) { fail("negative") } else { n * 2 }
+}
+
+attempt(0, fn() -> Int { risky(21) })                      // 42
+attempt(-1, fn() -> Int { risky(-3) })                     // -1
+recoverWith(fn(m: Str) -> Int { 0 }, fn() -> Int { risky(-3) })  // 0
+recover(99, fn() -> Int { fail("soft") })                  // 99
+```
+
+| function | type |
+|---|---|
+| `fail` | `(Str) -> a ! {Exn}` |
+| `attempt` | `(a, () -> a ! {Exn}) -> a` — abort with the fallback |
+| `recoverWith` | `((Str) -> a, () -> a ! {Exn}) -> a` |
+| `recover` | `(a, () -> a ! {Exn}) -> a` — resume at the failure point |
+
+### `std::ref` — a neutral mutable box
+
+`Ref<a>` is a small mutable slot with no reactivity and no placement. It exists so
+stateful algebraic handlers work on either side of the boundary.
+
+```flow
+use std::ref::{Ref, newRef, get, set, modify}
+```
+
+| function | type |
+|---|---|
+| `newRef` | `(a) -> Ref<a>` |
+| `get` / `set` | `(Ref<a>) -> a` / `(Ref<a>, a) -> Unit` |
+| `modify` | `(Ref<a>, (a) -> a) -> Unit` |
+
+`Ref<a> = { get: () -> a, set: (a) -> Unit }`; the host implements it with a
+closure (`__flow.host.refNew`).
+
 ### `std::fs`
 
 Server-side filesystem access through the `Fs @ server` effect capability:

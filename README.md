@@ -68,6 +68,7 @@ examples/traits.flow     trait dispatch, generic instances, list patterns
 examples/bounds.flow     trait bounds, bounded generic instances, dictionaries
 examples/hkt.flow        higher-kinded type parameters (Functor for List/Option)
 examples/handler.flow    scoped and nested local capability handlers
+examples/algebraic.flow  algebraic effects: state, resume, aborting handlers
 examples/net.flow        server-or-client network effect capability
 examples/fs.flow         server-side filesystem effect capability
 examples/http.flow       request/routing effect capabilities and easy routing
@@ -75,13 +76,13 @@ examples/effects.flow    user-defined capability, request/response cut chain
 
 packages/demo/           package with a local module (util.flow)
 packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs
+stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs, state, exn, ref
 registry/                a small package registry (index.json + packages/)
 ```
 
-Tests: `npm test` — **155 tests** across grammar, types, boundaries, modules, packages,
-the language server, HTTP capabilities, network capabilities, filesystem capabilities, trait bounds,
-higher-kinded types, local handlers and the VS Code extension.
+Tests: `npm test` — **169 tests** across grammar, types, boundaries, modules, packages,
+the language server, HTTP capabilities, network capabilities, filesystem capabilities,
+algebraic effects, trait bounds, higher-kinded types, local handlers and the VS Code extension.
 
 ---
 
@@ -150,6 +151,10 @@ fn area(s: Shape) -> Float {
   instances at the constructor (`impl Functor for List`), dispatch by head constructor
 * **Local capability handlers** - `handle Effect with { … } { body }` scopes a
   provider, nests/restores correctly, and removes the handled effect from the row
+* **Algebraic effects** - `algebraic effect State { fn get() -> Int }` suspends at
+  its operations; `handle State with { get = fn() -> a { resume(cell.get()) } }`
+  continues the computation, can run code after `resume`, or abort without it.
+  `std::state` and `std::exn` ship on top of it
 * **HTTP capabilities** - `std::http` declares `Request` and `Router` as effect
   capabilities, with easy `get`/`post` route helpers and a host-backed dispatcher
 * **Network** - `std::net` is a placement-neutral `Net` effect capability with

@@ -395,7 +395,7 @@ function semanticTokens(uri: string): { data: number[] } {
 /* ------------------------------------------------------------------ */
 
 const KEYWORDS = [
-  "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect",
+  "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect", "algebraic",
   "provide", "with", "use", "pub", "unsafe", "extern", "html", "true", "false",
   "and", "or", "not", "handle",
 ];
@@ -442,7 +442,8 @@ const KEYWORD_DOC: Record<string, string> = {
   match: "match value { Pattern => expr, … }",
   html: "html { <div>{expr}</div> }",
   type: "type Name = A | B(T)  — algebraic data type",
-  effect: "effect Name { fn op(x: T) -> R }  — a capability",
+  effect: "effect Name @ client|server { fn op(x: T) -> R }  — a capability",
+  algebraic: "algebraic effect Name { fn op(x: T) -> R }  — suspends; handled with resume",
   provide: "provide Effect with { op = fn(…) { … } }",
   use: "use pkg::module::{name}",
   pub: "pub fn f() …  — exported from this module",
@@ -456,8 +457,10 @@ const KEYWORD_SNIPPETS: Record<string, string> = {
   type: "type ${1:Name} =\n  | ${2:Variant}",
   trait: "trait ${1:Name}<a> {\n\tfn ${2:method}(x: a) -> ${3:Type}\n}",
   effect: "effect ${1:Name} @ ${2|client,server|} {\n\tfn ${3:op}() -> ${4:Type}\n}",
+  algebraic: "algebraic effect ${1:Name} {\n\tfn ${2:op}(${3}) -> ${4:Type}\n}",
   provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
   handle: "handle ${1:Effect} with {\n\t${2:op} = fn(${3}) -> ${4:Type} { ${0} }\n} {\n\t${5}\n}",
+  resume: "resume(${1:value})",
   unsafe: "unsafe extern js fn ${1:name}(${2}) -> ${3:Type} = \"${4:Math.floor}\"",
   use: "use ${1:pkg}::${2:module}::{${3:name}}",
 };

@@ -117,6 +117,39 @@ A declared row `! {A, B}` on a function is an **upper bound**: inference checks
 `ε_inferred ⊆ {A, B}` and reports the difference otherwise. Without a declaration the row is
 inferred and propagated. This is why Flow programs are usually annotation-free.
 
+### 3.1 Algebraic effects
+
+`algebraic effect E { … }` declares operations that **suspend**; their calls are not
+capabilities and have no provider. They are discharged by a handler expression:
+
+```
+Γ, resume : (τ_op) -> τ_body ⊢ h : (τ…) -> τ_body
+E declares op : (τ…) -> τ_op ! ε_op
+────────────────────────────────────────────────────────────
+Γ ⊢ handle E with { op = h } { body }
+    : τ_body ! (ε_body \ {E}) ⊔ ε_ops
+```
+
+* `resume` continues the handled body at the operation site and returns the rest
+  of the body's result, so every operation handler returns `τ_body`. A handler
+  that never calls `resume` aborts the body and produces `τ_body` itself.
+* Handlers are deep: the continuation is handled by the same handler. Handlers
+  nest, and an inner handler shadows an outer handler for the same effect.
+* `resume` is **one-shot**; a second call is rejected at runtime.
+* Operations of other algebraic effects raised by the body or by the continuation
+  are forwarded to the enclosing handler.
+* Algebraic effects are **placement-neutral**: `place(E) = neutral`, and a
+  `handle` runs on the side where its body runs. Their labels are ignored by
+  `place(ε)`, and codegen refuses to let them cross a tier cut.
+* Capability effects keep their provider-based typing; `provide E with …` is
+  rejected when `E` is algebraic.
+
+Because a suspending call must be evaluated inside a handler, codegen compiles
+functions whose row intersects the algebraic effects to JS generators and calls
+them with `yield*`, and wraps handler bodies in `R.handle`. Effects cannot be
+performed in lazy slots (HTML holes/attributes, event listeners, reactive
+blocks, providers, components): those slots run after the handler scope ends.
+
 ---
 
 ## 4. Inference rules

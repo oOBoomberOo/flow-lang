@@ -54,6 +54,8 @@ export interface ImplInfo {
 
 export interface EffectInfo {
   name: string; ops: Map<string, { sig: FnSig; ty: Type }>; place: Place;
+  /** algebraic effects suspend and resume; they are handled by `handle … with`, never provided */
+  algebraic: boolean;
 }
 
 export interface ProvideInfo { effect: string; ops: Map<string, Expr>; target?: TypeExpr; place: Place }
@@ -102,6 +104,10 @@ export interface Module {
   diagnostics: string[];
   /** type errors collected for the editor (the CLI rethrows the first one) */
   errors: FlowError[];
+  /** calls whose callee may perform algebraic operations (they need `yield*`) */
+  genCalls: Set<object>;
+  /** `resume` references inside algebraic handler operations */
+  resumeVars: Set<object>;
 }
 
 // The language surface that used to be injected here now lives in
@@ -136,6 +142,8 @@ export class Infer {
       varTypes: new Map(),
       diagnostics: [],
       errors: [],
+      genCalls: new Set(),
+      resumeVars: new Set(),
     };
   }
 
@@ -203,7 +211,7 @@ export class Infer {
 
   private placementFingerprint(): string {
     const parts = [this.effectFingerprint()];
-    for (const e of this.mod.effects.values()) parts.push(`p:${e.name}:${e.place}`);
+    for (const e of this.mod.effects.values()) parts.push(`p:${e.name}:${e.place}:${e.algebraic ? "alg" : "cap"}`);
     for (const p of this.mod.provides.values()) parts.push(`v:${p.effect}:${p.place}`);
     return parts.join(";");
   }
@@ -331,10 +339,13 @@ export class Infer {
     const existing = this.mod.effects.get(d.name);
     const ops = new Map(existing?.ops ?? []);
     for (const o of d.ops) ops.set(o.name, { sig: o, ty: this.resolveSig(o, new Map()) });
+    const algebraic = Boolean(d.algebraic) || Boolean(existing?.algebraic);
     this.mod.effects.set(d.name, {
       name: d.name,
       ops,
-      place: d.place ?? existing?.place ?? "server",
+      // An algebraic effect has no host side: it runs wherever its handler runs.
+      place: algebraic ? "neutral" : d.place ?? existing?.place ?? "server",
+      algebraic,
     });
   }
 
@@ -343,6 +354,7 @@ export class Infer {
    *  placement-neutral (FFI calls, pure code) does not move the effect. */
   private applyProviderPlaces() {
     for (const e of this.mod.effects.values()) {
+      if (e.algebraic) continue;
       const p = this.mod.provides.get(e.name);
       if (p && p.place !== "neutral") e.place = p.place;
     }
@@ -403,6 +415,12 @@ export class Infer {
       if (d.k !== "Provide") continue;
       const effect = this.mod.effects.get(d.effect);
       if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
+      if (effect.algebraic) {
+        this.fail(
+          `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with { … } { … }'`,
+          d.span,
+        );
+      }
       for (const o of d.ops) {
         const decl = effect.ops.get(o.name);
         if (!decl) this.fail(`effect ${d.effect} has no operation '${o.name}'`, o.span);
@@ -423,7 +441,14 @@ export class Infer {
   }
 
   registerProvide(d: Decl & { k: "Provide" }) {
-    if (!this.mod.effects.has(d.effect)) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
+    const effect = this.mod.effects.get(d.effect);
+    if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
+    if (effect.algebraic) {
+      this.fail(
+        `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with { … } { … }'`,
+        d.span,
+      );
+    }
     const ops = new Map<string, Expr>();
     let place: Place = "neutral";
     for (const o of d.ops) {
@@ -679,6 +704,9 @@ export class Infer {
       }
 
       case "Var": {
+        if (e.name === "resume" && !this.env.has("resume") && !this.mod.fns.has("resume")) {
+          this.fail("'resume' is only available inside an operation handler of an algebraic effect", e.span);
+        }
         const ty = this.lookupVar(e.name, e.span);
         this.mod.varTypes.set(e, ty);
         return { ty, place: this.varPlace(e.name), eff: emptyEff() };
@@ -884,6 +912,7 @@ export class Infer {
   inferHandle(e: Expr & { k: "Handle" }): ResInfo {
     const effect = this.mod.effects.get(e.effect);
     if (!effect) this.fail(`handler for unknown effect '${e.effect}'`, e.span);
+    if (effect.algebraic) return this.inferAlgebraicHandle(e, effect);
 
     const seen = new Set<string>();
     let opPlace: Place = "neutral";
@@ -936,6 +965,102 @@ export class Infer {
       place: joinPlace(opPlace, body.place),
       eff: mergeEff({ labels }, opEff),
     };
+  }
+
+  /**
+   * Algebraic handlers. The handled body is inferred first so that every
+   * operation handler can be typed against the body's result type: `resume(v)`
+   * returns the rest of the handled computation, so an operation handler
+   * returns the same type as the `handle` expression itself. A handler that
+   * never calls `resume` aborts and its return value becomes that result.
+   */
+  private inferAlgebraicHandle(e: Expr & { k: "Handle" }, effect: EffectInfo): ResInfo {
+    const seen = new Set<string>();
+    for (const op of e.ops) {
+      if (seen.has(op.name)) this.fail(`duplicate handler operation '${op.name}'`, op.span);
+      seen.add(op.name);
+      if (!effect.ops.has(op.name)) this.fail(`effect ${e.effect} has no operation '${op.name}'`, op.span);
+      const binder = findBinderNamed(op.fn, "resume");
+      if (binder) this.fail("'resume' is reserved inside a handler operation", binder);
+      if (op.fn.k !== "Lam") {
+        this.fail(
+          `the handler for ${e.effect}.${op.name} must be a function literal: ${op.name} = fn(…) -> T { … }`,
+          op.span,
+        );
+      }
+    }
+    const missing = [...effect.ops.keys()].filter((name) => !seen.has(name));
+    if (missing.length) {
+      this.fail(`handler for ${e.effect} is missing operation(s) ${missing.sort().join(", ")}`, e.span);
+    }
+
+    const body = this.infer(e.body);
+
+    let opPlace: Place = "neutral";
+    let opEff = emptyEff();
+    for (const op of e.ops) {
+      const declared = effect.ops.get(op.name)!;
+      const inst = instantiate(declared.ty, 0);
+      if (inst.k !== "fun") this.fail(`effect operation ${e.effect}.${op.name} is not callable`, op.span);
+      // `resume` takes the operation's result and returns the handled result.
+      const resumeTy = fnT([inst.ret], body.ty);
+
+      const saved = this.env;
+      this.env = new Map(saved);
+      this.env.set("resume", { ty: resumeTy, envVars: new Set(), place: "neutral" });
+      let r: ResInfo;
+      try {
+        r = this.infer(op.fn);
+      } finally {
+        this.env = saved;
+      }
+      this.markResumeVars(op.fn);
+
+      // `resume` is a continuation, not a first-class value in 0.1: calling it
+      // anywhere but directly would return a suspended iterator.
+      const called = new Set<object>();
+      forEachExpr(op.fn, (x) => {
+        if (x.k === "App" && x.fn.k === "Var" && x.fn.name === "resume") called.add(x.fn);
+      });
+      forEachExpr(op.fn, (x) => {
+        if (x.k === "Var" && x.name === "resume" && !called.has(x)) {
+          this.fail("'resume' must be called directly: resume(value)", x.span);
+        }
+      });
+
+      const before = snapshotSubst();
+      try {
+        unify(r.ty, fnT(inst.params, body.ty));
+      } catch (err) {
+        restoreSubst(before);
+        if (err instanceof FlowError) {
+          this.fail(
+            `handler for ${e.effect}.${op.name} must return the handled result ${typeStr(body.ty)} ` +
+            `(a handler that resumes returns what the rest of the body returns): ${err.message}`,
+            op.span,
+          );
+        }
+        throw err;
+      }
+      restoreSubst(before);
+
+      opPlace = joinPlace(opPlace, r.place);
+      opEff = mergeEff(opEff, r.eff);
+    }
+
+    const labels = new Set(body.eff.labels);
+    labels.delete(e.effect);
+    return {
+      ty: body.ty,
+      place: joinPlace(opPlace, body.place),
+      eff: mergeEff({ labels }, opEff),
+    };
+  }
+
+  private markResumeVars(e: Expr): void {
+    forEachExpr(e, (x) => {
+      if (x.k === "Var" && x.name === "resume") this.mod.resumeVars.add(x);
+    });
   }
 
   inferApp(e: Expr & { k: "App" }): ResInfo {
@@ -1033,6 +1158,22 @@ export class Infer {
         if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
         throw err;
       }
+      // A function that performs an algebraic effect can only be passed to a
+      // parameter whose declared row admits it; otherwise the callee would call
+      // a generator and receive an iterator.
+      const argFun = prune(r.ty);
+      if (callee && argFun.k === "fun" && this.effHasAlgebraic(argFun.eff)) {
+        const declaredParam = callee.scheme.k === "fun" ? prune(callee.scheme.params[i]!) : undefined;
+        if (declaredParam && declaredParam.k === "fun" && !this.effHasAlgebraic(declaredParam.eff)) {
+          const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
+          this.fail(
+            `cannot pass a function that performs {${labels.join(", ")}} to '${callee.name}': ` +
+            `argument ${i + 1} is declared ${typeStr(declaredParam)} without that effect row. ` +
+            `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
+            a.span,
+          );
+        }
+      }
       const expected = callee?.paramPlaces?.[i];
       if (expected) {
         this.checkPlacement(expected, this.exprPlace(a, r.place), a.span, `argument ${i + 1} to ${callee!.name}`);
@@ -1049,7 +1190,13 @@ export class Infer {
       }
       this.mod.dictArgs.set(e, dicts);
     }
+    if (this.effHasAlgebraic(ft.eff)) this.mod.genCalls.add(e);
     return { ty: ft.ret, place: joinPlace(place, placeFromEffects(eff, this)), eff };
+  }
+
+  private effHasAlgebraic(eff: Eff): boolean {
+    for (const l of eff.labels) if (this.mod.effects.get(l)?.algebraic) return true;
+    return false;
   }
 
   inferTraitCall(traitName: string, method: string, schemeTy: Type, args: Expr[], node: object): ResInfo {
@@ -1066,6 +1213,7 @@ export class Infer {
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
+    if (this.effHasAlgebraic(inst.eff)) this.mod.genCalls.add(node);
     const trait = this.mod.traits.get(traitName)!;
     let target = prune(inst.params[0] ?? inst.ret);
     if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
@@ -1357,12 +1505,86 @@ function headConstructor(t: Type): Type {
 export function placeFromEffects(eff: Eff, inf: Infer): Place {
   let p: Place = "neutral";
   for (const l of eff.labels) {
-    // Every effect carries its own placement (declared `@ client`/`@ server`, or
-    // the provider's), so there is no name-based special casing here.
+    // Every capability carries its own placement (declared `@ client`/`@ server`,
+    // or the provider's). Algebraic effects are neutral: they are handled by a
+    // scoped handler wherever the code runs.
     const e = inf.mod.effects.get(l);
-    if (e) p = joinPlace(p, e.place);
+    if (e && !e.algebraic) p = joinPlace(p, e.place);
   }
   return p;
+}
+
+/* ------------------------------------------------------------------ */
+/* AST walkers used by the algebraic-effect checks                     */
+/* ------------------------------------------------------------------ */
+
+export function forEachExpr(e: Expr, fn: (e: Expr) => void): void {
+  fn(e);
+  switch (e.k) {
+    case "Lit": case "Var": return;
+    case "Lam": forEachExpr(e.body, fn); return;
+    case "App": forEachExpr(e.fn, fn); for (const a of e.args) forEachExpr(a, fn); return;
+    case "If": forEachExpr(e.cond, fn); forEachExpr(e.then, fn); forEachExpr(e.else, fn); return;
+    case "Match":
+      forEachExpr(e.scrut, fn);
+      for (const a of e.arms) { if (a.guard) forEachExpr(a.guard, fn); forEachExpr(a.body, fn); }
+      return;
+    case "Let": forEachExpr(e.value, fn); forEachExpr(e.body, fn); return;
+    case "Record": for (const f of e.fields) forEachExpr(f.value, fn); return;
+    case "Field": forEachExpr(e.target, fn); return;
+    case "Tuple": case "List": for (const i of e.items) forEachExpr(i, fn); return;
+    case "Ctor": for (const a of e.args) forEachExpr(a, fn); return;
+    case "Binary": forEachExpr(e.l, fn); forEachExpr(e.r, fn); return;
+    case "Unary": forEachExpr(e.e, fn); return;
+    case "Html": for (const n of e.nodes) forEachHtmlExpr(n, fn); return;
+    case "Handle":
+      for (const op of e.ops) forEachExpr(op.fn, fn);
+      forEachExpr(e.body, fn);
+      return;
+    case "Block":
+      for (const s of e.stmts) forEachExpr(s.k === "LetStmt" ? s.value : s.e, fn);
+      if (e.value) forEachExpr(e.value, fn);
+      return;
+  }
+}
+
+function forEachHtmlExpr(n: HtmlNode, fn: (e: Expr) => void): void {
+  switch (n.k) {
+    case "Text": return;
+    case "Hole": forEachExpr(n.e, fn); return;
+    case "Element": case "Component":
+      for (const a of n.attrs) if (a.value.k === "expr") forEachExpr(a.value.e, fn);
+      for (const c of n.children) forEachHtmlExpr(c, fn);
+      return;
+  }
+}
+
+/** The first binder (parameter, `let`, or pattern) named `name` in `e`, if any. */
+export function findBinderNamed(e: Expr, name: string): { line: number; col: number } | null {
+  let found: { line: number; col: number } | null = null;
+  const pat = (p: Pattern): void => {
+    if (found) return;
+    switch (p.k) {
+      case "PVar": if (p.name === name) found = p.span; return;
+      case "PTuple": p.items.forEach(pat); return;
+      case "PRecord": p.fields.forEach((f) => pat(f.pat)); return;
+      case "PList": p.items.forEach(pat); if (p.rest === name) found = p.span; return;
+      case "PCtor": p.args.forEach(pat); return;
+      default: return;
+    }
+  };
+  forEachExpr(e, (x) => {
+    if (found) return;
+    switch (x.k) {
+      case "Lam": for (const p of x.params) if (p.name === name) found = p.span; return;
+      case "Let": if (x.name === name) found = x.span; return;
+      case "Match": for (const a of x.arms) pat(a.pat); return;
+      case "Block":
+        for (const s of x.stmts) if (s.k === "LetStmt" && s.name === name) found = s.span;
+        return;
+    }
+  });
+  return found;
 }
 
 export { fresh, prune, typeStr };
