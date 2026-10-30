@@ -543,5 +543,19 @@ test("lsp: boundary regions mark cuts with direction, hover and inlay hints", as
       hints.some((h) => String(h.label).includes("cut1→server")),
       "an inlay hint marks the cut",
     );
+
+    // live refresh: an edit re-emits the boundary payload for the open file
+    c.inbox.length = 0;
+    c.notify("textDocument/didChange", {
+      textDocument: { uri: uri(entry), version: 2 },
+      contentChanges: [{ text: text.replace("Server.now()", "Server.now() + 1") }],
+    });
+    const changed = await c.waitFor(
+      (m) => m.method === "flow/boundaryChanged" && m.params.uri === uri(entry),
+      8000,
+    );
+    assert.ok(changed.params.summary.cuts >= 1, "the edited buffer still reports its cuts");
+    const movedCut = changed.params.regions.find((r) => r.kind === "cut");
+    assert.equal(movedCut.direction, "client→server", "direction survives the edit");
   } finally { c.proc.kill(); }
 });
