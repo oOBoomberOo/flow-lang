@@ -246,22 +246,34 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
           (outer.end.line === inner.end.line && outer.end.character >= inner.end.character));
 
       const cutKeys = new Set<string>();
-      for (const cut of result.codegen.cutList) {
-        const span = (cut.node as { span: Span }).span;
-        if (!span?.file) continue;
-        const src = srcFor(span.file);
-        const range = spanRange(src, span);
-        const parent = fnRegions
+      const cutSpans = result.codegen.cutList
+        .map((cut) => {
+          const span = (cut.node as { span: Span }).span;
+          if (!span?.file) return null;
+          const src = srcFor(span.file);
+          return { cut, span, range: spanRange(src, span) };
+        })
+        .filter((x): x is { cut: typeof result.codegen.cutList[number]; span: Span; range: Range } => x !== null);
+      const cutRegions: Region[] = [];
+      for (const { cut, span, range } of cutSpans) {
+        // The direction is measured from the nearest enclosing region: a cut nested
+        // inside another cut crosses from *that* cut's side, not from the function's.
+        const parent = [...fnRegions, ...cutRegions]
           .filter((r) => containsRange(r.range, range))
           .sort((a, b) =>
-            (a.range.end.line - a.range.start.line) - (b.range.end.line - b.range.start.line))[0];
+            (a.range.end.line - a.range.start.line) - (b.range.end.line - b.range.start.line) ||
+            (a.range.end.character - a.range.start.character) - (b.range.end.character - b.range.start.character))[0];
         const from = parent ? parent.side : "shared";
         const direction = `${from}→${cut.home}`;
         const ty = result.mod.info.get(cut.node)?.ty;
         const type = ty ? typeStr(prune(ty)) : undefined;
-        const parentName = parent ? parent.label.replace(/ runs on .*$/, "") : undefined;
+        const parentName = parent
+          ? parent.kind === "function"
+            ? parent.label.replace(/ runs on .*$/, "")
+            : parent.cutId
+          : undefined;
         cutKeys.add(`${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`);
-        regions.push({
+        const region: Region = {
           file: span.file,
           range,
           side: cut.home,
@@ -278,7 +290,9 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
             ` → ${cut.home}` +
             (cut.deps.length ? ` (deps: ${cut.deps.join(", ")})` : "") +
             (type ? ` : ${type}` : ""),
-        });
+        };
+        regions.push(region);
+        cutRegions.push(region);
       }
 
       // Cross-tier expressions: values that really mix both sides (an Int computed
