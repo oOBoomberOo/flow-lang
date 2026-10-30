@@ -57,7 +57,7 @@ Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build st
 A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
 Modules are linked at compile time and the standard library is available as
 `std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
-`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref` — see [`docs/modules.md`](modules.md). A single
+`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad` — see [`docs/modules.md`](modules.md). A single
 file without a manifest still works. Host access goes through explicitly `unsafe`
 FFI bindings (§12).
 
@@ -108,6 +108,28 @@ evaluated once, because a round trip yields a value, not a stream.
 
 `mut` is accepted and treated as `let`; mutation is expressed with cells (`Cell<τ>`), which
 exist only on the client.
+
+### Cell sugar
+
+Reads and writes have short forms that lower to `CellOps.get`/`set` and keep the
+`Client` placement:
+
+```flow
+let n = Client.state(0);
+n.value = n.value + 1;    // set(n, get(n) + 1)
+n += 2;                   // update: set(n, get(n) + 2)
+n -= 1; n *= 3; n /= 2;
+n++; n--;                 // Int cells
+n.update(fn(x: Int) -> Int { x + 10 });
+
+html { <p>{str(n.value)}</p> }   // reading a cell recomputes reactively
+```
+
+* `cell.value` reads the cell; using `.value` on a non-`Cell` is an error.
+* `cell.value = e` writes it, and the value must match the cell's element type.
+* `+=` works for `Int`, `Float` and `Str`; `-=`, `*=`, `/=` work for `Int`/`Float`;
+  `/=` on `Int` truncates; `++`/`--` are `Int`-only.
+* The long forms `cell.get()` and `cell.set(value)` keep working.
 
 ---
 
@@ -234,6 +256,36 @@ Dispatch uses the head constructor of the constructor-typed argument:
 `Functor.map([1, 2], …)` selects the `List` instance, while
 `Functor.map(Some(1), …)` selects `Option`. Type applications are normalized
 after unification, so `f<b>` becomes `List<b>` or `Option<b>`.
+
+### Monads
+
+`std::monad` declares `Monad<f>` with `bind` and `map`, and instances for `Option`
+and `List`. `>>=` and `do { … }` are sugar over `bind`:
+
+```flow
+use std::monad::{Monad}
+
+let chained = Some(2) >>= fn(x: Int) -> Option<Int> { Some(x + 1) };
+
+let option = do {
+  x <- Some(2);
+  y <- Some(3);
+  Some(x + y)                 // Some(5)
+};
+
+let list = do {
+  x <- [1, 2];
+  y <- [10, 20];
+  [x + y]                     // [11, 21, 12, 22]
+};
+
+Some(2).map(fn(x: Int) -> Int { x + 1 })   // Some(3)
+```
+
+`do { … }` desugars to nested `>>=` applications; `let` bindings inside it stay
+ordinary lets. The instance is chosen from the first bound value's type, so
+mixing `Option` and `List` in one block is a type error. `>>=` requires the
+`Monad` trait to be imported (which also links the instances).
 
 ---
 
@@ -618,7 +670,7 @@ flow add flow-time    # add the best matching version from the registry
 ```
 
 The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`.
+`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`.
 Full reference: [`docs/modules.md`](modules.md).
 
 ---

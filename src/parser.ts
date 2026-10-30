@@ -346,6 +346,67 @@ export class Parser {
     return { k: "Handle", effect, ops, body, span: this.spanFrom(start) };
   }
 
+  /**
+   * `do { x <- m; y <- n; result }` — desugared to nested `m >>= fn(x) { … }`
+   * so inference and codegen only need the bind operator. `let` bindings in a
+   * do block become ordinary lets around the rest.
+   */
+  parseDo(): Expr {
+    const start = this.expectKw("do");
+    this.expectSym("{");
+    type Item =
+      | { kind: "bind"; name: string; value: Expr; span: Span }
+      | { kind: "let"; name: string; ann?: TypeExpr; value: Expr; span: Span };
+    const items: Item[] = [];
+    let result: Expr | null = null;
+
+    while (!this.atSym("}")) {
+      if (this.tok.kind === "id" && this.peek().value === "<-") {
+        const t = this.tok;
+        const name = this.next().value;
+        this.next(); // <-
+        const value = this.parseExpr();
+        this.expectSym(";");
+        items.push({ kind: "bind", name, value, span: this.spanFrom(t) });
+        continue;
+      }
+      if (this.atKw("let")) {
+        const st = this.parseLetStmt();
+        items.push({ kind: "let", name: st.name, ann: st.ann, value: st.value, span: st.span });
+        continue;
+      }
+      result = this.parseExpr();
+      this.eatSym(";");
+      if (!this.atSym("}")) this.err("do block: expected '}' after the result expression");
+    }
+    this.expectSym("}");
+    if (!result) this.err("do block needs a result expression", start);
+
+    let out: Expr = result;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i]!;
+      if (it.kind === "bind") {
+        const inferred: TypeExpr = { k: "TVar", name: "_", span: it.span };
+        const fn: Expr = {
+          k: "Lam",
+          params: [{ name: it.name, type: inferred, span: it.span }],
+          body: out,
+          span: { start: it.span.start, end: out.span.end, line: it.span.line, col: it.span.col, file: this.file },
+        };
+        out = {
+          k: "Binary", op: ">>=", l: it.value, r: fn,
+          span: { start: it.value.span.start, end: out.span.end, line: it.value.span.line, col: it.value.span.col, file: this.file },
+        };
+      } else {
+        out = {
+          k: "Let", name: it.name, mut: false, ann: it.ann, value: it.value, body: out,
+          span: { start: it.span.start, end: out.span.end, line: it.span.line, col: it.span.col, file: this.file },
+        };
+      }
+    }
+    return out;
+  }
+
   parseFnSig(): FnSig {
     const start = this.tok;
     const nameTok = this.tok;
@@ -570,6 +631,31 @@ export class Parser {
       const right = this.parseExpr(prec + 1);
       left = { k: "Binary", op, l: left, r: right, span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file } };
     }
+
+    if (minPrec === 0) {
+      // `m >>= f` is right-associative and binds looser than arithmetic.
+      if (this.atSym(">>=")) {
+        this.next();
+        const right = this.parseExpr(0);
+        left = {
+          k: "Binary", op: ">>=", l: left, r: right,
+          span: { start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file: this.file },
+        };
+      } else if (this.atSym("=") || this.atSym("+=") || this.atSym("-=") || this.atSym("*=") || this.atSym("/=")) {
+        const op = this.next().value as "=" | "+=" | "-=" | "*=" | "/=";
+        const value = this.parseExpr(0);
+        left = {
+          k: "Assign", target: left, op, value,
+          span: { start: left.span.start, end: value.span.end, line: left.span.line, col: left.span.col, file: this.file },
+        };
+      } else if (this.atSym("++") || this.atSym("--")) {
+        const op = this.next().value as "++" | "--";
+        left = {
+          k: "Assign", target: left, op,
+          span: { start: left.span.start, end: this.toks[this.pos - 1]!.end, line: left.span.line, col: left.span.col, file: this.file },
+        };
+      }
+    }
     return left;
   }
 
@@ -622,6 +708,7 @@ export class Parser {
     if (this.atKw("if")) return this.parseIf();
     if (this.atKw("match")) return this.parseMatch();
     if (this.atKw("handle")) return this.parseHandle();
+    if (this.atKw("do")) return this.parseDo();
     if (this.atKw("html")) return this.parseHtml();
 
     // `{ a: 1 }` is a record literal; `{ expr }` is a block.

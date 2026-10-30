@@ -919,6 +919,7 @@ export class Infer {
   resolveType(te: TypeExpr, params: Map<string, Type>): Type {
     switch (te.k) {
       case "TVar": {
+        if (te.name === "_") return fresh(0);
         if (params.has(te.name)) return params.get(te.name)!;
         // Lowercase names in type position are type variables, but only if they
         // were declared (`fn f<a>(x: a)`). Otherwise `fn f() -> str` would
@@ -1122,7 +1123,16 @@ export class Infer {
           return { ty: tt.items[idx]!, place: target.place, eff: target.eff };
         }
         if (tt.k === "con" && tt.name === "Cell") {
-          this.fail(`Cell has no field '${e.name}' (use .get() or .set(value))`, e.span);
+          if (e.name === "value") {
+            // `cell.value` is sugar for CellOps.get: reading a cell needs Client.
+            const elem = tt.args[0] ?? fresh(0);
+            return {
+              ty: elem,
+              place: joinPlace(target.place, "client"),
+              eff: { labels: new Set(["Client"]) },
+            };
+          }
+          this.fail(`Cell has no field '${e.name}' (use .value, .get(), .set(value) or .update(fn))`, e.span);
         }
         const t = prune(target.ty);
         let ty: Type;
@@ -1204,6 +1214,8 @@ export class Infer {
       }
 
       case "Handle": return this.inferHandle(e);
+
+      case "Assign": return this.inferAssign(e);
 
       case "Block": {
         const saved = this.env;
@@ -1400,10 +1412,68 @@ export class Infer {
     });
   }
 
+  /** `cell.value = e`, `cell += e`, `cell++` — sugar over CellOps get/set. */
+  private inferAssign(e: Expr & { k: "Assign" }): ResInfo {
+    const target = e.target;
+    const isValue = target.k === "Field" && target.name === "value";
+    const cellExpr = isValue ? (target as Expr & { k: "Field" }).target : target;
+    const cell = this.infer(cellExpr);
+    const ct = prune(cell.ty);
+    if (!(ct.k === "con" && ct.name === "Cell")) {
+      this.fail(
+        isValue
+          ? `assignment target must be a Cell, but this is ${typeStr(ct)}`
+          : `assignment target must be a Cell, but this is ${typeStr(ct)} (write cells with \`cell.value = …\`)`,
+        target.span,
+      );
+    }
+    const elem = ct.args[0]!;
+    // Record the read type so codegen can pick Int division for `/=` and `++`.
+    this.mod.info.set(target, {
+      ty: isValue ? elem : ct,
+      place: joinPlace(cell.place, "client"),
+      eff: { labels: new Set(["Client"]) },
+    });
+
+    let value: ResInfo | null = null;
+    if (e.op === "++" || e.op === "--") {
+      this.unifyArg(elem, INT, e.span, `cell ${e.op} expects an Int cell`);
+    } else {
+      value = this.infer(e.value!);
+      if (e.op === "=") this.unifyArg(value.ty, elem, e.value!.span, "cell value");
+      else this.checkCompound(elem, value.ty, e.op, e.value!.span);
+    }
+
+    return {
+      ty: UNIT,
+      place: joinPlace(value?.place ?? "neutral", "client"),
+      eff: mergeEff(value?.eff ?? emptyEff(), { labels: new Set(["Client"]) }),
+    };
+  }
+
+  private checkCompound(elem: Type, value: Type, op: string, span: { line: number; col: number; file?: string }) {
+    const t = prune(elem);
+    const name = t.k === "con" ? t.name : "";
+    if (op === "+=" && (name === "Str" || name === "Float")) {
+      this.unifyArg(value, name === "Str" ? STR : FLOAT, span, `cell ${op} on ${name}`);
+      return;
+    }
+    if (name === "Float") {
+      this.unifyArg(value, FLOAT, span, `cell ${op} on Float`);
+      return;
+    }
+    if (t.k === "var") this.unifyArg(t, INT, span, `cell ${op} expects an Int cell`);
+    if (name === "Int" || t.k === "var") {
+      this.unifyArg(value, INT, span, `cell ${op} expects Int`);
+      return;
+    }
+    this.fail(`cell ${op} needs an Int or Float cell, got ${typeStr(elem)}`, span);
+  }
+
   inferApp(e: Expr & { k: "App" }): ResInfo {
     // Method-call syntax: `receiver.method(args)` dispatches to a trait method
     // when the receiver is not a record with a field of that name. Cell.get /
-    // Cell.set are just `CellOps` methods under this rule — no compiler special
+    // Cell.set are just `CellOps` methods under this rule - no compiler special
     // case and no hardcoded method names.
     {
       const qn0 = e.fn.k === "Field" ? this.qualName(e.fn.target) : null;
@@ -1711,6 +1781,13 @@ export class Infer {
   }
 
   inferBinary(e: Expr & { k: "Binary" }): ResInfo {
+    if (e.op === ">>=") {
+      const monad = this.mod.traits.get("Monad");
+      if (!monad) this.fail("operator '>>=' needs the Monad trait: import std::monad::{Monad}", e.span);
+      const bind = monad.methods.get("bind");
+      if (!bind) this.fail("trait Monad has no 'bind' method", e.span);
+      return this.inferTraitCall("Monad", "bind", bind.ty, [e.l, e.r], e);
+    }
     const l = this.infer(e.l);
     const r = this.infer(e.r);
     const op = e.op;
@@ -1945,6 +2022,10 @@ export function forEachExpr(e: Expr, fn: (e: Expr) => void): void {
     case "Tuple": case "List": for (const i of e.items) forEachExpr(i, fn); return;
     case "Ctor": for (const a of e.args) forEachExpr(a, fn); return;
     case "Binary": forEachExpr(e.l, fn); forEachExpr(e.r, fn); return;
+    case "Assign":
+      forEachExpr(e.target, fn);
+      if (e.value) forEachExpr(e.value, fn);
+      return;
     case "Unary": forEachExpr(e.e, fn); return;
     case "Html": for (const n of e.nodes) forEachHtmlExpr(n, fn); return;
     case "Handle":

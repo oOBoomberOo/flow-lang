@@ -604,6 +604,12 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
       return { ...e, items: e.items.map((i) => rwExpr(i, scope, values, types)) };
     case "Binary":
       return { ...e, l: rwExpr(e.l, scope, values, types), r: rwExpr(e.r, scope, values, types) };
+    case "Assign":
+      return {
+        ...e,
+        target: rwExpr(e.target, scope, values, types),
+        ...(e.value ? { value: rwExpr(e.value, scope, values, types) } : {}),
+      };
     case "Unary":
       return { ...e, e: rwExpr(e.e, scope, values, types) };
     case "Html":

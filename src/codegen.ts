@@ -475,6 +475,12 @@ export class Codegen {
       case "Record":
         return `({ ${e.fields.map((f) => `${ev(f.name)}: ${this.val(f.value, side, ctxHome, env)}`).join(", ")} })`;
       case "Field":
+        if (e.name === "value") {
+          const targetType = prune(this.mod.info.get(e.target)?.ty ?? { k: "var", id: -1, level: 0 });
+          if (targetType.k === "con" && targetType.name === "Cell") {
+            return `R.ffiCall("__flow.get", [${this.emitExpr(e.target, side, ctxHome, env)}])`;
+          }
+        }
         if (/^\d+$/.test(e.name)) return `${this.emitExpr(e.target, side, ctxHome, env)}[${e.name}]`;
         return `R.v(${this.emitExpr(e.target, side, ctxHome, env)}).${e.name}`;
       case "Tuple": return `[${e.items.map((i) => this.val(i, side, ctxHome, env)).join(", ")}]`;
@@ -485,6 +491,7 @@ export class Codegen {
         return e.op === "not" || e.op === "!" ? `(!${this.val(e.e, side, ctxHome, env)})` : `(-${this.val(e.e, side, ctxHome, env)})`;
       case "Html": return this.emitHtml(e.nodes, side, ctxHome, env);
       case "Handle": return this.emitHandle(e, side, ctxHome, env);
+      case "Assign": return this.emitAssign(e, side, ctxHome, env);
       case "Block": return this.emitBlock(e, side, ctxHome, env);
     }
   }
@@ -554,6 +561,36 @@ export class Codegen {
 
     const asyncKw = this.hasCallCut(e.body) ? "async " : "";
     return `R.withEffect(${ev(e.effect)}, { ${ops} }, ${asyncKw}() => ${this.emitExpr(e.body, side, ctxHome, env)})`;
+  }
+
+  /** `cell.value = e`, `cell += e`, `cell++` compiled to host get/set. */
+  private emitAssign(
+    e: Expr & { k: "Assign" },
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string {
+    const target = e.target;
+    const isValue = target.k === "Field" && target.name === "value";
+    const cellExpr = isValue ? (target as Expr & { k: "Field" }).target : target;
+    const cellType = prune(this.mod.info.get(cellExpr)?.ty ?? { k: "var", id: -1, level: 0 });
+    if (!(cellType.k === "con" && cellType.name === "Cell")) {
+      this.fail("assignment target must be a Cell", target.span);
+    }
+    const cell = this.emitExpr(cellExpr, side, ctxHome, env);
+    const get = `R.ffiCall("__flow.get", [${cell}])`;
+    if (e.op === "=") {
+      return `R.ffiCall("__flow.set", [${cell}, ${this.val(e.value!, side, ctxHome, env)}])`;
+    }
+    if (e.op === "++" || e.op === "--") {
+      return `R.ffiCall("__flow.set", [${cell}, (${get} ${e.op === "++" ? "+" : "-"} 1)])`;
+    }
+    const value = this.val(e.value!, side, ctxHome, env);
+    const elem = cellType.args[0] ?? { k: "var", id: -1, level: 0 };
+    if (e.op === "/=" && elem.k === "con" && elem.name === "Int") {
+      return `R.ffiCall("__flow.set", [${cell}, R.ffiCall("__flow.divInt", [${get}, ${value}])])`;
+    }
+    return `R.ffiCall("__flow.set", [${cell}, (${get} ${e.op[0]} ${value})])`;
   }
 
   /** An algebraic operation handler: a generator that also receives `resume`. */
@@ -696,6 +733,11 @@ export class Codegen {
   }
 
   private emitBinary(e: Expr & { k: "Binary" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    if (e.op === ">>=") {
+      const choice = this.mod.implChoices.get(e);
+      if (!choice) this.fail("internal: '>>=' was not resolved to a Monad instance", e.span);
+      return `${choice.mangled}(${this.val(e.l, side, ctxHome, env)}, ${this.emitExpr(e.r, side, ctxHome, env)})`;
+    }
     const l = this.val(e.l, side, ctxHome, env);
     const r = this.val(e.r, side, ctxHome, env);
     // Equality is a std-level primitive now: the host provides it through the FFI.
@@ -913,6 +955,7 @@ export function childExprs(e: Expr): Expr[] {
     case "Unary": return [e.e];
     case "Html": return htmlHoles(e.nodes);
     case "Handle": return [...e.ops.map((op) => op.fn), e.body];
+    case "Assign": return e.value ? [e.target, e.value] : [e.target];
     case "Block": return [
       ...e.stmts.map((s) => (s.k === "LetStmt" ? s.value : s.e)),
       ...(e.value ? [e.value] : []),

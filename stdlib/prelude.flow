@@ -134,11 +134,13 @@ fn makeCell<a>(init: a) -> Cell<a> { host_cell(init) }
 pub trait CellOps<a> {
   fn get(c: Cell<a>) -> a ! Client
   fn set(c: Cell<a>, value: a) -> Unit ! Client
+  fn update(c: Cell<a>, f: (a) -> a) -> Unit ! Client
 }
 
 impl CellOps<a> for Cell<a> {
   fn get(c: Cell<a>) -> a ! Client { host_get(c) }
   fn set(c: Cell<a>, value: a) -> Unit ! Client { host_set(c, value) }
+  fn update(c: Cell<a>, f: (a) -> a) -> Unit ! Client { host_set(c, f(host_get(c))) }
 }
 
 provide Server with {

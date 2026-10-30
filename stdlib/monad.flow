@@ -1,0 +1,51 @@
+// std::monad — a small Monad type class for Option and List.
+//
+// `>>=` and `do { x <- m; … }` desugar to `Monad.bind`, so importing this module
+// is enough to use the sugar:
+//
+//   use std::monad::{Monad}
+//   Some(2) >>= fn(x) { Some(x + 1) }
+//   do { x <- Some(2); y <- Some(3); Some(x + y) }
+
+pub trait Monad<f> {
+  fn bind<a, b>(value: f<a>, k: (a) -> f<b>) -> f<b>
+  fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b>
+}
+
+impl Monad for Option {
+  fn bind<a, b>(value: Option<a>, k: (a) -> Option<b>) -> Option<b> {
+    match value {
+      None => None,
+      Some(x) => k(x),
+    }
+  }
+
+  fn map<a, b>(value: Option<a>, mapper: (a) -> b) -> Option<b> {
+    match value {
+      None => None,
+      Some(x) => Some(mapper(x)),
+    }
+  }
+}
+
+impl Monad for List {
+  fn bind<a, b>(value: List<a>, k: (a) -> List<b>) -> List<b> {
+    match value {
+      [] => [],
+      [x, ..rest] => concat(k(x), bind(rest, k)),
+    }
+  }
+
+  fn map<a, b>(value: List<a>, mapper: (a) -> b) -> List<b> {
+    match value {
+      [] => [],
+      [x, ..rest] => concat([mapper(x)], map(rest, mapper)),
+    }
+  }
+}
+
+/// `pure(value)` for an Option.
+pub fn some<a>(value: a) -> Option<a> { Some(value) }
+
+/// `pure(value)` for a List.
+pub fn one<a>(value: a) -> List<a> { [value] }

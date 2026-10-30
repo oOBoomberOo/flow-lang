@@ -21,11 +21,12 @@ export interface Token {
 export const KEYWORDS = new Set([
   "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl",
   "effect", "provide", "with", "use", "extern", "unsafe", "html", "pub", "return", "handle",
-  "algebraic",
+  "algebraic", "do",
   "for", "in", "true", "false", "and", "or", "not", "as",
 ]);
 
-const MULTI = ["=>", "->", "==", "!=", "<=", ">=", "&&", "||", "..", "::"];
+const THREE = [">>="];
+const MULTI = ["=>", "->", "==", "!=", "<=", ">=", "&&", "||", "..", "::", "+=", "-=", "*=", "/=", "++", "--", "<-"];
 const SINGLE = "(){}[],;:.=!|@+-*/%<>?&^_";
 
 export class FlowError extends Error {
@@ -129,10 +130,16 @@ export function lex(src: string, file = "<input>"): Token[] {
     }
 
     // multi-char symbols
-    const three = src.slice(i, i + 2);
-    if (MULTI.includes(three)) {
-      i += 2; col += 2;
+    const three = src.slice(i, i + 3);
+    if (THREE.includes(three)) {
+      i += 3; col += 3;
       push("sym", three, start, startLine, startCol);
+      continue;
+    }
+    const two = src.slice(i, i + 2);
+    if (MULTI.includes(two)) {
+      i += 2; col += 2;
+      push("sym", two, start, startLine, startCol);
       continue;
     }
     if (SINGLE.includes(c)) {

@@ -39,7 +39,7 @@ whitespace      = " " | "\t" | "\r" | "\n" ;
 
 ; Keywords (reserved, may not be used as identifiers)
 ;   fn let mut if else match type trait impl effect algebraic provide with
-;   use extern unsafe html handle pub return for in true false and or not
+;   use extern unsafe html handle do pub return for in true false and or not
 
 ; Multi-character symbols
 ;   =>  ->  ==  !=  <=  >=  &&  ||  ..  ::
@@ -229,7 +229,13 @@ let-statement   = 'let' [ 'mut' ] identifier [ ':' type ] '=' expr ';' ;
 ; 8. Expressions
 ; ---------------------------------------------------------------------
 
-expr            = binary-expr ;
+expr            = assignment-expr ;
+
+; Assignment is lowest and right-associative: reading/writing a Cell.
+assignment-expr = binary-expr [ assign-op expr ]          ; cell.value = e, cell += e
+                | binary-expr ( '++' | '--' )             ; cell++
+                | binary-expr ;
+assign-op       = '=' | '+=' | '-=' | '*=' | '/=' ;
 
 ; Precedence, lowest to highest:
 ;   1  or   ||
@@ -244,6 +250,7 @@ binary-expr     = unary-expr { binary-op binary-expr } ;
 
 binary-op       = 'or' | '||' | 'and' | '&&'
                 | '==' | '!=' | '<' | '<=' | '>' | '>='
+                | '>>='                                   ; Monad bind (right-assoc)
                 | '+' | '-' | '*' | '/' | '%' ;
 
 unary-expr      = ( '-' | 'not' | '!' ) unary-expr
@@ -258,6 +265,7 @@ primary-expr    = literal
                 | if-expr
                 | match-expr
                 | handle-expr
+                | do-expr
                 | html-expr
                 | element                                   ; bare markup is an expression
                 | '(' ')'                                   ; Unit
@@ -278,6 +286,9 @@ match-arm       = pattern [ 'if' expr ] '=>' expr [ ',' | ';' ] ;
 handle-expr     = 'handle' constructor 'with'
                   '{' { identifier '=' expr [ ',' | ';' ] } '}'
                   block ;
+
+; do { x <- m; let y = …; result } desugars to nested '>>=' applications.
+do-expr         = 'do' '{' { ( identifier '<-' expr ';' ) | let-statement } expr [ ';' ] '}' ;
 
 record-literal  = '{' identifier ':' expr { ',' identifier ':' expr } [ ',' ] '}' ;
 

@@ -132,7 +132,7 @@
         },
         {
           "name": "keyword.other.flow",
-          "match": "\\b(fn|let|mut|type|trait|impl|effect|algebraic|provide|with|use|as|pub|unsafe|extern|html|handle|and|or|not|in|for|resume)\\b"
+          "match": "\\b(fn|let|mut|type|trait|impl|effect|algebraic|provide|with|use|as|pub|unsafe|extern|html|handle|do|and|or|not|in|for|resume)\\b"
         },
         {
           "name": "constant.language.flow",
@@ -152,7 +152,7 @@
     },
     "operators": {
       "patterns": [
-        { "name": "keyword.operator.flow", "match": "->|=>|==|!=|<=|>=|&&|\\|\\||[-+*/%<>=!@|]" }
+        { "name": "keyword.operator.flow", "match": ">>=|->|=>|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|\\+\\+|--|<-|[-+*/%<>=!@|]" }
       ]
     }
   }

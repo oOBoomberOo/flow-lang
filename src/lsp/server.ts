@@ -261,6 +261,7 @@ function collectLocal(d: unknown, out: Local[], file: string, text: string) {
       case "App": visit(e.fn); e.args.forEach(visit); return;
       case "If": visit(e.cond); visit(e.then); visit(e.else); return;
       case "Binary": visit(e.l); visit(e.r); return;
+      case "Assign": visit(e.target); if (e.value) visit(e.value); return;
       case "Unary": visit(e.e); return;
       case "Tuple": case "List": e.items.forEach(visit); return;
       case "Ctor": e.args.forEach(visit); return;
@@ -414,7 +415,7 @@ function semanticTokens(uri: string): { data: number[] } {
 const KEYWORDS = [
   "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect", "algebraic",
   "provide", "with", "use", "pub", "unsafe", "extern", "html", "true", "false",
-  "and", "or", "not", "handle",
+  "and", "or", "not", "handle", "do",
 ];
 
 const HTML_TAGS = [
@@ -478,6 +479,7 @@ const KEYWORD_SNIPPETS: Record<string, string> = {
   provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
   handle: "handle ${1:Effect} with {\n\t${2:op} = fn(${3}) -> ${4:Type} { ${0} }\n} {\n\t${5}\n}",
   resume: "resume(${1:value})",
+  do: "do {\n\t${1:x} <- ${2:monad};\n\t${0:result}\n}",
   unsafe: "unsafe extern js fn ${1:name}(${2}) -> ${3:Type} = \"${4:Math.floor}\"",
   use: "use ${1:pkg}::${2:module}::{${3:name}}",
 };
@@ -735,6 +737,7 @@ function inlayHints(file: string): unknown[] {
       case "If": walk(n.cond); walk(n.then); walk(n.else); return;
       case "Match": walk(n.scrut); for (const a2 of (n.arms as unknown[]) ?? []) walk((a2 as { body: unknown }).body); return;
       case "Binary": walk(n.l); walk(n.r); return;
+      case "Assign": walk(n.target); if (n.value) walk(n.value); return;
       case "Unary": walk(n.e); return;
       case "Tuple": case "List": for (const x of (n.items as unknown[]) ?? []) walk(x); return;
       case "Ctor": for (const x of (n.args as unknown[]) ?? []) walk(x); return;

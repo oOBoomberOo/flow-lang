@@ -119,7 +119,7 @@ imports take precedence over the prelude.
 |---|---|
 | types | `Option<a> = None \| Some(a)` - a plain ADT declared in Flow, not a compiler builtin |
 | effects | `Server`, `Client`, `Store` - declared **and provided** here, not by the compiler; the runtime only exposes raw host primitives |
-| cells | `CellOps.get` / `CellOps.set` - std trait methods over the host's `__flow.get` / `__flow.set` primitives, declaring the `Client` effect |
+| cells | `CellOps.get` / `CellOps.set` / `CellOps.update` - std trait methods over the host's `__flow.get` / `__flow.set` primitives, declaring the `Client` effect. Source sugar: `cell.value`, `cell.value = e`, `cell += e`, `cell++` |
 | lists | `len`, `isEmpty`, `push`, `head`, `tail`, `concat`, `reverse` |
 | strings | `str`, `trim`, `upper`, `lower`, `split`, `replace`, `contains`, `join`, `chars`, `strLen` |
 | numbers | `int`, `float`, `eq`, `neq` |
@@ -266,6 +266,31 @@ recover(99, fn() -> Int { fail("soft") })                  // 99
 | `attempt` | `(a, () -> a ! {Exn}) -> a` — abort with the fallback |
 | `recoverWith` | `((Str) -> a, () -> a ! {Exn}) -> a` |
 | `recover` | `(a, () -> a ! {Exn}) -> a` — resume at the failure point |
+
+### `std::monad` — bind/do for Option and List
+
+```flow
+use std::monad::{Monad}
+```
+
+| member | type |
+|---|---|
+| `Monad<f>.bind` | `(f<a>, (a) -> f<b>) -> f<b>` |
+| `Monad<f>.map` | `(f<a>, (a) -> b) -> f<b>` |
+| instances | `impl Monad for Option`, `impl Monad for List` |
+| `some` / `one` | `pure` helpers: `(a) -> Option<a>` / `(a) -> List<a>` |
+
+Sugar:
+
+```flow
+let o = Some(2) >>= fn(x: Int) -> Option<Int> { Some(x + 1) };
+let l = do { x <- [1, 2]; y <- [10, 20]; [x + y] };   // [11, 21, 12, 22]
+Some(2).map(fn(x: Int) -> Int { x + 1 })              // Some(3)
+```
+
+`do { … }` desugars to nested `>>=`; `let` bindings inside stay ordinary lets. The
+instance is chosen from the first bound value, so mixing `Option` and `List` is a
+type error. Importing `Monad` links the instances.
 
 ### `std::ref` — a neutral mutable box
 
