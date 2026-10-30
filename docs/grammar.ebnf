@@ -1,0 +1,303 @@
+; =====================================================================
+; Flow — grammar
+; Version 0.1.0
+;
+; This file is normative: it is the grammar the implementation in src/
+; accepts. Comments use ';'. EBNF conventions:
+;   { x }     zero or more
+;   [ x ]     optional
+;   x | y     alternative
+;   'x'       terminal
+; =====================================================================
+
+
+; ---------------------------------------------------------------------
+; 1. Lexical grammar
+; ---------------------------------------------------------------------
+
+letter          = "A".."Z" | "a".."z" ;
+digit           = "0".."9" ;
+ident-char      = letter | digit | "_" | "'" ;
+
+lower           = "a".."z" | "_" ;
+upper           = "A".."Z" ;
+
+identifier      = lower { ident-char } ;            ; value names, type variables
+constructor     = upper { ident-char } ;            ; type names, constructors, components
+
+integer         = digit { digit } ;
+float           = digit { digit } "." digit { digit } ;
+
+string          = '"' { string-char } '"' ;
+string-char     = any character except '"' | newline
+                | "\" ( '"' | "\" | "n" | "t" | "r" | "0" ) ;
+
+line-comment    = "//" { any character except newline } newline ;
+block-comment   = "/*" { any character | block-comment } "*/" ;
+
+whitespace      = " " | "\t" | "\r" | "\n" ;
+
+; Keywords (reserved, may not be used as identifiers)
+;   fn let mut if else match type trait impl effect provide with
+;   use extern html pub return for in true false and or not
+
+; Reserved but rejected with an explicit error in 0.1:
+;   use extern            (no modules, no native escapes)
+
+; Multi-character symbols
+;   =>  ->  ==  !=  <=  >=  &&  ||  ..  ::
+
+; Single-character symbols
+;   (  )  {  }  [  ]  ,  ;  :  .  =  !  |  @  +  -  *  /  %  <  >  ?  &  ^  _
+
+
+; ---------------------------------------------------------------------
+; 2. Program
+; ---------------------------------------------------------------------
+
+program         = { declaration } EOF ;
+
+declaration     = use-decl
+                | [ 'pub' ] type-decl
+                | [ 'pub' ] trait-decl
+                | impl-decl
+                | [ 'pub' ] effect-decl
+                | provide-decl
+                | [ 'pub' ] fn-decl ;
+
+; `pub` marks a declaration as exported from its module. Without it the name is
+; private to the file and importing it is an error.
+
+; ---------------------------------------------------------------------
+; 3a. Modules and imports
+; ---------------------------------------------------------------------
+
+; A module is one file. Its id is `package::path::to::file` (directories become
+; `::` segments when importing).
+;
+; Resolution rule for the last segment: when the import is braced (`::{a, b}`) or
+; globbed (`::*`) the path is the module and the braces list the names. Otherwise
+; the trailing segment is the imported name — `use std::list::map` imports `map`
+; from `std::list`, and `use std::list::map as m` renames it.
+use-decl        = 'use' use-path [ '::' ( import-list | '*' ) ] [ ';' ] ;
+
+use-path        = path-segment { '::' path-segment } [ 'as' identifier ] ;
+path-segment    = word { '-' word } ;                ; `std`, `flow-charts`, `html`, …
+
+import-list     = '{' import-item { ',' import-item } [ ',' ] '}' ;
+import-item     = name [ 'as' identifier ] ;
+
+name            = identifier | constructor ;
+
+; `use` binds only exported (`pub`) declarations. Importing an ADT also brings
+; its constructors into scope under their own names. Glob imports are parsed and
+; rejected — be explicit.
+
+
+; ---------------------------------------------------------------------
+; 3. Type declarations
+; ---------------------------------------------------------------------
+
+type-decl       = 'type' constructor [ type-params ] '=' type-body [ ';' ] ;
+
+; A right-hand side that is a variant list denotes an algebraic data type.
+; A variant list must be unambiguous: either a leading '|', or a constructor
+; followed by a payload '(' or another '|'. Anything else is a transparent
+; alias, so `type Id = Int` is an alias and `type Color = | Red` is a
+; single-variant ADT.
+type-body       = [ '|' ] variant { '|' variant }      ; ADT
+                | record-type-fields                   ; record type
+                | type                                 ; alias
+
+variant         = constructor [ '(' [ type { ',' type } ] ')' ] ;
+
+type-params     = '<' type-param { ',' type-param } '>' ;
+type-param      = identifier | constructor ;
+
+record-type-fields
+                = '{' [ field { ',' field } [ ',' ] ] '}' ;
+field           = identifier ':' type ;
+
+
+; ---------------------------------------------------------------------
+; 4. Types
+; ---------------------------------------------------------------------
+
+type            = type-atom [ '@' placement ] [ '->' type ] ;
+
+placement       = 'client' | 'server' ;
+
+type-atom       = constructor [ '<' type { ',' type } '>' ]   ; named / generic
+                | '(' ')'                                      ; Unit
+                | '(' type { ',' type } ')'                    ; tuple
+                | '{' record-type-fields-loose '}'             ; record type
+                | type-param                                   ; type variable
+                ;
+
+record-type-fields-loose
+                = [ field { ',' field } [ ',' ] ] ;
+
+; Effects are attached to function types and signatures.
+effect-row      = '{' [ effect-list ] '}' | constructor ;
+effect-list     = constructor { ',' constructor } | identifier ;
+
+
+; ---------------------------------------------------------------------
+; 5. Traits, effects, provides
+; ---------------------------------------------------------------------
+
+trait-decl      = 'trait' constructor [ type-params ] '{' { fn-signature [ ';' ] } '}' ;
+
+impl-decl       = 'impl' constructor [ type-args ] 'for' type '{' { impl-method } '}' ;
+impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
+
+effect-decl     = 'effect' constructor '{' { fn-signature [ ';' ] } '}' ;
+
+provide-decl    = 'provide' constructor [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
+provide-op      = identifier '=' expr [ ',' | ';' ] ;
+
+fn-signature    = identifier [ type-params ] '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] ;
+
+type-args       = '<' type { ',' type } '>' ;
+
+
+; ---------------------------------------------------------------------
+; 6. Functions
+; ---------------------------------------------------------------------
+
+fn-decl         = [ 'pub' ] 'fn' identifier [ type-params ]
+                  '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
+
+; 'pub' is accepted and currently has no effect (a program is one file).
+
+param-list      = param { ',' param } ;
+param           = identifier ':' type ;
+
+
+; ---------------------------------------------------------------------
+; 7. Blocks and statements
+; ---------------------------------------------------------------------
+
+; A block's value is its final expression, if it is not followed by ';'.
+block           = '{' { statement } [ expr ] '}' ;
+
+statement       = let-statement | expr ';' ;
+
+let-statement   = 'let' [ 'mut' ] identifier [ ':' type ] '=' expr ';' ;
+
+; 'mut' is parsed and currently treated as 'let' (cells are the mutation
+; primitive; see docs/language.md §7).
+
+
+; ---------------------------------------------------------------------
+; 8. Expressions
+; ---------------------------------------------------------------------
+
+expr            = binary-expr ;
+
+; Precedence, lowest to highest:
+;   1  or   ||
+;   2  and  &&
+;   3  ==  !=  <  <=  >  >=
+;   4  +  -
+;   5  *  /  %
+;   6  unary -  not  !
+;   7  postfix   f(x)   r.field
+
+binary-expr     = unary-expr { binary-op binary-expr } ;
+
+binary-op       = 'or' | '||' | 'and' | '&&'
+                | '==' | '!=' | '<' | '<=' | '>' | '>='
+                | '+' | '-' | '*' | '/' | '%' ;
+
+unary-expr      = ( '-' | 'not' | '!' ) unary-expr
+                | postfix-expr ;
+
+postfix-expr    = primary { '(' [ expr { ',' expr } ] ')' | '.' ( identifier | integer ) } ;
+
+primary-expr    = literal
+                | identifier
+                | constructor [ '(' [ expr { ',' expr } ] ')' ]
+                | lambda
+                | if-expr
+                | match-expr
+                | html-expr
+                | element                                   ; bare markup is an expression
+                | '(' ')'                                   ; Unit
+                | '(' expr ')'                              ; grouping
+                | '(' expr { ',' expr } ')'                 ; tuple
+                | '[' [ expr { ',' expr } [ ',' ] ] ']'     ; list
+                | record-literal
+                | block ;
+
+lambda          = 'fn' '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
+
+if-expr         = 'if' '(' expr ')' block [ 'else' ( block | if-expr ) ] ;
+
+match-expr      = 'match' expr '{' { match-arm } '}' ;
+match-arm       = pattern [ 'if' expr ] '=>' expr [ ',' | ';' ] ;
+
+record-literal  = '{' identifier ':' expr { ',' identifier ':' expr } [ ',' ] '}' ;
+
+; Disambiguation: '{' identifier ':' ... is a record literal;
+; any other '{' opens a block.
+
+literal         = integer | float | string | 'true' | 'false' ;
+
+
+; ---------------------------------------------------------------------
+; 9. Patterns
+; ---------------------------------------------------------------------
+
+pattern         = '_'                                       ; wildcard
+                | identifier                                ; binder
+                | literal
+                | constructor [ '(' [ pattern { ',' pattern } ] ')' ]
+                | '(' pattern { ',' pattern } ')'           ; tuple
+                | '{' identifier ':' pattern { ',' identifier ':' pattern } '}'
+                | '[' [ pattern { ',' pattern } ] [ ',' '..' identifier ] ']' ;
+
+
+; ---------------------------------------------------------------------
+; 10. HTML
+; ---------------------------------------------------------------------
+
+; Native markup. Element tags are lower-case; component tags are upper-case
+; and are desugared to a call with a single record argument.
+html-expr       = 'html' '{' { html-child } '}' ;
+
+html-child      = element
+                | component
+                | '{' expr '}'                              ; hole (interpolation)
+                | text ;                                    ; raw run between markup
+
+element         = '<' tag-name { attribute } ( '/>' | '>' { html-child } '</' tag-name '>' ) ;
+component       = '<' constructor { attribute } ( '/>' | '>' { html-child } '</' constructor '>' ) ;
+
+tag-name        = identifier ;
+
+attribute       = identifier [ '=' ( string | '{' expr '}' ) ] ;
+
+; Attributes named on<Event> bind a listener: onClick, onInput, onSubmit, ...
+; A component call `<Card title={"x"}>…</Card>` becomes
+;   Card({ title: "x", children: <html> })
+; where <html> is the fragment formed by the children.
+
+text            = { any character except '<' | '{' | '}' } ;
+
+
+; ---------------------------------------------------------------------
+; 11. Complete example
+; ---------------------------------------------------------------------
+
+;   effect Server { fn secret(name: Str) -> Str }
+;
+;   fn main() -> Html {
+;     let reveal = Client.state(false);
+;     html {
+;       <div class="card">
+;         <button onClick={fn(e: Event) { reveal.set(not reveal.get()) }}>{"go"}</button>
+;         {if (reveal.get()) { <p>{Server.secret("flag")}</p> } else { <p>{"no"}</p> }}
+;       </div>
+;     }
+;   }
