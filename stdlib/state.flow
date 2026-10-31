@@ -1,55 +1,61 @@
-// std::state — mutable state as an algebraic effect.
-//
-// `State` suspends at `get`/`put`; `withState`/`runState` install a handler that
-// keeps the current value in a local `Ref`, so the same code runs on the client
-// or the server.
+-- std::state — mutable state as an algebraic effect.
+--
+-- `State` suspends at `get`/`put`; `withState`/`runState` install a handler that
+-- keeps the current value in a local `Ref`, so the same code runs on the client
+-- or the server.
+import Ref (Ref, newRef)
 
-use std::ref::{Ref, newRef}
+algebraic effect State where
+  get :: () -> Int
+  put :: Int -> ()
 
-pub algebraic effect State {
-  fn get() -> Int
-  fn put(x: Int) -> Unit
-}
+get :: () -> Int ! State
+get () = State.get ()
 
-pub fn get() -> Int ! {State} { State.get() }
+put :: Int -> () ! State
+put x = State.put x
 
-pub fn put(x: Int) -> Unit ! {State} { State.put(x) }
+modify :: (Int -> Int) -> () ! State
+modify f = State.put (f (State.get ()))
 
-pub fn modify(f: (Int) -> Int) -> Unit ! {State} {
-  State.put(f(State.get()))
-}
+-- / Run `action` with an initial state and return only its result.
+withState :: Int -> (() -> a ! State) -> a
+withState init action = do
+  let
+    cell :: Ref Int
+    cell = newRef init
+  handle State with
+    get () = resume (cell.get ())
+    put x = do
+      cell.set x
+      resume ()
+  in action ()
 
-/// Run `action` with an initial state and return only its result.
-pub fn withState<a>(init: Int, action: () -> a ! {State}) -> a {
-  let cell: Ref<Int> = newRef(init);
-  handle State with {
-    get = fn() -> a { resume(cell.get()) },
-    put = fn(x: Int) -> a { cell.set(x); resume(()) }
-  } {
-    action()
-  }
-}
+-- / Run `action` and return both its result and the final state.
+runState :: Int -> (() -> a ! State) -> (a, Int)
+runState init action = do
+  let
+    cell :: Ref Int
+    cell = newRef init
+  let value =
+        handle State with
+          get () = resume (cell.get ())
+          put x = do
+            cell.set x
+            resume ()
+        in action ()
+  (value, cell.get ())
 
-/// Run `action` and return both its result and the final state.
-pub fn runState<a>(init: Int, action: () -> a ! {State}) -> (a, Int) {
-  let cell: Ref<Int> = newRef(init);
-  let value = handle State with {
-    get = fn() -> a { resume(cell.get()) },
-    put = fn(x: Int) -> a { cell.set(x); resume(()) }
-  } {
-    action()
-  };
-  (value, cell.get())
-}
-
-/// Run `action` and return only the final state.
-pub fn execState<a>(init: Int, action: () -> a ! {State}) -> Int {
-  let cell: Ref<Int> = newRef(init);
-  handle State with {
-    get = fn() -> a { resume(cell.get()) },
-    put = fn(x: Int) -> a { cell.set(x); resume(()) }
-  } {
-    action()
-  };
-  cell.get()
-}
+-- / Run `action` and return only the final state.
+execState :: Int -> (() -> a ! State) -> Int
+execState init action = do
+  let
+    cell :: Ref Int
+    cell = newRef init
+  handle State with
+    get () = resume (cell.get ())
+    put x = do
+      cell.set x
+      resume ()
+  in action ()
+  cell.get ()

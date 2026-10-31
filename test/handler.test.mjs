@@ -18,36 +18,36 @@ test("handler: local providers compile and nest", () => {
 });
 
 test("handler: the handled effect is removed from the row", () => {
-  const src = `
-effect Local @ client { fn ping() -> Str }
+  const src = `effect Local @ client where
+  ping :: () -> Str
 
-fn f() -> Str ! {} {
-  handle Local with {
-    ping = fn() -> Str { "ok" }
-  } {
-    Local.ping()
-  }
-}
+f :: () -> Str
+f () =
+  handle Local with
+    ping () = "ok"
+  in Local.ping ()
 
-fn main() -> Html { html { <p>{f()}</p> } }
+main :: Html
+main = <p>{f ()}</p>
 `;
   const r = compileSource(src, "handler.flow");
   assert.deepEqual(r.diagnostics, []);
 });
 
 test("handler: a complete local handler can replace a global provider", () => {
-  const src = `
-effect Global @ client { fn read() -> Str }
-provide Global with { read = fn() -> Str { "global" } }
+  const src = `effect Global @ client where
+  read :: () -> Str
 
-fn main() -> Html {
-  let x = handle Global with {
-    read = fn() -> Str { "local" }
-  } {
-    Global.read()
-  };
-  html { <p>{x}</p> }
-}
+provide Global where
+  read () = "global"
+
+main :: Html
+main = do
+  let x =
+        handle Global with
+          read () = "local"
+        in Global.read ()
+  <p>{x}</p>
 `;
   const r = compileSource(src, "handler.flow");
   assert.deepEqual(r.diagnostics, []);
@@ -55,36 +55,32 @@ fn main() -> Html {
 });
 
 test("handler: missing operations are rejected", () => {
-  const src = `
-effect Two @ client {
-  fn a() -> Int
-  fn b() -> Int
-}
+  const src = `effect Two @ client where
+  a :: () -> Int
+  b :: () -> Int
 
-fn main() -> Html {
-  let x = handle Two with {
-    a = fn() -> Int { 1 }
-  } {
-    Two.a()
-  };
-  html { <p>{str(x)}</p> }
-}
+main :: Html
+main = do
+  let x =
+        handle Two with
+          a () = 1
+        in Two.a ()
+  <p>{str x}</p>
 `;
   assert.throws(() => compileSource(src, "handler.flow"), /missing operation\(s\) b/);
 });
 
 test("handler: an operation signature mismatch is rejected", () => {
-  const src = `
-effect Local @ client { fn ping() -> Str }
+  const src = `effect Local @ client where
+  ping :: () -> Str
 
-fn main() -> Html {
-  let x = handle Local with {
-    ping = fn() -> Int { 1 }
-  } {
-    Local.ping()
-  };
-  html { <p>{str(x)}</p> }
-}
+main :: Html
+main = do
+  let x =
+        handle Local with
+          ping () = 1
+        in Local.ping ()
+  <p>{str x}</p>
 `;
   assert.throws(() => compileSource(src, "handler.flow"), /does not match its signature/);
 });

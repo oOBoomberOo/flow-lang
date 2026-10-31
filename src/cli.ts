@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileFile } from "./compile.ts";
+import { parse } from "./parser.ts";
+import { printProgram } from "./printer.ts";
+import { migrateSource } from "./migrate.ts";
 import { createHost } from "./host.ts";
 import { FlowError } from "./lexer.ts";
 import { install, add, verifyLock, readRegistry, registryDir } from "./pkg.ts";
@@ -87,6 +90,8 @@ export async function main(argv: string[]): Promise<void> {
       case "build": return build(rest, style, g.quiet);
       case "check": return check(rest, style, g.quiet);
       case "explain": return explain(rest, style);
+      case "fmt": return fmt(rest, style);
+      case "migrate": return migrate(rest, style);
       case "run": return await run(rest, style, g.quiet);
       case "watch": return await watch(rest, style, g.quiet);
       case "install": return cmdInstall(rest, style, g.quiet);
@@ -139,6 +144,8 @@ ${b("Commands:")}
   run       Type-check, build, and serve the app
   watch     Re-check or rebuild when source files change
   explain   Print inferred placement and boundary cuts
+  fmt       Format a file with the Flow pretty printer
+  migrate   Rewrite Rust-style Flow source into the Haskell-style syntax
   install   Resolve dependencies and vendor them
   add       Add a dependency from the registry
   verify    Verify installed packages against the lockfile
@@ -156,6 +163,19 @@ Run 'flow help <COMMAND>' for more information on a command.
 }
 
 const HELP: Record<string, string> = {
+  fmt: `Format a file. Writes the result back unless --check is given.
+
+Usage: flow fmt <file.flow> [--check]
+
+Options:
+      --check         Do not write; exit 1 if the file is not formatted
+  -h, --help          Print help`,
+  migrate: `Rewrite the old Rust-style syntax into the Haskell-style syntax.
+
+Usage: flow migrate <file.flow> [...] [--write]
+
+Without --write the result is printed to stdout.
+`,
   check: `Type-check a package or file.
 
 Usage: flow check [file.flow]
@@ -354,6 +374,57 @@ function compile(file: string, style: Style, verb: "check" | "compile") {
     return null;
   }
   return result;
+}
+
+/** Read a source file's format: module header, comments and declarations. */
+function formatFile(file: string, pkg?: string): string {
+  const src = fs.readFileSync(file, "utf8");
+  const program = parse(src, file, { recover: true });
+  const comments = new Map<number, string[]>();
+  let pending: string[] = [];
+  const declLines = new Set(program.decls.map((d) => d.span.line));
+  src.split(/\r?\n/).forEach((text, i) => {
+    const line = i + 1;
+    if (/^\s*--/.test(text)) { pending.push(text.replace(/^\s*-- ?/, "")); return; }
+    if (!text.trim()) return;
+    if (declLines.has(line)) {
+      if (pending.length) comments.set(line, pending);
+      pending = [];
+    } else if (/^\S/.test(text)) pending = [];
+  });
+  const moduleName = path.basename(file).replace(/\.flow$/, "").replace(/^./, (c) => c.toUpperCase());
+  return printProgram(program, { moduleName, comments });
+}
+
+function fmt(argv: string[], style: Style): void {
+  const checkOnly = argv.includes("--check");
+  const file = argv.find((a) => !a.startsWith("-"));
+  if (!file) { reportCliError(new FlowError("flow fmt needs a file"), style); return; }
+  const abs = path.resolve(file);
+  const out = formatFile(abs);
+  const current = fs.readFileSync(abs, "utf8");
+  if (checkOnly) {
+    if (out !== current) {
+      reportCliError(new FlowError(`${file} is not formatted`, { file: abs, code: "E_FMT" }), style);
+      return;
+    }
+    stdout(`${file} is formatted\n`);
+    return;
+  }
+  if (out !== current) fs.writeFileSync(abs, out);
+  stdout(`Formatted ${file}\n`);
+}
+
+function migrate(argv: string[], style: Style): void {
+  const write = argv.includes("--write");
+  const files = argv.filter((a) => !a.startsWith("-"));
+  if (!files.length) { reportCliError(new FlowError("flow migrate needs at least one file"), style); return; }
+  for (const file of files) {
+    const abs = path.resolve(file);
+    const out = migrateSource(fs.readFileSync(abs, "utf8"), abs, {});
+    if (write) { fs.writeFileSync(abs, out); stdout(`Migrated ${file}\n`); }
+    else stdout(out);
+  }
 }
 
 function check(argv: string[], style: Style, quiet: boolean): void {

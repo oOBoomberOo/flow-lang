@@ -75,31 +75,24 @@ const post = (host, sid, msg) => fetch(host.url + "/__flow/msg", {
   body: JSON.stringify({ sid, msg }),
 });
 
-const TIMER = `
-type IO<a> = () -> a
+const TIMER = `type IO a = () -> a
 
-effect Timer {
-  fn every(ms: Int, callback: IO<Unit>) -> IO<Unit>
-}
+effect Timer where
+  every :: Int -> IO () -> IO ()
 
-provide Timer with {
-  every = fn(ms: Int, callback: IO<Unit>) -> IO<Unit> {
-    let timer_id = unsafe_create_timer(callback, ms);
-    fn() { unsafe_remove_timer(timer_id) }
-  }
-}
+provide Timer where
+  every ms callback = do
+    let timer_id = unsafe_create_timer callback ms
+    \\() -> unsafe_remove_timer timer_id
 
-unsafe extern js fn unsafe_create_timer(callback: IO<Unit>, ms: Int) -> Int
-  = "window.setInterval"
-unsafe extern js fn unsafe_remove_timer(timer_id: Int)
-  = "window.clearInterval"
+foreign import js unsafe "window.setInterval" unsafe_create_timer :: IO () -> Int -> Int
 
-fn main() -> Html {
-  let cancel = Timer.every(1000, fn() {
-    Server.log("tick");
-  });
-  html { <div>{"Hello World!"}</div> }
-}
+foreign import js unsafe "window.clearInterval" unsafe_remove_timer :: Int -> ()
+
+main :: Html
+main = do
+  let cancel = Timer.every 1000 (\\() -> Server.log "tick")
+  <div>{"Hello World!"}</div>
 `;
 
 test("callback UX: the callback is hosted on the client and its server effect is a call cut", () => {
@@ -108,7 +101,7 @@ test("callback UX: the callback is hosted on the client and its server effect is
 
   // The callback value never crosses: it is emitted in the client bundle, where
   // the provider invokes it, and awaits a server call when it runs.
-  assert.match(result.client, /R\.op\("Timer", "every"\)\(R\.v\(1000\), R\.v\(\(async \(\) => \(await R\.call\("cut1", \{\}\)\)\)\)\)/);
+  assert.match(result.client, /R\.op\("Timer", "every"\)\(R\.v\(1000\), R\.v\(\(async \(_u\d+\) => \(await R\.call\("cut1", \{\}\)\)\)\)\)/);
   assert.doesNotMatch(result.client, /R\.serve\("cut1"/, "the client hosts the callback, not the cut");
   assert.match(result.client, /R\.provide\("Timer"/, "the provider runs on the client");
 
@@ -140,15 +133,14 @@ test("callback UX: the server half of the callback really runs", async () => {
 });
 
 test("callback UX: statements may cross individually inside one callback", () => {
-  const src = `
-fn main() -> Html {
-  let cb = fn() {
-    Client.log("on the client");
-    Server.log("on the server");
-  };
-  cb();
-  html { <p>{"x"}</p> }
-}
+  const src = `main :: Html
+main = do
+  let cb =
+        \\() -> do
+          Client.log "on the client"
+          Server.log "on the server"
+  cb ()
+  <p>{"x"}</p>
 `;
   const result = compileSource(src, "mix.flow");
   assert.equal(result.errors.length, 0);
@@ -163,15 +155,13 @@ fn main() -> Html {
 test("callback UX: a callback value that must cross still fails clearly", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-ux-err-"));
   const file = path.join(dir, "main.flow");
-  fs.writeFileSync(file, `
-fn make() -> () -> Int {
-  fn() { Server.now() }
-}
+  fs.writeFileSync(file, `make :: () -> () -> Int
+make () = \\() -> Server.now ()
 
-fn main() -> Html {
-  let f = make();
-  html { <p>{str(f())}</p> }
-}
+main :: Html
+main = do
+  let f = make ()
+  <p>{str (f ())}</p>
 `);
   try {
     assert.throws(() => compileFile(file), (e) => {

@@ -1,24 +1,24 @@
-// std::fn — the usual functional combinators, curry-friendly.
+-- std::fn — the usual functional combinators, curry-friendly.
+identity :: a -> a
+identity x = x
 
-pub fn identity<a>(x: a) -> a { x }
+constant :: a -> b -> a
+constant x _y = x
 
-pub fn constant<a, b>(x: a, _y: b) -> a { x }
+-- / Flip the two arguments of a binary function.
+flip :: (a -> b -> c) -> b -> a -> c
+flip f = \(y :: b) (x :: a) -> f x y
 
-/// Flip the two arguments of a binary function.
-pub fn flip<a, b, c>(f: (a, b) -> c) -> (b, a) -> c {
-  fn(y: b, x: a) -> c { f(x, y) }
-}
+-- / `compose(f, g)(x) = f(g(x))` — right-to-left, like Haskell's `(.)`.
+compose :: (b -> c) -> (a -> b) -> a -> c
+compose f g = \(x :: a) -> f (g x)
 
-/// `compose(f, g)(x) = f(g(x))` — right-to-left, like Haskell's `(.)`.
-pub fn compose<a, b, c>(f: (b) -> c, g: (a) -> b) -> (a) -> c {
-  fn(x: a) -> c { f(g(x)) }
-}
+-- / `pipe(f, g)(x) = g(f(x))` — left-to-right, matching `|>`.
+pipe :: (a -> b) -> (b -> c) -> a -> c
+pipe f g = \(x :: a) -> g (f x)
 
-/// `pipe(f, g)(x) = g(f(x))` — left-to-right, matching `|>`.
-pub fn pipe<a, b, c>(f: (a) -> b, g: (b) -> c) -> (a) -> c {
-  fn(x: a) -> c { g(f(x)) }
-}
+apply :: a -> (a -> b) -> b
+apply x f = f x
 
-pub fn apply<a, b>(x: a, f: (a) -> b) -> b { f(x) }
-
-pub fn applyTwice<a>(f: (a) -> a, x: a) -> a { f(f(x)) }
+applyTwice :: (a -> a) -> a -> a
+applyTwice f x = f (f x)

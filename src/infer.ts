@@ -18,7 +18,7 @@ import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
   cellOf, eventOf, typeStr, joinPlace, typePlace,
-  snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds,
+  snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
 } from "./types.ts";
 
 export interface ResInfo { ty: Type; place: Place; eff: Eff }
@@ -114,6 +114,8 @@ export interface Module {
   partialCalls: Set<object>;
   /** `resume` references inside algebraic handler operations */
   resumeVars: Set<object>;
+  /** references to top-level constants (`pi = 3.14`): evaluated by calling them */
+  constRefs: Set<object>;
 }
 
 // The language surface that used to be injected here now lives in
@@ -143,6 +145,15 @@ export class Infer {
   private failedNames = new Set<string>();
   /** type-variable id -> dictionary parameter name while checking a body */
   currentDicts = new Map<number, string>();
+  private uidCtor = 0;
+  /** the type a lambda argument is expected to have, so its parameters need no annotation */
+  private expectedFor = new Map<Expr, Type>();
+
+  /** Infer a call argument; a lambda learns its parameter types from the callee. */
+  private inferArg(a: Expr, expected: Type): ResInfo {
+    if (a.k === "Lam") this.expectedFor.set(a, expected);
+    return this.infer(a);
+  }
 
   constructor(file: string) {
     this.mod = {
@@ -154,6 +165,7 @@ export class Infer {
       errors: [],
       genCalls: new Set(),
       partialCalls: new Set(),
+      constRefs: new Set(),
       resumeVars: new Set(),
     };
   }
@@ -206,7 +218,8 @@ export class Infer {
     for (const d of prog.decls) if (d.k === "Adt") this.collect(() => this.registerCtors(d));
     for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.registerImpl(d));
     for (const d of prog.decls) if (d.k === "Fn") {
-      if (!this.collect(() => this.declareFn(d))) this.failedNames.add(d.name);
+      const ok = this.isInferredFn(d) ? this.collect(() => this.declareInferred(d)) : this.collect(() => this.declareFn(d));
+      if (!ok) this.failedNames.add(d.name);
     }
     for (const d of prog.decls) if (d.k === "Extern") {
       if (!this.collect(() => this.declareExtern(d))) this.failedNames.add(d.sig.name);
@@ -221,9 +234,21 @@ export class Infer {
     for (const d of prog.decls) if (d.k === "Provide") this.collect(() => this.registerProvide(d));
     this.applyProviderPlaces();
 
+    // Functions without a signature are inferred callee-first, so that each one
+    // is generalized before its callers instantiate it.
+    const groups = this.fnGroups(prog);
+    const generalized = new Set<string>();
     for (let pass = 0; pass < 8; pass++) {
       const before = this.placementFingerprint();
-      for (const d of prog.decls) if (d.k === "Fn") this.collect(() => this.checkFnBody(d));
+      for (const group of groups) {
+        for (const d of group) this.collect(() => this.checkFnBody(d));
+        for (const d of group) {
+          if (!this.isInferredFn(d) || generalized.has(d.name)) continue;
+          const info = this.mod.fns.get(d.name);
+          if (info) markGeneric(info.scheme);
+          generalized.add(d.name);
+        }
+      }
       for (const d of prog.decls) if (d.k === "Impl") this.collect(() => this.checkImplBodies(d));
       this.collect(() => this.checkProvides(prog));
       for (const d of prog.decls) if (d.k === "Provide") this.collect(() => this.registerProvide(d));
@@ -617,6 +642,7 @@ export class Infer {
       const traitMethod = traitInfo?.methods.get(m.name);
       if (traitMethod) {
         const before = snapshotSubst();
+        let keepTypes = false;
         try {
           // Split the impl's type parameters the same way dispatch does: the
           // impl target must be the trait method's receiver. Then the rest of
@@ -628,15 +654,22 @@ export class Infer {
                 d.span,
               );
             }
-            const tm = traitMethod.ty;
-            if (tm.k === "fun" && tm.params.length > 0) {
-              const receiver = traitInfo.ctorParams.size > 0
-                ? headConstructor(tm.params[0]!)
-                : tm.params[0]!;
-              unify(targetType, receiver);
+            // work on a fresh copy of the trait's method type so nothing leaks into it
+            const tmi = instantiate(traitMethod.ty, 0);
+            if (tmi.k === "fun") {
+              // the receiver is the first parameter that mentions the trait's type
+              // parameter; a method with none (`empty :: () -> a`) dispatches on its result
+              const di = this.dispatchIndex(traitInfo, traitMethod.ty);
+              const sel = di >= 0 ? tmi.params[di]! : tmi.ret;
+              const receiver = traitInfo.ctorParams.size > 0 ? headConstructor(sel) : sel;
+              unify(receiver, targetType);
             }
+            unify(tmi, scheme);
+          } else {
+            unify(scheme, traitMethod.ty);
           }
-          unify(scheme, traitMethod.ty);
+          // an instance method written without types takes them from the trait
+          if (m.params.every((p) => p.type.k === "TVar" && p.type.name === "_") && !m.ret) keepTypes = true;
         } catch (err) {
           restoreSubst(before);
           if (err instanceof FlowError) {
@@ -647,7 +680,7 @@ export class Infer {
           }
           throw err;
         }
-        restoreSubst(before);
+        if (!keepTypes) restoreSubst(before);
       }
       mangled.set(m.name, fname);
       methods.set(m.name, { params: m.params, ret: m.ret, eff: m.eff, body: m.body });
@@ -682,7 +715,7 @@ export class Infer {
       if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
       if (effect.algebraic) {
         this.fail(
-          `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with { … } { … }'`,
+          `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with … in …'`,
           d.span,
         );
       }
@@ -710,7 +743,7 @@ export class Infer {
     if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
     if (effect.algebraic) {
       this.fail(
-        `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with { … } { … }'`,
+        `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with … in …'`,
         d.span,
       );
     }
@@ -726,6 +759,72 @@ export class Infer {
       ops.set(o.name, o.fn);
     }
     this.mod.provides.set(d.effect, { effect: d.effect, ops, target: d.target, place });
+  }
+
+  /** No signature: the parameter and result types are inferred from the body. */
+  isInferredFn(d: Decl & { k: "Fn" }): boolean {
+    return d.ret === undefined && !d.eff;
+  }
+
+  declareInferred(d: Decl & { k: "Fn" }) {
+    const paramTypes = d.params.map((p) => this.resolveType(p.type, new Map()));
+    const ty = fnT(paramTypes, fresh(0), emptyEff());
+    this.mod.fns.set(d.name, {
+      name: d.name, scheme: ty, params: d.params, ret: undefined, eff: undefined, body: d.body, pub: d.pub, span: d.span,
+      paramPlaces: d.params.map((p) => annotatedPlace(p.type)),
+      retPlace: undefined,
+      dicts: [],
+      typeParams: new Map(),
+    });
+  }
+
+  /** Dependency-ordered groups of function declarations (strongly connected components). */
+  private fnGroups(prog: Program): (Decl & { k: "Fn" })[][] {
+    const fns = prog.decls.filter((d): d is Decl & { k: "Fn" } => d.k === "Fn");
+    const byName = new Map(fns.map((d) => [d.name, d]));
+    const edges = new Map<string, string[]>();
+    const collectHtml = (n: HtmlNode, add: (name: string) => void) => {
+      if (n.k === "Component") add(n.name);
+      if (n.k === "Element" || n.k === "Component") n.children.forEach((c) => collectHtml(c, add));
+    };
+    for (const d of fns) {
+      const refs = new Set<string>();
+      const add = (name: string) => {
+        const t = byName.get(name);
+        if (t && this.isInferredFn(t)) refs.add(name);
+      };
+      forEachExpr(d.body, (x) => {
+        if (x.k === "Var") add(x.name);
+        if (x.k === "Html") x.nodes.forEach((n) => collectHtml(n, add));
+      });
+      edges.set(d.name, [...refs]);
+    }
+    // Tarjan: components come out callees-first
+    const index = new Map<string, number>(), low = new Map<string, number>();
+    const onStack = new Set<string>();
+    const stack: string[] = [];
+    const out: (Decl & { k: "Fn" })[][] = [];
+    let counter = 0;
+    const visit = (v: string) => {
+      index.set(v, counter); low.set(v, counter); counter++;
+      stack.push(v); onStack.add(v);
+      for (const w of edges.get(v) ?? []) {
+        if (!index.has(w)) { visit(w); low.set(v, Math.min(low.get(v)!, low.get(w)!)); }
+        else if (onStack.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+      }
+      if (low.get(v) === index.get(v)) {
+        const comp: (Decl & { k: "Fn" })[] = [];
+        for (;;) {
+          const w = stack.pop()!;
+          onStack.delete(w);
+          comp.push(byName.get(w)!);
+          if (w === v) break;
+        }
+        out.push(comp.reverse());
+      }
+    };
+    for (const d of fns) if (!index.has(d.name)) visit(d.name);
+    return out;
   }
 
   declareFn(d: Decl & { k: "Fn" }) {
@@ -1044,6 +1143,16 @@ export class Infer {
         }
         const ty = this.lookupVar(e.name, e.span);
         this.mod.varTypes.set(e, ty);
+        // a top-level constant (`pi = 3.14`) is a nullary function: referencing it evaluates it
+        const fnInfo = !this.env.has(e.name) ? this.mod.fns.get(e.name) : undefined;
+        if (fnInfo && !fnInfo.extern && fnInfo.params.length === 0 && ty.k === "fun" && ty.params.length === 0) {
+          this.mod.constRefs.add(e);
+          return {
+            ty: ty.ret,
+            place: joinPlace(this.varPlace(e.name), typePlace(ty.ret)),
+            eff: { labels: new Set(ty.eff.labels) },
+          };
+        }
         return { ty, place: this.varPlace(e.name), eff: emptyEff() };
       }
 
@@ -1051,10 +1160,12 @@ export class Infer {
         const saved = this.env;
         this.env = new Map(saved);
         const seenParams = new Set<string>();
-        const paramTypes = e.params.map((p) => {
+        const expFn = this.expectedFor.get(e) ? prune(this.expectedFor.get(e)!) : undefined;
+        const paramTypes = e.params.map((p, pi) => {
           if (seenParams.has(p.name)) this.fail(`duplicate parameter '${p.name}'`, p.span);
           seenParams.add(p.name);
-          const t = this.resolveType(p.type, this.typeParams);
+          const useExpected = p.type.k === "TVar" && p.type.name === "_" && expFn?.k === "fun" && expFn.params.length === e.params.length;
+          const t = useExpected ? expFn.params[pi]! : this.resolveType(p.type, this.typeParams);
           this.env.set(p.name, { ty: t, envVars: new Set(), place: "neutral" });
           return t;
         });
@@ -1095,7 +1206,7 @@ export class Infer {
       case "Match": return this.inferMatch(e);
 
       case "Let": {
-        const v = this.infer(e.value);
+        const v = this.inferBinding(e.name, e.value);
         if (e.ann) {
           this.checkAnnotation(v.ty, this.resolveType(e.ann, this.typeParams), e.name, e.value.span);
           this.checkPlacement(annotatedPlace(e.ann), v.place, e.ann.span, `'${e.name}'`);
@@ -1158,7 +1269,8 @@ export class Infer {
           ty = fresh(0);
           unify(t, { k: "rec", fields: { [e.name]: ty }, open: true });
         } else if (t.k === "rec") {
-          const f = t.fields[e.name];
+          let f = t.fields[e.name];
+          if (!f && t.open) { f = fresh(0); t.fields[e.name] = f; }
           if (!f) this.fail(`record has no field '${e.name}'`, e.span);
           ty = f;
         } else {
@@ -1192,12 +1304,22 @@ export class Infer {
         const base = this.lookupVar(e.name, e.span);
         let place: Place = "neutral";
         let eff = emptyEff();
+        if (c && c.arity > 0 && e.args.length < c.arity) {
+          // `Some` / `Node left` used as a function: eta-expand into a lambda
+          const names = Array.from({ length: c.arity - e.args.length }, () => `_k${this.uidCtor++}`);
+          const params = names.map((n) => ({ name: n, type: { k: "TVar" as const, name: "_", span: e.span }, span: e.span }));
+          const body: Expr = { k: "Ctor", name: e.name, args: [...e.args, ...names.map((n): Expr => ({ k: "Var", name: n, span: e.span }))], span: e.span };
+          const span = e.span;
+          for (const key of Object.keys(e)) delete (e as unknown as Record<string, unknown>)[key];
+          Object.assign(e, { k: "Lam", params, body, span });
+          return this.inferRaw(e);
+        }
         if (c && c.arity > 0) {
           if (e.args.length !== c.arity) this.fail(`constructor ${e.name} expects ${c.arity} argument(s)`, e.span);
           const inst = instantiate(c.scheme, 0);
           if (inst.k === "fun") {
             e.args.forEach((a, i) => {
-              const r = this.infer(a);
+              const r = this.inferArg(a, inst.params[i]!);
               this.unifyArg(r.ty, inst.params[i]!, a.span, `constructor ${e.name} argument ${i + 1}`);
               place = joinPlace(place, r.place);
               eff = mergeEff(eff, r.eff);
@@ -1242,12 +1364,19 @@ export class Infer {
         let eff = emptyEff();
         for (const s of e.stmts) {
           if (s.k === "LetStmt") {
-            const v = this.infer(s.value);
+            const v = this.inferBinding(s.name, s.value);
             if (s.ann) {
               this.checkAnnotation(v.ty, this.resolveType(s.ann, this.typeParams), s.name, s.value.span);
               this.checkPlacement(annotatedPlace(s.ann), v.place, s.ann.span, `'${s.name}'`);
             }
-            this.env.set(s.name, { ty: v.ty, envVars: new Set(), place: v.place });
+            // local functions are polymorphic; other values stay monomorphic (value restriction)
+            let ty = v.ty;
+            if (s.value.k === "Lam") {
+              const envVars = new Set<number>();
+              for (const x of this.env.values()) for (const y of freeVars(x.ty)) envVars.add(y);
+              ty = generalize(v.ty, envVars);
+            }
+            this.env.set(s.name, { ty, envVars: new Set(), place: v.place });
             place = joinPlace(place, v.place);
             eff = mergeEff(eff, v.eff);
           } else {
@@ -1268,6 +1397,27 @@ export class Infer {
         return { ty, place, eff };
       }
     }
+  }
+
+  /**
+   * The value of a `let`. A lambda may refer to its own name, so local helper
+   * functions (`go acc xs = … go …`) recurse; everything else is inferred as is.
+   */
+  private inferBinding(name: string, value: Expr): ResInfo {
+    if (value.k !== "Lam") return this.infer(value);
+    const self = fresh(0);
+    const saved = this.env;
+    this.env = new Map(saved);
+    this.env.set(name, { ty: self, envVars: new Set(), place: "neutral" });
+    let v: ResInfo;
+    try { v = this.infer(value); }
+    finally { this.env = saved; }
+    try { unify(self, v.ty); }
+    catch (err) {
+      if (err instanceof FlowError) this.fail(`recursive use of '${name}' does not fit its definition: ${err.message}`, value.span);
+      throw err;
+    }
+    return v;
   }
 
   qualName(e: Expr): string | null {
@@ -1351,7 +1501,7 @@ export class Infer {
       if (binder) this.fail("'resume' is reserved inside a handler operation", binder);
       if (op.fn.k !== "Lam") {
         this.fail(
-          `the handler for ${e.effect}.${op.name} must be a function literal: ${op.name} = fn(…) -> T { … }`,
+          `the handler for ${e.effect}.${op.name} must be a function definition: ${op.name} x = …`,
           op.span,
         );
       }
@@ -1505,6 +1655,10 @@ export class Infer {
           if (tname) {
             const tr = this.mod.traits.get(tname)!;
             const m = tr.methods.get(e.fn.name)!;
+            // `cell.get ()`: a method that takes only the receiver ignores the unit argument
+            if (e.args.length === 1 && e.args[0]!.k === "Lit" && e.args[0]!.lit.k === "Unit" && m.ty.k === "fun" && m.ty.params.length === 1) {
+              e.args = [];
+            }
             return this.inferTraitCall(tname, e.fn.name, m.ty, [e.fn.target, ...e.args], e);
           }
         }
@@ -1527,7 +1681,7 @@ export class Infer {
         let place: Place = eff.place;
         let argEff = emptyEff();
         e.args.forEach((a, i) => {
-          const r = this.infer(a);
+          const r = this.inferArg(a, inst.params[i]!);
           this.unifyArg(r.ty, inst.params[i]!, a.span, `${qual}.${op} argument ${i + 1}`);
           place = joinPlace(place, r.place);
           argEff = mergeEff(argEff, r.eff);
@@ -1570,10 +1724,23 @@ export class Infer {
     } else {
       fnInfo = this.infer(e.fn);
     }
-    const ft = prune(fnInfo.ty);
+    let ft = prune(fnInfo.ty);
+    if (ft.k === "var") {
+      // calling a function whose type is not known yet (a parameter): it must be
+      // a function of this many arguments
+      const shape = fnT(e.args.map(() => fresh(0)), fresh(0));
+      unify(ft, shape);
+      ft = prune(fnInfo.ty);
+    }
     if (ft.k !== "fun") this.fail(`attempt to call a value of type ${typeStr(ft)}`, e.fn.span);
     if (e.args.length > ft.params.length) {
-      this.fail(`expected ${ft.params.length} argument(s), got ${e.args.length}`, e.span);
+      // `f a b c` where `f a b` returns a function: apply in two steps
+      const n = ft.params.length;
+      if (n === 0) this.fail(`expected no arguments, got ${e.args.length}`, e.span);
+      const inner: Expr = { k: "App", fn: e.fn, args: e.args.slice(0, n), span: e.span };
+      e.fn = inner;
+      e.args = e.args.slice(n);
+      return this.inferApp(e);
     }
     const partial = e.args.length < ft.params.length;
     if (partial) {
@@ -1595,7 +1762,7 @@ export class Infer {
     let place = joinPlace(fnInfo.place, typePlace(ft));
     let argEff = emptyEff();
     e.args.forEach((a, i) => {
-      const r = this.infer(a);
+      const r = this.inferArg(a, ft.params[i]!);
       try { unify(r.ty, ft.params[i]!); }
       catch (err) {
         if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
@@ -1654,6 +1821,15 @@ export class Infer {
     return false;
   }
 
+  /** Index of the parameter a trait method dispatches on; -1 means its result. */
+  dispatchIndex(trait: TraitInfo, tm: Type): number {
+    if (tm.k !== "fun") return -1;
+    const sv = trait.params.length ? trait.paramVars.get(trait.params[0]!) : undefined;
+    const pv = sv ? prune(sv) : undefined;
+    if (!pv || pv.k !== "var") return tm.params.length ? 0 : -1;
+    return tm.params.findIndex((p) => occurs(pv.id, p));
+  }
+
   inferTraitCall(traitName: string, method: string, schemeTy: Type, args: Expr[], node: object): ResInfo {
     const inst = instantiate(schemeTy, 0);
     if (inst.k !== "fun") this.fail(`${traitName}.${method} is not callable`);
@@ -1663,18 +1839,19 @@ export class Infer {
     let place: Place = placeFromEffects(inst.eff, this);
     let eff: Eff = { labels: new Set(inst.eff.labels) };
     args.forEach((a, i) => {
-      const r = this.infer(a);
+      const r = this.inferArg(a, inst.params[i]!);
       this.unifyArg(r.ty, inst.params[i]!, a.span, `${traitName}.${method} argument ${i + 1}`);
       place = joinPlace(place, r.place);
       eff = mergeEff(eff, r.eff);
     });
     if (this.effHasAlgebraic(inst.eff)) this.mod.genCalls.add(node);
     const trait = this.mod.traits.get(traitName)!;
-    let target = prune(inst.params[0] ?? inst.ret);
+    const di = this.dispatchIndex(trait, schemeTy);
+    let target = prune(di >= 0 ? inst.params[di]! : inst.ret);
     if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
       target = headConstructor(target);
     }
-    if (target.k === "var" && !target.bounds?.includes(traitName) && args.length === 0) {
+    if (target.k === "var" && !target.bounds?.includes(traitName) && di < 0) {
       // A nullary trait method (e.g. Monoid.empty()) has no value to dispatch
       // on. If the trait has exactly one instance, use it; otherwise the call is
       // genuinely ambiguous and needs an annotation or a value argument.
@@ -1788,9 +1965,12 @@ export class Infer {
   bindPattern(p: Pattern, ty: Type, seen: Set<string>) {
     switch (p.k) {
       case "PWild": return;
-      case "PVar": this.env.set(p.name, { ty, envVars: new Set(), place: "neutral" }); return;
+      case "PVar":
+        if (p.ann) this.unifyArg(ty, this.resolveType(p.ann, this.typeParams), p.span, `'${p.name}' is annotated ${typeStr(this.resolveType(p.ann, this.typeParams))}`);
+        this.env.set(p.name, { ty, envVars: new Set(), place: "neutral" });
+        return;
       case "PLit": {
-        const lt = p.lit.k === "Int" ? INT : p.lit.k === "Str" ? STR : BOOL;
+        const lt = p.lit.k === "Int" ? INT : p.lit.k === "Float" ? FLOAT : p.lit.k === "Str" ? STR : p.lit.k === "Unit" ? UNIT : BOOL;
         this.unifyArg(ty, lt, p.span, "pattern does not match the scrutinee"); return;
       }
       case "PTuple": {
@@ -1844,6 +2024,15 @@ export class Infer {
     const left = () => typeStr(l.ty);
     const right = () => typeStr(r.ty);
 
+    if (op === "++") {
+      // append: strings and lists
+      const lt = prune(l.ty);
+      if (lt.k === "con" && lt.name === "Str") { this.unifyArg(r.ty, STR, e.r.span, `right operand of '++' (left is Str)`); return { ty: STR, place, eff }; }
+      const rt = prune(r.ty);
+      if (rt.k === "con" && rt.name === "Str") { this.unifyArg(l.ty, STR, e.l.span, `left operand of '++' (right is Str)`); return { ty: STR, place, eff }; }
+      this.unifyArg(r.ty, l.ty, e.r.span, `operands of '++' must share a type (left is ${left()}, right is ${right()})`);
+      return { ty: l.ty, place, eff };
+    }
     if (op === "and" || op === "or" || op === "&&" || op === "||") {
       this.expectType(l.ty, BOOL, e.l, `operand of ${op}`);
       this.expectType(r.ty, BOOL, e.r, `operand of ${op}`);

@@ -31,12 +31,16 @@ const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 test("ffi: unsafe extern js reaches every JavaScript target form", () => {
   const { entry } = packageWith({
-    "main.flow": `unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
-unsafe extern js fn shout(s: Str) -> Str = "@toUpperCase"
-unsafe extern js fn count(xs: List<Int>) -> Int = "#length"
-unsafe extern js fn item(xs: List<Int>, i: Int) -> Int = "#index"
+    "main.flow": `foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
 
-${page(`<p>{str(hypot(3.0, 4.0))}{shout("ok")}{str(count([1, 2]))}{str(item([10, 20], 1))}</p>`)}`,
+foreign import js unsafe "@toUpperCase" shout :: Str -> Str
+
+foreign import js unsafe "#length" count :: List Int -> Int
+
+foreign import js unsafe "#index" item :: List Int -> Int -> Int
+
+main :: Html
+main = <p>{str (hypot 3.0 4.0)} {shout "ok"} {str (count [1, 2])} {str (item [10, 20] 1)}</p>`,
   });
   const r = compileFile(entry);
   for (const target of ["Math.hypot", "@toUpperCase", "#length", "#index"]) {
@@ -46,15 +50,16 @@ ${page(`<p>{str(hypot(3.0, 4.0))}{shout("ok")}{str(count([1, 2]))}{str(item([10,
 });
 
 test("ffi: unsafe is mandatory and only js is implemented", () => {
-  assert.throws(() => parse('extern js fn f() -> Int = "Math.abs"'), /marked `unsafe`/);
-  assert.throws(() => parse('unsafe extern wasm fn f() -> Int = "x"'), /unsupported FFI target/);
+  assert.throws(() => parse('foreign import js "Math.abs" f :: () -> Int'), /marked `unsafe`/);
+  assert.throws(() => parse('foreign import wasm unsafe "x" f :: () -> Int'), /unsupported FFI target/);
 });
 
 test("ffi: std wrappers are FFI calls, not compiler builtins", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::math::sqrt
+    "main.flow": `import Math (sqrt)
 
-${page(`<p>{str(len([1, 2]))}{trim(" x ")}{str(eq(1, 1))}{str(sqrt(4.0))}</p>`)}`,
+main :: Html
+main = <p>{str (len [1, 2])} {trim " x "} {str (eq 1 1)} {str (sqrt 4.0)}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ffiCall("#length"'), "len uses the host");
@@ -66,10 +71,14 @@ ${page(`<p>{str(len([1, 2]))}{trim(" x ")}{str(eq(1, 1))}{str(sqrt(4.0))}</p>`)}
 
 test("ffi: Server / Client / Store are declared and provided in std", () => {
   const { entry } = packageWith({
-    "main.flow": `effect Server @ server { fn secret(k: Str) -> Str }
-effect Client @ client { fn state<a>(init: a) -> Cell<a> }
+    "main.flow": `effect Server @ server where
+  secret :: Str -> Str
 
-${page(`<p>{Server.secret("k")}{str(Client.state(0).get())}</p>`)}`,
+effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = <p>{Server.secret "k"} {str (((Client.state 0).get) ())}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.server.includes('R.ffiCall("__flow.host.secret"'), "Server.secret is std over the host");
@@ -84,7 +93,8 @@ ${page(`<p>{Server.secret("k")}{str(Client.state(0).get())}</p>`)}`,
 
 test("ffi: Option is a std ADT", () => {
   const { entry } = packageWith({
-    "main.flow": page(`<p>{str(Some(1))}{str(None)}</p>`),
+    "main.flow": `main :: Html
+main = <p>{str (Some 1)} {str None}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ctor("Some"'), "Some is a normal constructor");
@@ -93,8 +103,11 @@ test("ffi: Option is a std ADT", () => {
 
 test("ffi: Cell.get / Cell.set dispatch to the std CellOps trait", () => {
   const { entry } = packageWith({
-    "main.flow": `effect Client @ client { fn state<a>(init: a) -> Cell<a> }
-${page(`<p>{str(Client.state(0).get())}</p>`)}`,
+    "main.flow": `effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = <p>{str (((Client.state 0).get) ())}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes("$impl_CellOps_"), "the std trait impl is emitted");
@@ -104,7 +117,8 @@ ${page(`<p>{str(Client.state(0).get())}</p>`)}`,
 
 test("ffi: Int division uses the host divInt primitive", () => {
   const { entry } = packageWith({
-    "main.flow": page(`<p>{str(7 / 2)}</p>`),
+    "main.flow": `main :: Html
+main = <p>{str (7 / 2)}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ffiCall("__flow.divInt"'), "division uses __flow.divInt");
@@ -113,9 +127,10 @@ test("ffi: Int division uses the host divInt primitive", () => {
 
 test("ffi: a dotted target can be a global constant", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::math::{pi, e}
+    "main.flow": `import Math (pi, e)
 
-${page(`<p>{str(pi())}{str(e())}</p>`)}`,
+main :: Html
+main = <p>{str (pi ())} {str (e ())}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ffiCall("Math.PI"'), "pi reads Math.PI");
@@ -124,9 +139,10 @@ ${page(`<p>{str(pi())}{str(e())}</p>`)}`,
 
 test("std::random is built on the FFI-backed random source", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::random::{int, bool, pick, chance}
+    "main.flow": `import Random (int, bool, pick, chance)
 
-${page(`<p>{str(int(1, 10))}{str(bool())}{str(pick([1, 2, 3]))}{str(chance(50))}</p>`)}`,
+main :: Html
+main = <p>{str (int 1 10)} {str (bool ())} {str (pick [1, 2, 3])} {str (chance 50)}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ffiCall("Math.random"'), "random uses the host");

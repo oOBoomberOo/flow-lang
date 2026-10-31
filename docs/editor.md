@@ -25,7 +25,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
-| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **modules after `std::`**, **module members after `std::list::`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
+| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **modules after `Module.`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
@@ -36,7 +36,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/selectionRange` | the AST ancestor chain at the cursor |
 | `textDocument/documentHighlight` | occurrences of the symbol under the cursor |
 | `textDocument/formatting` | re-indent by nesting depth (idempotent) |
-| `textDocument/codeAction` | *Make 'f' public*, *Import 'x' from pkg::mod* |
+| `textDocument/codeAction` | *Export 'f' from this module*, *Import 'x' from Module* |
 | `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
 | `flow/boundary` | placement regions for the whole package, one entry per file |
@@ -52,7 +52,8 @@ Typing must never wait for a full compile:
   inlay hints never flush — they answer immediately from the current text and the
   last analysis.
 * **No std preload.** Analysis compiles only the modules the program imports.
-  Completion's view of `std::…` comes from a cached index that parses the std
+  Completion's view of `List.`, `Option.` and the other std namespaces comes from a cached
+  index that parses the std
   library once (`stdModules()`), instead of type-checking all of it on every
   keystroke.
 * **No shared unification state.** Type variables and their bindings are reset at
@@ -76,8 +77,8 @@ completion therefore keep working while the buffer has errors; the diagnostic li
 still shows them. `flow check` / `build` keep the strict behaviour and fail on the
 first error.
 
-Paths work without imports: `std::list::length(xs)` loads `std::list` on demand,
-and completion offers modules after `std::` and members after `std::list::` even
+Paths work without imports: `List.length xs` loads the `List` module on demand,
+and completion offers module members after `List.` / `Option.` even
 before any `use` is written.
 
 `flow/boundary` is the Flow-specific piece: LSP tokens can colour a *token*, but the
@@ -172,7 +173,7 @@ picked up live.
 * **Syntax highlighting** from the TextMate grammar.
 * **Boundary colouring**: client code washed blue, server code amber, every inferred
   cut underlined in violet; hovering a region shows its label.
-* **Inlay hints**: `fn render server`, `let total: Int` — the boundary is visible
+* **Inlay hints**: `render server`, `let total :: Int` — the boundary is visible
   without opening a panel.
 * **Code lenses**: `client · 2 cuts` per function.
 * **Status bar**: `Flow · client 6 · server 0 · cuts 2`.

@@ -1,22 +1,20 @@
-// A module of the `demo` package. `pub` marks the exported surface; everything
-// else stays private to this file.
+module Util (Priority(..), priorityLabel, describe, priorities) where
 
-pub type Priority =
-  | Low
-  | High
+-- A module of the `demo` package. `pub` marks the exported surface; everything
+-- else stays private to this file.
+data Priority = Low | High
 
-pub fn priorityLabel(p: Priority) -> Str {
-  match p {
-    Low => "low",
-    High => "high",
-  }
-}
+priorityLabel :: Priority -> Str
+priorityLabel p = case p of
+  Low -> "low"
+  High -> "high"
 
-// Not exported: importing this from another module is a compile error.
-fn secretSauce() -> Str { "sssh" }
+-- Not exported: importing this from another module is a compile error.
+secretSauce :: () -> Str
+secretSauce () = "sssh"
 
-pub fn describe(p: Priority) -> Str {
-  priorityLabel(p) + " (" + secretSauce() + ")"
-}
+describe :: Priority -> Str
+describe p = priorityLabel p + " (" + secretSauce () + ")"
 
-pub fn priorities() -> List<Priority> { [High, Low] }
+priorities :: () -> List Priority
+priorities () = [High, Low]

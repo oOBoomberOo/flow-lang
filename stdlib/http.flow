@@ -1,175 +1,126 @@
-// std::http — request/response data, request and routing capabilities, and
-// easy route construction. Everything here is ordinary Flow over host
-// primitives; the host dispatches real HTTP requests to the routes registered
-// by `Router.mount`.
+module Http (RequestObject, Response, Handler, Route, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch) where
 
-// ---------------------------------------------------------------- data
+-- std::http — request/response data, request and routing capabilities, and
+-- easy route construction. Everything here is ordinary Flow over host
+-- primitives; the host dispatches real HTTP requests to the routes registered
+-- by `Router.mount`.
+-- ---------------------------------------------------------------- data
+type RequestObject = { method :: Str, path :: Str, query :: Str, body :: Str, headers :: List (Str, Str), params :: List (Str, Str) }
 
-pub type RequestObject = {
-  method: Str,
-  path: Str,
-  query: Str,
-  body: Str,
-  headers: List<(Str, Str)>,
-  params: List<(Str, Str)>,
-}
+type Response = { status :: Int, contentType :: Str, headers :: List (Str, Str), body :: Str }
 
-pub type Response = {
-  status: Int,
-  contentType: Str,
-  headers: List<(Str, Str)>,
-  body: Str,
-}
+type Handler = RequestObject -> Response
 
-pub type Handler = (RequestObject) -> Response
+type Route = { method :: Str, path :: Str, handler :: Handler }
 
-pub type Route = {
-  method: Str,
-  path: Str,
-  handler: Handler,
-}
+-- ---------------------------------------------------------------- capabilities
+-- / The current HTTP request, available anywhere in a server-side handler.
+effect Request @ server where
+  current :: () -> RequestObject
 
-// ---------------------------------------------------------------- capabilities
+-- / Route registration. The host reads the routes registered here at startup.
+effect Router @ server where
+  mount :: List Route -> ()
+  notFound :: Handler -> ()
 
-/// The current HTTP request, available anywhere in a server-side handler.
-pub effect Request @ server {
-  fn current() -> RequestObject
-}
+-- ---------------------------------------------------------------- host primitives
+foreign import js unsafe "__flow.host.request" host_request :: () -> RequestObject
 
-/// Route registration. The host reads the routes registered here at startup.
-pub effect Router @ server {
-  fn mount(routes: List<Route>) -> Unit
-  fn notFound(handler: Handler) -> Unit
-}
+foreign import js unsafe "__flow.host.routes" host_routes :: List Route -> ()
 
-// ---------------------------------------------------------------- host primitives
+foreign import js unsafe "__flow.host.notFound" host_not_found :: Handler -> ()
 
-unsafe extern js fn host_request() -> RequestObject = "__flow.host.request"
-unsafe extern js fn host_routes(routes: List<Route>) -> Unit = "__flow.host.routes"
-unsafe extern js fn host_not_found(handler: Handler) -> Unit = "__flow.host.notFound"
+provide Request where
+  current = host_request
 
-provide Request with {
-  current = host_request,
-}
+provide Router where
+  mount = host_routes
+  notFound = host_not_found
 
-provide Router with {
-  mount = host_routes,
-  notFound = host_not_found,
-}
+-- ---------------------------------------------------------------- responses
+textResponse :: Str -> Response
+textResponse body = { status = 200, contentType = "text/plain; charset=utf-8", headers = [], body = body }
 
-// ---------------------------------------------------------------- responses
+htmlResponse :: Str -> Response
+htmlResponse body = { status = 200, contentType = "text/html; charset=utf-8", headers = [], body = body }
 
-pub fn textResponse(body: Str) -> Response {
-  { status: 200, contentType: "text/plain; charset=utf-8", headers: [], body: body }
-}
+jsonResponse :: Str -> Response
+jsonResponse body =
+  { status = 200, contentType = "application/json; charset=utf-8", headers = [], body = body }
 
-pub fn htmlResponse(body: Str) -> Response {
-  { status: 200, contentType: "text/html; charset=utf-8", headers: [], body: body }
-}
+withStatus :: Int -> Response -> Response
+withStatus status response =
+  { status = status, contentType = response.contentType, headers = response.headers, body = response.body }
 
-pub fn jsonResponse(body: Str) -> Response {
-  { status: 200, contentType: "application/json; charset=utf-8", headers: [], body: body }
-}
+withHeader :: Response -> Str -> Str -> Response
+withHeader response name value =
+  { status = response.status, contentType = response.contentType, headers = push response.headers (name, value), body = response.body }
 
-pub fn withStatus(status: Int, response: Response) -> Response {
-  {
-    status: status,
-    contentType: response.contentType,
-    headers: response.headers,
-    body: response.body,
-  }
-}
+redirect :: Str -> Response
+redirect location = withHeader (withStatus 302 (textResponse "")) "location" location
 
-pub fn withHeader(response: Response, name: Str, value: Str) -> Response {
-  {
-    status: response.status,
-    contentType: response.contentType,
-    headers: push(response.headers, (name, value)),
-    body: response.body,
-  }
-}
+notFoundResponse :: Str -> Response
+notFoundResponse message = withStatus 404 (textResponse message)
 
-pub fn redirect(location: Str) -> Response {
-  withHeader(withStatus(302, textResponse("")), "location", location)
-}
+-- ---------------------------------------------------------------- easy routing
+route :: Str -> Str -> Handler -> Route
+route method path handler = { method = upper method, path = path, handler = handler }
 
-pub fn notFoundResponse(message: Str) -> Response {
-  withStatus(404, textResponse(message))
-}
+get :: Str -> Handler -> Route
+get path handler = route "GET" path handler
 
-// ---------------------------------------------------------------- easy routing
+post :: Str -> Handler -> Route
+post path handler = route "POST" path handler
 
-pub fn route(method: Str, path: Str, handler: Handler) -> Route {
-  { method: upper(method), path: path, handler: handler }
-}
+put :: Str -> Handler -> Route
+put path handler = route "PUT" path handler
 
-pub fn get(path: Str, handler: Handler) -> Route { route("GET", path, handler) }
+patch :: Str -> Handler -> Route
+patch path handler = route "PATCH" path handler
 
-pub fn post(path: Str, handler: Handler) -> Route { route("POST", path, handler) }
+del :: Str -> Handler -> Route
+del path handler = route "DELETE" path handler
 
-pub fn put(path: Str, handler: Handler) -> Route { route("PUT", path, handler) }
+-- ---------------------------------------------------------------- request helpers
+queryParam :: RequestObject -> Str -> Option Str
+queryParam request name = findQuery (split request.query "&") name
 
-pub fn patch(path: Str, handler: Handler) -> Route { route("PATCH", path, handler) }
+pathParam :: RequestObject -> Str -> Option Str
+pathParam request name = findPair request.params name
 
-pub fn del(path: Str, handler: Handler) -> Route { route("DELETE", path, handler) }
+header :: RequestObject -> Str -> Option Str
+header request name = findHeader request.headers (lower name)
 
-// ---------------------------------------------------------------- request helpers
+findPair :: List (Str, Str) -> Str -> Option Str
+findPair pairs name = case pairs of
+  [] -> None
+  (key, value) : rest -> if key == name then Some value else findPair rest name
 
-pub fn queryParam(request: RequestObject, name: Str) -> Option<Str> {
-  findQuery(split(request.query, "&"), name)
-}
+findHeader :: List (Str, Str) -> Str -> Option Str
+findHeader pairs name = case pairs of
+  [] -> None
+  (key, value) : rest -> if lower key == name then Some value else findHeader rest name
 
-pub fn pathParam(request: RequestObject, name: Str) -> Option<Str> {
-  findPair(request.params, name)
-}
+findQuery :: List Str -> Str -> Option Str
+findQuery pairs name = case pairs of
+  [] -> None
+  pair : rest ->
+    case split pair "=" of
+      [key, value] -> if key == name then Some value else findQuery rest name
+      _ -> findQuery rest name
 
-pub fn header(request: RequestObject, name: Str) -> Option<Str> {
-  findHeader(request.headers, lower(name))
-}
+-- ---------------------------------------------------------------- capability handler
+-- / Pure route dispatch over a route list. The host uses the same Route values
+-- / for real HTTP dispatch; this is the reusable in-language handler.
+dispatch :: List Route -> RequestObject -> Response
+dispatch routes request = case findRoute routes request.method request.path of
+  Some route -> route.handler request
+  None -> notFoundResponse "Not found"
 
-fn findPair(pairs: List<(Str, Str)>, name: Str) -> Option<Str> {
-  match pairs {
-    [] => None,
-    [(key, value), ..rest] => if (key == name) { Some(value) } else { findPair(rest, name) },
-  }
-}
-
-fn findHeader(pairs: List<(Str, Str)>, name: Str) -> Option<Str> {
-  match pairs {
-    [] => None,
-    [(key, value), ..rest] => if (lower(key) == name) { Some(value) } else { findHeader(rest, name) },
-  }
-}
-
-fn findQuery(pairs: List<Str>, name: Str) -> Option<Str> {
-  match pairs {
-    [] => None,
-    [pair, ..rest] => match split(pair, "=") {
-      [key, value] => if (key == name) { Some(value) } else { findQuery(rest, name) },
-      _ => findQuery(rest, name),
-    },
-  }
-}
-
-// ---------------------------------------------------------------- capability handler
-
-/// Pure route dispatch over a route list. The host uses the same Route values
-/// for real HTTP dispatch; this is the reusable in-language handler.
-pub fn dispatch(routes: List<Route>, request: RequestObject) -> Response {
-  match findRoute(routes, request.method, request.path) {
-    Some(route) => route.handler(request),
-    None => notFoundResponse("Not found"),
-  }
-}
-
-fn findRoute(routes: List<Route>, method: Str, path: Str) -> Option<Route> {
-  match routes {
-    [] => None,
-    [route, ..rest] =>
-      if ((route.method == "*" || upper(route.method) == upper(method)) && route.path == path) {
-        Some(route)
-      } else {
-        findRoute(rest, method, path)
-      },
-  }
-}
+findRoute :: List Route -> Str -> Str -> Option Route
+findRoute routes method path = case routes of
+  [] -> None
+  route : rest ->
+    if (route.method == "*" || upper route.method == upper method) && route.path == path
+      then Some route
+      else findRoute rest method path

@@ -27,14 +27,20 @@ const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 test("modules: import a value and a type from another module", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::util::{Priority, rank, label}
-fn main() -> Html {
-  let p = Priority(2);
-  html { <p>{label(p)}{str(rank(p))}</p> }
-}`,
-    "util.flow": `pub type Priority = Priority(Int)
-pub fn rank(p: Priority) -> Int { match p { Priority(n) => n } }
-pub fn label(p: Priority) -> Str { "p" + str(rank(p)) }`,
+    "main.flow": `import Util (Priority, rank, label)
+
+main :: Html
+main = do
+  let p = Priority 2
+  <p>{label p} {str (rank p)}</p>`,
+    "util.flow": `data Priority = Priority Int
+
+rank :: Priority -> Int
+rank p = case p of
+  Priority n -> n
+
+label :: Priority -> Str
+label p = "p" + str (rank p)`,
   });
   const r = compileFile(entry);
   assert.match(r.client, /function rank|function label/);
@@ -42,37 +48,55 @@ pub fn label(p: Priority) -> Str { "p" + str(rank(p)) }`,
 
 test("modules: private declarations cannot be imported", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::util::hidden\nfn main() -> Html { html { <p>{str(hidden())}</p> } }`,
-    "util.flow": `fn hidden() -> Int { 1 }`,
+    "main.flow": `import Util (hidden)
+
+main :: Html
+main = <p>{str (hidden ())}</p>`,
+    "util.flow": `module Util (shown) where
+
+shown :: () -> Int
+shown () = 2
+
+hidden :: () -> Int
+hidden () = 1`,
   });
-  assert.throws(() => compileFile(entry), /private in testpkg::util/);
+  assert.throws(() => compileFile(entry), /'hidden' is private in module Util/);
 });
 
 test("modules: a missing module is reported with the expected path", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::nope::x\nfn main() -> Html { html { <p>{"x"}</p> } }`,
+    "main.flow": `import Nope (x)
+
+main :: Html
+main = <p>{"x"}</p>`,
   });
   assert.throws(() => compileFile(entry), /not found/);
 });
 
 test("modules: a missing export is reported", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::util::nope\nfn main() -> Html { html { <p>{"x"}</p> } }`,
-    "util.flow": `pub fn yes() -> Int { 1 }`,
+    "main.flow": `import Util (nope)
+
+main :: Html
+main = <p>{"x"}</p>`,
+    "util.flow": `yes :: () -> Int
+yes () = 1`,
   });
-  assert.throws(() => compileFile(entry), /'nope' is not exported by testpkg::util/);
+  assert.throws(() => compileFile(entry), /'nope' is not exported by module Util/);
 });
 
 test("modules: duplicate names across modules are made unique, not shadowed", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::a::twice
-use testpkg::b::thrice
-use testpkg::a::twice as again
-fn main() -> Html {
-  html { <p>{str(twice(2))}{str(thrice(2))}{str(again(3))}</p> }
-}`,
-    "a.flow": `pub fn twice(n: Int) -> Int { n * 2 }`,
-    "b.flow": `pub fn thrice(n: Int) -> Int { n * 3 }`,
+    "main.flow": `import A (twice)
+import B (thrice)
+import A (twice as again)
+
+main :: Html
+main = <p>{str (twice 2)} {str (thrice 2)} {str (again 3)}</p>`,
+    "a.flow": `twice :: Int -> Int
+twice n = n * 2`,
+    "b.flow": `thrice :: Int -> Int
+thrice n = n * 3`,
   });
   const r = compileFile(entry);
   // both stay callable; emitted names exist
@@ -82,11 +106,15 @@ fn main() -> Html {
 
 test("modules: aliasing avoids a clash", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::a::f
-use testpkg::b::f as g
-fn main() -> Html { html { <p>{str(f(1) + g(1))}</p> } }`,
-    "a.flow": `pub fn f(n: Int) -> Int { n }`,
-    "b.flow": `pub fn f(n: Int) -> Int { n + 10 }`,
+    "main.flow": `import A (f)
+import B (f as g)
+
+main :: Html
+main = <p>{str (f 1 + g 1)}</p>`,
+    "a.flow": `f :: Int -> Int
+f n = n`,
+    "b.flow": `f :: Int -> Int
+f n = n + 10`,
   });
   const r = compileFile(entry);
   assert.match(r.client, /function f\$|function f\(/);
@@ -94,19 +122,27 @@ fn main() -> Html { html { <p>{str(f(1) + g(1))}</p> } }`,
 
 test("modules: duplicate import alias is rejected", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::a::f
-use testpkg::b::f
-fn main() -> Html { html { <p>{str(f(1))}</p> } }`,
-    "a.flow": `pub fn f(n: Int) -> Int { n }`,
-    "b.flow": `pub fn f(n: Int) -> Int { n }`,
+    "main.flow": `import A (f)
+import B (f)
+
+main :: Html
+main = <p>{str (f 1)}</p>`,
+    "a.flow": `f :: Int -> Int
+f n = n`,
+    "b.flow": `f :: Int -> Int
+f n = n`,
   });
   assert.throws(() => compileFile(entry), /duplicate import 'f'/);
 });
 
 test("modules: nested module paths", () => {
   const { entry } = packageWith({
-    "main.flow": `use testpkg::deep::nest::value\nfn main() -> Html { html { <p>{str(value())}</p> } }`,
-    "deep/nest.flow": `pub fn value() -> Int { 42 }`,
+    "main.flow": `import Deep.Nest (value)
+
+main :: Html
+main = <p>{str (value ())}</p>`,
+    "deep/nest.flow": `value :: () -> Int
+value () = 42`,
   });
   assert.doesNotThrow(() => compileFile(entry));
 });
@@ -117,20 +153,21 @@ test("modules: nested module paths", () => {
 
 test("stdlib: list, math, option and string modules", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::list::{map, filter, range, fold}
-use std::math::{sum, clamp}
-use std::option::{withDefault, isSome}
-use std::string::{padLeft, capitalize}
-fn main() -> Html {
-  let xs = map(range(5), fn(n: Int) -> Int { n * n });
-  let evens = filter(xs, fn(n: Int) -> Bool { n % 2 == 0 });
-  let total = fold(evens, 0, fn(a: Int, b: Int) -> Int { a + b });
-  html {
-    <p>{str(total)}{str(sum(xs))}{str(clamp(9, 0, 5))}</p>
-    <p>{str(isSome(head(xs)))}{str(withDefault(head([]), 0))}</p>
-    <p>{padLeft(str(total), 4, "0")}{capitalize("flow")}</p>
-  }
-}`,
+    "main.flow": `import List (map, filter, range, fold)
+import Math (sum, clamp)
+import Option (withDefault, isSome)
+import String (padLeft, capitalize)
+
+main :: Html
+main = do
+  let xs = map (range 5) (\\(n :: Int) -> n * n)
+  let evens = filter xs (\\(n :: Int) -> n % 2 == 0)
+  let total = fold evens 0 (\\(a :: Int) (b :: Int) -> a + b)
+  <>
+    <p>{str total} {str (sum xs)} {str (clamp 9 0 5)}</p>
+    <p>{str (isSome (head xs))} {str (withDefault (head []) 0)}</p>
+    <p>{padLeft (str total) 4 "0"} {capitalize "flow"}</p>
+  </>`,
   });
   const r = compileFile(entry);
   // the intrinsics are std code now: they reach the host through the FFI
@@ -140,10 +177,13 @@ fn main() -> Html {
 
 test("stdlib: html components are usable", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::html::{Card, Badge}
-fn main() -> Html {
-  html { <Card title={"t"}><Badge label={"b"} /></Card> }
-}`,
+    "main.flow": `import Html (Card, Badge)
+
+main :: Html
+main =
+  <Card title={"t"}>
+    <Badge label={"b"} />
+  </Card>`,
   });
   const r = compileFile(entry);
   assert.match(r.client, /card-title/);
@@ -201,9 +241,15 @@ test("packages: a registry dependency used by a program", () => {
     name: "consumer", version: "0.1.0", dependencies: { "flow-charts": "^1.0.0", "flow-time": "^1.2.0" },
   }, null, 2));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "src", "main.flow"), `use flow-charts::bar::Bar
-use flow-time::format::hms
-fn main() -> Html { html { <div><Bar label={"a"} value={2} max={4} /><p>{hms(61000)}</p></div> } }
+  fs.writeFileSync(path.join(dir, "src", "main.flow"), `import FlowCharts.Bar (Bar)
+import FlowTime.Format (hms)
+
+main :: Html
+main =
+  <div>
+    <Bar label={"a"} value={2} max={4} />
+    <p>{hms 61000}</p>
+  </div>
 `);
   install(dir);
   const r = compileFile(path.join(dir, "src", "main.flow"));
@@ -216,7 +262,8 @@ test("packages: missing dependency produces an actionable error", () => {
     name: "consumer", version: "0.1.0", dependencies: { "flow-charts": "^1.0.0" },
   }, null, 2));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "src", "main.flow"), `fn main() -> Html { html { <p>{"x"}</p> } }`);
+  fs.writeFileSync(path.join(dir, "src", "main.flow"), `main :: Html
+main = <p>{"x"}</p>`);
   assert.throws(() => compileFile(path.join(dir, "src", "main.flow")), /flow install/);
 });
 
@@ -238,17 +285,18 @@ test("packages: manifest validation", () => {
 
 test("ffi: a std wrapper follows the placement of its call site", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::log::info
-effect Server @ server { fn now() -> Int }
+    "main.flow": `import Log (info)
 
-fn stamp() -> Int {
-  info("stamping on the server");
-  Server.now()
-}
+effect Server @ server where
+  now :: () -> Int
 
-fn main() -> Html {
-  html { <p>{"t = "}{str(stamp())}</p> }
-}
+stamp :: () -> Int
+stamp () = do
+  info "stamping on the server"
+  Server.now ()
+
+main :: Html
+main = <p>{"t = "} {str (stamp ())}</p>
 `,
   });
   const r = compileFile(entry);
@@ -260,7 +308,9 @@ fn main() -> Html {
 
 test("ffi: equality is a std-level FFI primitive", () => {
   const { entry } = packageWith({
-    "main.flow": `fn main() -> Html { html { <p>{str(1 == 1)}{str([1] == [1])}</p> } }\n`,
+    "main.flow": `main :: Html
+main = <p>{str (1 == 1)} {str ([1] == [1])}</p>
+`,
   });
   const r = compileFile(entry);
   assert.match(r.client, /R\.ffiCall\("__flow\.eq"/);
@@ -269,20 +319,18 @@ test("ffi: equality is a std-level FFI primitive", () => {
 
 test("stdlib: list sorting and search go through the FFI", () => {
   const { entry } = packageWith({
-    "main.flow": `use std::list::{sortInts, sortStrings, contains, indexOfItem, sortBy}
+    "main.flow": `import List (sortInts, sortStrings, contains, indexOfItem, sortBy)
 
-fn main() -> Html {
-  let ints = sortInts([3, 1, 2]);
-  let strs = sortStrings(["pear", "apple", "fig"]);
-  let idx = indexOfItem(ints, 2);
-  html {
-    <ul>
-      <li>{str(ints)}{":"}{str(indexOfItem(ints, 99))}{":"}{str(contains(ints, 2))}</li>
-      <li>{str(strs)}{":"}{str(idx)}</li>
-      <li>{str(sortBy(ints, fn(a: Int, b: Int) -> Int { b - a }))}</li>
-    </ul>
-  }
-}
+main :: Html
+main = do
+  let ints = sortInts [3, 1, 2]
+  let strs = sortStrings ["pear", "apple", "fig"]
+  let idx = indexOfItem ints 2
+  <ul>
+    <li>{str ints} {":"} {str (indexOfItem ints 99)} {":"} {str (contains ints 2)}</li>
+    <li>{str strs} {":"} {str idx}</li>
+    <li>{str (sortBy ints (\\(a :: Int) (b :: Int) -> b - a))}</li>
+  </ul>
 `,
   });
   const r = compileFile(entry);
@@ -292,12 +340,12 @@ fn main() -> Html {
 
 test("ffi: user code can declare and call raw JavaScript directly", () => {
   const { entry } = packageWith({
-    "main.flow": `unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
-unsafe extern js fn shout(s: Str) -> Str = "@toUpperCase"
+    "main.flow": `foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
 
-fn main() -> Html {
-  html { <p>{str(hypot(3.0, 4.0))}{shout("ok")}</p> }
-}
+foreign import js unsafe "@toUpperCase" shout :: Str -> Str
+
+main :: Html
+main = <p>{str (hypot 3.0 4.0)} {shout "ok"}</p>
 `,
   });
   const r = compileFile(entry);
@@ -308,7 +356,9 @@ fn main() -> Html {
 
 test("ffi: Int division lowers through the host primitive", () => {
   const { entry } = packageWith({
-    "main.flow": `fn main() -> Html { html { <p>{str(7 / 2)}</p> } }\n`,
+    "main.flow": `main :: Html
+main = <p>{str (7 / 2)}</p>
+`,
   });
   const r = compileFile(entry);
   assert.match(r.client, /R\.ffiCall\("__flow\.divInt"/);

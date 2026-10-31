@@ -83,22 +83,24 @@ export function compileProgram(
   };
 }
 
-/** The std prelude, parsed once; it is prepended in single-file mode. */
-let PRELUDE_DECLS: Decl[] | null = null;
-function preludeDecls(): Decl[] {
-  if (!PRELUDE_DECLS) {
-    const file = path.join(STDLIB_DIR, "prelude.flow");
-    PRELUDE_DECLS = parse(fs.readFileSync(file, "utf8"), file).decls;
+/** A program that exists only in memory. It links exactly like a file, so
+ *  `import List (map)` and `List.map` behave the same way they do on disk. */
+export function compileSource(src: string, file = "input.flow", opts: CompileOptions = {}): CompileResult {
+  const linked = new Linker({ recover: opts.recover }).linkSource(src, file);
+  const result = compileProgram(
+    linked.program,
+    linked.entry.file,
+    linked.units.map((u) => ({ id: u.id, file: u.file })),
+    opts,
+  );
+  if (linked.errors.length) {
+    result.errors = [...linked.errors, ...result.errors];
+    if (!opts.collectErrors) throw linked.errors[0];
   }
-  return PRELUDE_DECLS;
-}
-
-/** Single-file mode: no imports, used by tests and small examples.
- *  The prelude is prepended so intrinsics behave exactly as in a package. */
-export function compileSource(src: string, file = "<input>", opts: CompileOptions = {}): CompileResult {
-  const program = parse(src, file);
-  const merged: Program = { ...program, decls: [...preludeDecls(), ...program.decls] };
-  return compileProgram(merged, file, [{ id: "main::main", file }], opts);
+  result.display = linked.display;
+  result.symbols = linked.symbols;
+  result.importedByFile = linked.importedByFile;
+  return result;
 }
 
 /** Package mode: load, link, then compile the flattened program. */

@@ -1,51 +1,35 @@
-// std::monad — a small Monad type class for Option and List.
-//
-// `>>=` and `do { x <- m; … }` desugar to `Monad.bind`, so importing this module
-// is enough to use the sugar:
-//
-//   use std::monad::{Monad}
-//   Some(2) >>= fn(x) { Some(x + 1) }
-//   do { x <- Some(2); y <- Some(3); Some(x + y) }
+-- std::monad — a small Monad type class for Option and List.
+--
+-- `>>=` and `do { x <- m; … }` desugar to `Monad.bind`, so importing this module
+-- is enough to use the sugar:
+--
+--   use std::monad::{Monad}
+--   Some(2) >>= fn(x) { Some(x + 1) }
+--   do { x <- Some(2); y <- Some(3); Some(x + y) }
+class Monad f where
+  bind :: f a -> (a -> f b) -> f b
+  map :: f a -> (a -> b) -> f b
 
-pub trait Monad<f> {
-  fn bind<a, b>(value: f<a>, k: (a) -> f<b>) -> f<b>
-  fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b>
-}
+instance Monad Option where
+  bind value k = case value of
+    None -> None
+    Some x -> k x
+  map value mapper = case value of
+    None -> None
+    Some x -> Some (mapper x)
 
-impl Monad for Option {
-  fn bind<a, b>(value: Option<a>, k: (a) -> Option<b>) -> Option<b> {
-    match value {
-      None => None,
-      Some(x) => k(x),
-    }
-  }
+instance Monad List where
+  bind value k = case value of
+    [] -> []
+    x : rest -> concat (k x) (bind rest k)
+  map value mapper = case value of
+    [] -> []
+    x : rest -> concat [mapper x] (map rest mapper)
 
-  fn map<a, b>(value: Option<a>, mapper: (a) -> b) -> Option<b> {
-    match value {
-      None => None,
-      Some(x) => Some(mapper(x)),
-    }
-  }
-}
+-- / `pure(value)` for an Option.
+some :: a -> Option a
+some value = Some value
 
-impl Monad for List {
-  fn bind<a, b>(value: List<a>, k: (a) -> List<b>) -> List<b> {
-    match value {
-      [] => [],
-      [x, ..rest] => concat(k(x), bind(rest, k)),
-    }
-  }
-
-  fn map<a, b>(value: List<a>, mapper: (a) -> b) -> List<b> {
-    match value {
-      [] => [],
-      [x, ..rest] => concat([mapper(x)], map(rest, mapper)),
-    }
-  }
-}
-
-/// `pure(value)` for an Option.
-pub fn some<a>(value: a) -> Option<a> { Some(value) }
-
-/// `pure(value)` for a List.
-pub fn one<a>(value: a) -> List<a> { [value] }
+-- / `pure(value)` for a List.
+one :: a -> List a
+one value = [value]

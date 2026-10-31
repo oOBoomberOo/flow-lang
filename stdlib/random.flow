@@ -1,26 +1,24 @@
-// std::random — uniform helpers over the FFI-backed random source in std::math.
+module Random (int, bool, chance, pick) where
 
-use std::math::{random, floor, clamp}
+-- std::random — uniform helpers over the FFI-backed random source in std::math.
+import Math (random, floor, clamp)
 
-/// Uniform integer in [lo, hi]. Returns lo when the range is empty.
-pub fn int(lo: Int, hi: Int) -> Int {
-  if (hi <= lo) { lo }
-  else { lo + floor(random() * float(str(hi - lo + 1))) }
-}
+-- / Uniform integer in [lo, hi]. Returns lo when the range is empty.
+int :: Int -> Int -> Int
+int lo hi = if hi <= lo then lo else lo + floor (random () * float (str (hi - lo + 1)))
 
-pub fn bool() -> Bool { random() < 0.5 }
+bool :: () -> Bool
+bool () = random () < 0.5
 
-/// True with the given percentage chance (0 = never, 100 = always).
-pub fn chance(percent: Int) -> Bool { int(1, 100) <= clamp(percent, 0, 100) }
+-- / True with the given percentage chance (0 = never, 100 = always).
+chance :: Int -> Bool
+chance percent = int 1 100 <= clamp percent 0 100
 
-fn atIndex<a>(xs: List<a>, i: Int) -> Option<a> {
-  match xs {
-    [] => None,
-    [x, ..rest] => if (i <= 0) { Some(x) } else { atIndex(rest, i - 1) },
-  }
-}
+atIndex :: List a -> Int -> Option a
+atIndex xs i = case xs of
+  [] -> None
+  x : rest -> if i <= 0 then Some x else atIndex rest (i - 1)
 
-/// Pick an element uniformly, or None for an empty list.
-pub fn pick<a>(xs: List<a>) -> Option<a> {
-  if (len(xs) == 0) { None } else { atIndex(xs, int(0, len(xs) - 1)) }
-}
+-- / Pick an element uniformly, or None for an empty list.
+pick :: List a -> Option a
+pick xs = if len xs == 0 then None else atIndex xs (int 0 (len xs - 1))

@@ -18,21 +18,16 @@ test("hkt: Functor over List and Option compiles", () => {
 });
 
 test("hkt: f<a> parameters work in trait methods", () => {
-  const src = `
-trait Unwrap<f> {
-  fn unwrapOr<a>(value: f<a>, fallback: a) -> a
-}
+  const src = `class Unwrap f where
+  unwrapOr :: f a -> a -> a
 
-impl Unwrap for Option {
-  fn unwrapOr<a>(value: Option<a>, fallback: a) -> a {
-    match value {
-      None => fallback,
-      Some(x) => x,
-    }
-  }
-}
+instance Unwrap Option where
+  unwrapOr value fallback = case value of
+    None -> fallback
+    Some x -> x
 
-fn main() -> Html { html { <p>{str(Unwrap.unwrapOr(Some(7), 0))}</p> } }
+main :: Html
+main = <p>{str (Unwrap.unwrapOr (Some 7) 0)}</p>
 `;
   const r = compileSource(src, "hkt.flow");
   assert.deepEqual(r.diagnostics, []);

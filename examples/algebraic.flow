@@ -1,30 +1,31 @@
-use std::state::{withState, runState, State}
-use std::exn::{attempt, recoverWith, fail, recover, Exn}
-use std::string::{length}
+import State (withState, runState, State)
+import Exn (attempt, recoverWith, fail, recover, Exn)
+import String (length)
 
-fn counter() -> Int ! {State} {
-  State.put(State.get() + 1);
-  State.put(State.get() + 1);
-  State.get()
-}
+counter :: () -> Int ! State
+counter () = do
+  State.put (State.get () + 1)
+  State.put (State.get () + 1)
+  State.get ()
 
-fn risky(n: Int) -> Int ! {Exn} {
-  if (n < 0) { fail("negative: " + str(n)) } else { n * 2 }
-}
+risky :: Int -> Int ! Exn
+risky n = if n < 0 then fail ("negative: " + str n) else n * 2
 
-fn main() -> Html {
-  let counted = withState(40, fn() -> Int { counter() });
-  let pair = runState(0, fn() -> Int { State.put(7); State.get() + 1 });
-  let good = attempt(0, fn() -> Int { risky(21) });
-  let bad = attempt(0 - 1, fn() -> Int { risky(0 - 3) });
-  let named = recoverWith(fn(msg: Str) -> Int { length(msg) }, fn() -> Int { risky(0 - 10) });
-  let recovered = recover(99, fn() -> Int { fail("soft") });
-
-  html {
-    <div class="card">
-      <h1>{"Algebraic effects"}</h1>
-      <p class="state">{str(counted) + " / " + str(pair)}</p>
-      <p class="exn">{str(good) + " / " + str(bad) + " / " + str(named) + " / " + str(recovered)}</p>
-    </div>
-  }
-}
+main :: Html
+main = do
+  let counted = withState 40 (\() -> counter ())
+  let pair =
+        runState 0 (\() -> do
+          State.put 7
+          State.get () + 1)
+  let good = attempt 0 (\() -> risky 21)
+  let bad = attempt (0 - 1) (\() -> risky (0 - 3))
+  let named = recoverWith (\(msg :: Str) -> length msg) (\() -> risky (0 - 10))
+  let recovered = recover 99 (\() -> fail "soft")
+  <div class="card">
+    <h1>{"Algebraic effects"}</h1>
+    <p class="state">{str counted + " / " + str pair}</p>
+    <p class="exn">
+      {str good + " / " + str bad + " / " + str named + " / " + str recovered}
+    </p>
+  </div>

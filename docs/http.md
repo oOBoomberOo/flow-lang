@@ -8,15 +8,14 @@ supplies the raw request and route primitives. This is why `Request` and
 ## The request capability
 
 ```flow
-pub effect Request @ server {
-  fn current() -> RequestObject
-}
+effect Request @ server where
+  current :: () -> RequestObject
 ```
 
 `RequestObject` is a record:
 
 ```flow
-pub type RequestObject = {
+type RequestObject = {
   method: Str,
   path: Str,
   query: Str,
@@ -42,15 +41,14 @@ Helpers: `queryParam(req, name)`, `pathParam(req, name)` and
 ## The routing capability
 
 ```flow
-pub effect Router @ server {
-  fn mount(routes: List<Route>) -> Unit
-  fn notFound(handler: Handler) -> Unit
-}
+effect Router @ server where
+  mount :: List Route -> ()
+  notFound :: Handler -> ()
 ```
 
 ```flow
-pub type Handler = (RequestObject) -> Response
-pub type Route = { method: Str, path: Str, handler: Handler }
+type Handler = RequestObject -> Response
+type Route = { method :: Str, path :: Str, handler :: Handler }
 ```
 
 `Router.mount` and `Router.notFound` are effect operations. Their provider in
@@ -58,36 +56,32 @@ pub type Route = { method: Str, path: Str, handler: Handler }
 
 ## Easy routing
 
-A program opts into HTTP routing by declaring and exporting `fn routes()`.
+A program opts into HTTP routing by defining `routes :: () -> ()`.
 The host calls it once after loading the server bundle:
 
 ```flow
-use std::http::{
+import Http (
   get, post, Router, Request, RequestObject, Response,
   textResponse, htmlResponse, jsonResponse, queryParam, pathParam,
-  notFoundResponse,
-}
+  notFoundResponse)
 
-fn routes() -> Unit {
-  Router.mount([
-    get("/", fn(req: RequestObject) -> Response {
-      let who = match queryParam(req, "name") { Some(n) => n, None => "world" };
-      htmlResponse("<h1>Hello " + who + "</h1>")
-    }),
-    post("/echo", fn(req: RequestObject) -> Response { textResponse(req.body) }),
-    get("/users/:id", fn(req: RequestObject) -> Response {
-      match pathParam(req, "id") {
-        Some(id) => textResponse("user " + id),
-        None => notFoundResponse("missing id"),
-      }
-    }),
-  ]);
-  Router.notFound(fn(req: RequestObject) -> Response {
-    notFoundResponse("no route for " + req.path)
-  });
-}
+routes :: () -> ()
+routes () =
+  Router.mount [
+    get "/" (\req ->
+      let who = case queryParam req "name" of
+            Some n -> n
+            None -> "world"
+      in htmlResponse ("<h1>Hello " + who + "</h1>")),
+    post "/echo" (\req -> textResponse req.body),
+    get "/users/:id" (\req ->
+      case pathParam req "id" of
+        Some id -> textResponse ("user " + id)
+        None -> notFoundResponse "missing id")
+  ]
 
-fn main() -> Html { html { <p>{"client app"}</p> } }
+main :: Html
+main = <p>{"client app"}</p>
 ```
 
 The route constructors are `get`, `post`, `put`, `patch`, `del` and the
@@ -97,7 +91,7 @@ matching is method + path, with query/body/headers left to the handler.
 ## Responses
 
 ```flow
-pub type Response = {
+type Response = {
   status: Int,
   contentType: Str,
   headers: List<(Str, Str)>,

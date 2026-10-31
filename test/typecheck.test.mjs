@@ -10,152 +10,217 @@ const page = (body) => `fn main() -> Html { html { ${body} } }`;
 /* ------------------------- types ------------------------- */
 
 test("literals and arithmetic type-check", () => {
-  ok(page(`<p>{1 + 2 * 3}</p>`));
+  ok(`main :: Html
+main = <p>{1 + 2 * 3}</p>`);
 });
 
 test("string concatenation", () => {
-  ok(page(`<p>{"a" + "b"}</p>`));
+  ok(`main :: Html
+main = <p>{"a" + "b"}</p>`);
 });
 
 test("arithmetic on a string is a type error", () => {
-  bad(page(`<p>{1 + "a"}</p>`), /right operand of '\+' \(left is Int\): expected Int, got Str/);
+  bad(`main :: Html
+main = <p>{1 + "a"}</p>`, /right operand of '\+' \(left is Int\): expected Int, got Str/);
 });
 
 test("condition must be Bool", () => {
-  bad(page(`<p>{if (1) { "a" } else { "b" }}</p>`), /if condition/);
+  bad(`main :: Html
+main = <p>{if 1 then "a" else "b"}</p>`, /if condition/);
 });
 
 test("applying a non-function is rejected", () => {
-  bad(`fn f() -> Int { 1 } fn main() -> Html { html { <p>{f(1)}</p> } }`, /expected 0 argument|argument/);
+  bad(`f :: () -> Int
+f () = 1
+
+main :: Html
+main = <p>{f 1}</p>`, /expected 0 argument|argument/);
 });
 
 test("unbound names are rejected", () => {
-  bad(page(`<p>{nope}</p>`), /unbound name 'nope'/);
+  bad(`main :: Html
+main = <p>{nope}</p>`, /unbound name 'nope'/);
 });
 
 /* ------------------------- ADTs ------------------------- */
 
 test("exhaustive match on an ADT", () => {
-  ok(`
-type Colour = Red | Green | Blue
-fn name(c: Colour) -> Str {
-  match c { Red => "red", Green => "green", Blue => "blue" }
-}
-${page(`<p>{name(Red)}</p>`)}`);
+  ok(`data Colour = Red | Green | Blue
+
+name :: Colour -> Str
+name c = case c of
+  Red -> "red"
+  Green -> "green"
+  Blue -> "blue"
+
+main :: Html
+main = <p>{name Red}</p>`);
 });
 
 test("non-exhaustive match is a type error", () => {
-  bad(`
-type Colour = Red | Green | Blue
-fn name(c: Colour) -> Str { match c { Red => "red", Green => "green" } }
-${page(`<p>{name(Red)}</p>`)}`, /non-exhaustive match on Colour: missing Blue/);
+  bad(`data Colour = Red | Green | Blue
+
+name :: Colour -> Str
+name c = case c of
+  Red -> "red"
+  Green -> "green"
+
+main :: Html
+main = <p>{name Red}</p>`, /non-exhaustive match on Colour: missing Blue/);
 });
 
 test("match arms must agree on a type", () => {
-  bad(`
-type C = A | B
-fn f(c: C) -> Str { match c { A => "a", B => 1 } }
-${page(`<p>{f(A)}</p>`)}`, /match arm returns Int, but the other arms return Str/);
+  bad(`data C = A | B
+
+f :: C -> Str
+f c = case c of
+  A -> "a"
+  B -> 1
+
+main :: Html
+main = <p>{f A}</p>`, /match arm returns Int, but the other arms return Str/);
 });
 
 test("list patterns bind head and tail", () => {
-  ok(`
-fn sum(xs: List<Int>) -> Int {
-  match xs { [] => 0, [x, ..rest] => x + sum(rest) }
-}
-${page(`<p>{sum([1,2,3])}</p>`)}`);
+  ok(`sum :: List Int -> Int
+sum xs = case xs of
+  [] -> 0
+  x : rest -> x + sum rest
+
+main :: Html
+main = <p>{sum [1, 2, 3]}</p>`);
 });
 
 test("constructor arity is checked", () => {
-  bad(`
-type Num = Nothing | Just(Int)
-fn f(o: Num) -> Int { match o { Nothing => 0, Just(a, b) => a } }
-fn main() -> Html { html { <p>{str(f(Nothing))}</p> } }`, /expects 1 pattern argument/);
+  bad(`data Num = Nothing | Just Int
+
+f :: Num -> Int
+f o = case o of
+  Nothing -> 0
+  Just a b -> a
+
+main :: Html
+main = <p>{str (f Nothing)}</p>`, /expects 1 pattern argument/);
 });
 
 test("unknown type names are rejected", () => {
-  bad(`
-type Colour = Red
-fn f(c: Colour) -> Colour { c }
-${page(`<p>{str(f(1))}</p>`)}`, /unknown type 'Red'/);
+  bad(`type Colour = Red
+
+f :: Colour -> Colour
+f c = c
+
+main :: Html
+main = <p>{str (f 1)}</p>`, /unknown type 'Red'/);
 });
 
 test("aliases resolve", () => {
-  ok(`
-type Id = Int
-fn f(x: Id) -> Id { x }
-${page(`<p>{f(1)}</p>`)}`);
+  ok(`type Id = Int
+
+f :: Id -> Id
+f x = x
+
+main :: Html
+main = <p>{f 1}</p>`);
 });
 
 /* ------------------------- traits ------------------------- */
 
 test("trait dispatch resolves by type", () => {
-  const r = ok(`
-trait Show<a> { fn show(x: a) -> Str }
-impl Show for Int { fn show(x: Int) -> Str { "i" } }
-impl Show for Str { fn show(x: Str) -> Str { "s" } }
-${page(`<p>{Show.show(1) + Show.show("x")}</p>`)}`);
+  const r = ok(`class Show a where
+  show :: a -> Str
+
+instance Show Int where
+  show x = "i"
+
+instance Show Str where
+  show x = "s"
+
+main :: Html
+main = <p>{Show.show 1 + Show.show "x"}</p>`);
   assert.equal(r.diagnostics.length, 0);
 });
 
 test("missing instance is a type error", () => {
-  bad(`
-trait Show<a> { fn show(x: a) -> Str }
-${page(`<p>{Show.show(1)}</p>`)}`, /no instance of Show for Int/);
+  bad(`class Show a where
+  show :: a -> Str
+
+main :: Html
+main = <p>{Show.show 1}</p>`, /no instance of Show for Int/);
 });
 
 test("generic instances match any element", () => {
-  ok(`
-type Box<a> = Box(a)
-trait Show<a> { fn show(x: a) -> Str }
-impl Show<a> for List<a> { fn show(xs: List<a>) -> Str { "list" } }
-${page(`<p>{Show.show([1,2,3])}</p>`)}`);
+  ok(`data Box a = Box a
+
+class Show a where
+  show :: a -> Str
+
+instance Show (List a) a where
+  show xs = "list"
+
+main :: Html
+main = <p>{Show.show [1, 2, 3]}</p>`);
 });
 
 /* ------------------------- effects ------------------------- */
 
 test("declared effect row must cover inferred effects", () => {
-  bad(`
-effect Server @ server { fn now() -> Int }
-fn f() -> Int ! {} { Server.now() }
-${page(`<p>{f()}</p>`)}`, /unhandled effect\(s\) \{Server\}/);
+  bad(`effect Server @ server where
+  now :: () -> Int
+
+f :: () -> Int ! {}
+f () = Server.now ()
+
+main :: Html
+main = <p>{f ()}</p>`, /unhandled effect\(s\) \{Server\}/);
 });
 
 test("effect operations require a declared effect", () => {
-  ok(`
-effect Clock { fn tick() -> Int }
-provide Clock with { tick = fn() -> Int { 7 } }
-${page(`<p>{Clock.tick()}</p>`)}`);
+  ok(`effect Clock where
+  tick :: () -> Int
+
+provide Clock where
+  tick () = 7
+
+main :: Html
+main = <p>{Clock.tick ()}</p>`);
 });
 
 test("provider signature is checked", () => {
-  bad(`
-effect Clock { fn tick() -> Int }
-provide Clock with { tick = fn() -> Str { "no" } }
-${page(`<p>{Clock.tick()}</p>`)}`, /does not match its signature/);
+  bad(`effect Clock where
+  tick :: () -> Int
+
+provide Clock where
+  tick () = "no"
+
+main :: Html
+main = <p>{Clock.tick ()}</p>`, /does not match its signature/);
 });
 
 /* ------------------------- placement ------------------------- */
 
 test("a pure program is single-tier", () => {
-  const r = ok(page(`<p>{"hi"}</p>`));
+  const r = ok(`main :: Html
+main = <p>{"hi"}</p>`);
   assert.equal(r.diagnostics.length, 0);
 });
 
 test("client state never crosses", () => {
-  const r = ok(`
-effect Client @ client { fn state<a>(init: a) -> Cell<a> }
-fn main() -> Html {
-  let n = Client.state(0);
-  html { <div>{if (n.get() > 0) { <b>{"hot"}</b> } else { <i>{"cold"}</i> }}</div> }
-}`);
+  const r = ok(`effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = do
+  let n = Client.state 0
+  <div>{if n.get () > 0 then <b>{"hot"}</b> else <i>{"cold"}</i>}</div>`);
   assert.equal(r.diagnostics.length, 0);
 });
 
 test("server authority creates a server-side cut", () => {
-  const r = ok(`
-effect Server @ server { fn secret(k: Str) -> Str }
-${page(`<p>{Server.secret("k")}</p>`)}`);
+  const r = ok(`effect Server @ server where
+  secret :: Str -> Str
+
+main :: Html
+main = <p>{Server.secret "k"}</p>`);
   assert.equal(r.diagnostics.length, 1);
   assert.match(r.diagnostics[0], /server-side block/);
   assert.match(r.server, /R\.serve\("cut1"/);
@@ -163,13 +228,16 @@ ${page(`<p>{Server.secret("k")}</p>`)}`);
 });
 
 test("client code calling a server op inside an if keeps the if on the client", () => {
-  const r = ok(`
-effect Server @ server { fn secret(k: Str) -> Str }
-effect Client @ client { fn state<a>(init: a) -> Cell<a> }
-fn main() -> Html {
-  let on = Client.state(false);
-  html { <div>{if (on.get()) { <p>{Server.secret("k")}</p> } else { <p>{"no"}</p> }}</div> }
-}`);
+  const r = ok(`effect Server @ server where
+  secret :: Str -> Str
+
+effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = do
+  let on = Client.state False
+  <div>{if on.get () then <p>{Server.secret "k"}</p> else <p>{"no"}</p>}</div>`);
   assert.equal(r.diagnostics.length, 1, "exactly the secret is cut out");
   assert.match(r.client, /\$impl_CellOps_\d+_get/); // condition stays on the client
   assert.match(r.client, /__flow\.get/);            // Cell.get is std code over the FFI
@@ -177,10 +245,14 @@ fn main() -> Html {
 });
 
 test("server code can consume a client value (uplink)", () => {
-  const r = ok(`
-effect Server @ server { fn now() -> Int }
-effect Client @ client { fn now() -> Int }
-${page(`<p>{Server.now() - Client.now()}</p>`)}`);
+  const r = ok(`effect Server @ server where
+  now :: () -> Int
+
+effect Client @ client where
+  now :: () -> Int
+
+main :: Html
+main = <p>{Server.now () - Client.now ()}</p>`);
   assert.equal(r.diagnostics.length, 2);
   assert.ok(r.diagnostics.some((d) => /client-side block/.test(d)));
   assert.match(r.client, /R\.serve/);
@@ -188,104 +260,136 @@ ${page(`<p>{Server.now() - Client.now()}</p>`)}`);
 });
 
 test("server value used in client arithmetic is cut only once", () => {
-  const r = ok(`
-effect Server @ server { fn now() -> Int }
-fn main() -> Html {
-  let t = Server.now();
-  html { <p>{"a"}{t}</p> }
-}`);
+  const r = ok(`effect Server @ server where
+  now :: () -> Int
+
+main :: Html
+main = do
+  let t = Server.now ()
+  <p>{"a"} {t}</p>`);
   assert.equal(r.diagnostics.length, 1);
 });
 
 test("a non-serializable value cannot cross", () => {
-  bad(`
-effect Server @ server { fn log(m: Str) -> Unit }
-fn main() -> Html {
-  let f = fn(x: Int) -> Int { x };
-  html { <p>{Server.log(str(f))}</p> }
-}`, /cannot cross the boundary|functions are not serializable/);
+  bad(`effect Server @ server where
+  log :: Str -> ()
+
+main :: Html
+main = do
+  let f = \\(x :: Int) -> x
+  <p>{Server.log (str f)}</p>`, /cannot cross the boundary|functions are not serializable/);
 });
 
 /* ------------------------- html ------------------------- */
 
 test("components take a record and render", () => {
-  ok(`
-fn Card(props: { title: Str, children: Html }) -> Html {
-  html { <section><h2>{props.title}</h2>{props.children}</section> }
-}
-${page(`<Card title={"t"}><p>{"body"}</p></Card>`)}`);
+  ok(`Card :: { title :: Str, children :: Html } -> Html
+Card props =
+  <section>
+    <h2>{props.title}</h2>
+    {props.children}
+  </section>
+
+main :: Html
+main =
+  <Card title={"t"}>
+    <p>{"body"}</p>
+  </Card>`);
 });
 
 test("event handlers must take an Event", () => {
-  bad(page(`<button onClick={fn(x: Int) { 1 }}>{"x"}</button>`), /event handler 'onClick': expected \(Event\) -> Unit, got \(Int\) -> Int/);
+  bad(`main :: Html
+main = <button onClick={\\(x :: Int) -> 1}>{"x"}</button>`, /event handler 'onClick': expected Event -> Unit, got Int -> Int/);
 });
 
 test("adt values in html holes render structurally", () => {
-  const r = ok(`
-type Weird = W(Int)
-${page(`<p>{W(1)}</p>`)}`);
+  const r = ok(`data Weird = W Int
+
+main :: Html
+main = <p>{W 1}</p>`);
   assert.match(r.client, /R\.ctor\("W"/);
 });
 
 /* ------------------------- placement annotations ------------------------- */
 
 test("placement annotations: matching signatures are accepted", () => {
-  ok(`
-fn view() -> Html@client { html { <p>{"x"}</p> } }
-fn needClient(x: Str@client) -> Str { x }
-fn needServer(x: Str@server) -> Str { x }
-fn main() -> Html {
-  let c = Client.state("x");
-  let a = needClient(c.get());
-  let b = needServer(Server.secret("k"));
-  let lit: Str@client = "hi";
-  html { <div>{view()}<p>{a}{b}{lit}</p></div> }
-}`);
+  ok(`view :: () -> Html @client
+view () = <p>{"x"}</p>
+
+needClient :: (Str @client) -> Str
+needClient x = x
+
+needServer :: (Str @server) -> Str
+needServer x = x
+
+main :: Html
+main = do
+  let c = Client.state "x"
+  let a = needClient (c.get ())
+  let b = needServer (Server.secret "k")
+  let
+    lit :: Str @client
+    lit = "hi"
+  <div>
+    {view ()}
+    <p>{a} {b} {lit}</p>
+  </div>`);
 });
 
 test("placement annotations: a client return cannot be server-placed", () => {
-  bad(`
-fn bad() -> Int@client { Server.now() }
-fn main() -> Html { html { <p>{str(bad())}</p> } }
+  bad(`bad :: () -> Int @client
+bad () = Server.now ()
+
+main :: Html
+main = <p>{str (bad ())}</p>
 `, /placement mismatch: fn bad is annotated @client, but is placed server/);
 });
 
 test("placement annotations: a server return cannot be client-placed", () => {
-  bad(`
-fn bad() -> Html@server { html { <p>{"x"}</p> } }
-fn main() -> Html { html { <p>{str(1)}</p> } }
+  bad(`bad :: () -> Html @server
+bad () = <p>{"x"}</p>
+
+main :: Html
+main = <p>{str 1}</p>
 `, /placement mismatch: fn bad is annotated @server, but is placed client/);
 });
 
 test("placement annotations: call arguments must match annotated parameters", () => {
-  bad(`
-fn need(x: Str@server) -> Str { x }
-fn main() -> Html {
-  let c = Client.state("x");
-  html { <p>{need(c.get())}</p> }
-}
+  bad(`need :: (Str @server) -> Str
+need x = x
+
+main :: Html
+main = do
+  let c = Client.state "x"
+  <p>{need (c.get ())}</p>
 `, /placement mismatch: argument 1 to need is annotated @server, but is placed client/);
 });
 
 test("placement annotations: let bindings are checked", () => {
-  bad(`
-fn main() -> Html {
-  let x: Str@server = Client.state("x").get();
-  html { <p>{x}</p> }
-}
+  bad(`main :: Html
+main = do
+  let
+    x :: Str @server
+    x = ((Client.state "x").get) ()
+  <p>{x}</p>
 `, /placement mismatch: 'x' is annotated @server, but is placed client/);
 });
 
 test("effect rows are per-instantiation, so one server callback does not poison others", () => {
-  const r = ok(`
-fn call(g: (Int) -> Int, x: Int) -> Int { g(x) }
-fn serverUse() -> Int { call(fn(n: Int) -> Int { Server.now() }, 1) }
-fn clientUse() -> Int {
-  let pure = fn(n: Int) -> Int { n + 1 };
-  let ignored = call(pure, 2);
-  pure(3) + ignored
-}
-fn main() -> Html { html { <p>{str(clientUse())}</p> } }
+  const r = ok(`call :: (Int -> Int) -> Int -> Int
+call g x = g x
+
+serverUse :: () -> Int
+serverUse () = call (\\(n :: Int) -> Server.now ()) 1
+
+clientUse :: () -> Int
+clientUse () = do
+  let pure = \\(n :: Int) -> n + 1
+  let ignored = call pure 2
+  pure 3 + ignored
+
+main :: Html
+main = <p>{str (clientUse ())}</p>
 `);
   const call = r.mod.fns.get("call");
   const clientUse = r.mod.fns.get("clientUse");

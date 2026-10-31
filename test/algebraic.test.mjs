@@ -38,32 +38,37 @@ async function withHost(source, fn) {
   }
 }
 
-const ROUTES = (body) => `use std::state::{withState, runState, execState, State}
-use std::http::{get as httpGet, Router, RequestObject, Response, textResponse}
+const ROUTES = (body) => `import State (withState, runState, execState, State)
+import Http (get as httpGet, Router, RequestObject, Response, textResponse)
 
 ${body}
 
-fn routes() -> Unit {
-  Router.mount([ httpGet("/run", fn(_req: RequestObject) -> Response { textResponse(run()) }) ]);
-}
+routes :: () -> ()
+routes () = Router.mount [httpGet "/run" (\\_req -> textResponse (run ()))]
 
-fn main() -> Html { html { <p>{"algebraic"}</p> } }
+main :: Html
+main = <p>{"algebraic"}</p>
 `;
 
 test("algebraic: a state handler resumes at get/put and returns the body result", async () => {
-  const source = ROUTES(`
-fn compute() -> Int ! {State} {
-  State.put(10);
-  State.put(State.get() + 5);
-  State.get() + State.get()
-}
+  const source = ROUTES(`compute :: () -> Int ! State
+compute () = do
+  State.put 10
+  State.put (State.get () + 5)
+  State.get () + State.get ()
 
-fn run() -> Str {
-  let value = withState(0, fn() -> Int { compute() });
-  let pair = runState(1, fn() -> Int { State.put(41); State.get() });
-  let end = execState(0, fn() -> Int { State.put(9); 0 });
-  str(value) + "|" + str(pair) + "|" + str(end)
-}
+run :: () -> Str
+run () = do
+  let value = withState 0 (\\() -> compute ())
+  let pair =
+        runState 1 (\\() -> do
+          State.put 41
+          State.get ())
+  let end =
+        execState 0 (\\() -> do
+          State.put 9
+          0)
+  str value + "|" + str pair + "|" + str end
 `);
   await withHost(source, async (host, result) => {
     assert.ok(result.server.includes('R.handle("State"'), "the handler is emitted");
@@ -78,21 +83,19 @@ fn run() -> Str {
 });
 
 test("algebraic: a handler that does not resume aborts the body", async () => {
-  const source = ROUTES(`
-algebraic effect Fail {
-  fn fail(msg: Str) -> Int
-}
+  const source = ROUTES(`algebraic effect Fail where
+  fail :: Str -> Int
 
-fn guarded() -> Int {
-  handle Fail with {
-    fail = fn(msg: Str) -> Int { 0 - 1 }
-  } {
-    Fail.fail("boom");
+guarded :: () -> Int
+guarded () =
+  handle Fail with
+    fail msg = 0 - 1
+  in do
+    Fail.fail "boom"
     7
-  }
-}
 
-fn run() -> Str { str(guarded()) }
+run :: () -> Str
+run () = str (guarded ())
 `);
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/run");
@@ -102,23 +105,20 @@ fn run() -> Str { str(guarded()) }
 });
 
 test("algebraic: handler code after resume runs and can transform the result", async () => {
-  const source = ROUTES(`
-algebraic effect Tick {
-  fn tick() -> Unit
-}
+  const source = ROUTES(`algebraic effect Tick where
+  tick :: () -> ()
 
-fn run() -> Str {
-  let out = handle Tick with {
-    tick = fn() -> Int {
-      let rest = resume(());
-      rest + 100
-    }
-  } {
-    Tick.tick();
-    7
-  };
-  str(out)
-}
+run :: () -> Str
+run () = do
+  let out =
+        handle Tick with
+          tick () = do
+            let rest = resume ()
+            rest + 100
+        in do
+          Tick.tick ()
+          7
+  str out
 `);
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/run");
@@ -128,14 +128,13 @@ fn run() -> Str {
 });
 
 test("algebraic: inner handlers shadow outer ones and restore afterwards", async () => {
-  const source = ROUTES(`
-fn run() -> Str {
-  let out = withState(5, fn() -> Int {
-    let inner = withState(100, fn() -> Int { State.get() });
-    State.get() + inner
-  });
-  str(out)
-}
+  const source = ROUTES(`run :: () -> Str
+run () = do
+  let out =
+        withState 5 (\\() -> do
+          let inner = withState 100 (\\() -> State.get ())
+          State.get () + inner)
+  str out
 `);
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/run");
@@ -145,22 +144,21 @@ fn run() -> Str {
 });
 
 test("algebraic: operations of an unhandled effect are forwarded to the outer handler", async () => {
-  const source = ROUTES(`
-algebraic effect A { fn a() -> Int }
-algebraic effect B { fn b() -> Int }
+  const source = ROUTES(`algebraic effect A where
+  a :: () -> Int
 
-fn run() -> Str {
-  let out = handle A with {
-    a = fn() -> Int { resume(1) }
-  } {
-    handle B with {
-      b = fn() -> Int { resume(2) }
-    } {
-      A.a() + B.b()
-    }
-  };
-  str(out)
-}
+algebraic effect B where
+  b :: () -> Int
+
+run :: () -> Str
+run () = do
+  let out =
+        handle A with
+          a () = resume 1
+        in handle B with
+          b () = resume 2
+        in A.a () + B.b ()
+  str out
 `);
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/run");
@@ -170,35 +168,44 @@ fn run() -> Str {
 });
 
 test("algebraic: the handled effect leaves the row", () => {
-  const ok = compileSource(`
-algebraic effect E { fn ask() -> Int }
+  const ok = compileSource(`algebraic effect E where
+  ask :: () -> Int
 
-fn f() -> Int ! {} {
-  handle E with { ask = fn() -> Int { resume(0) } } { E.ask() }
-}
+f :: () -> Int
+f () =
+  handle E with
+    ask () = resume 0
+  in E.ask ()
 
-fn main() -> Html { html { <p>{str(f())}</p> } }
+main :: Html
+main = <p>{str (f ())}</p>
 `, "row.flow");
   assert.deepEqual(ok.diagnostics, []);
 
   assert.throws(
-    () => compileSource(`
-algebraic effect E { fn ask() -> Int }
+    () => compileSource(`algebraic effect E where
+  ask :: () -> Int
 
-fn f() -> Int ! {} { E.ask() }
+f :: () -> Int
+f () = E.ask ()
 
-fn main() -> Html { html { <p>{str(f())}</p> } }
+main :: Html
+main = <p>{str (f ())}</p>
 `, "row.flow"),
-    /unhandled effect\(s\) \{E\}/,
+    /performs algebraic effect\(s\) \{E\} without handling them/,
   );
 });
 
 test("algebraic: provide is rejected", () => {
   assert.throws(
-    () => compileSource(`
-algebraic effect E { fn ask() -> Int }
-provide E with { ask = fn() -> Int { 0 } }
-fn main() -> Html { html { <p>{"no"}</p> } }
+    () => compileSource(`algebraic effect E where
+  ask :: () -> Int
+
+provide E where
+  ask () = 0
+
+main :: Html
+main = <p>{"no"}</p>
 `, "provide.flow"),
     /algebraic effect 'E' cannot be provided/,
   );
@@ -206,8 +213,8 @@ fn main() -> Html { html { <p>{"no"}</p> } }
 
 test("algebraic: resume is only available inside a handler operation", () => {
   assert.throws(
-    () => compileSource(`
-fn main() -> Html { html { <p>{str(resume(1))}</p> } }
+    () => compileSource(`main :: Html
+main = <p>{str (resume 1)}</p>
 `, "resume.flow"),
     /'resume' is only available inside an operation handler/,
   );
@@ -215,19 +222,19 @@ fn main() -> Html { html { <p>{str(resume(1))}</p> } }
 
 test("algebraic: resume must be called directly, and only once", async () => {
   assert.throws(
-    () => compileSource(`
-algebraic effect E { fn ask() -> Int }
+    () => compileSource(`algebraic effect E where
+  ask :: () -> Int
 
-fn f() -> Int {
-  handle E with {
-    ask = fn() -> Int {
-      let k = resume;
-      k(1)
-    }
-  } { E.ask() }
-}
+f :: () -> Int
+f () =
+  handle E with
+    ask () = do
+      let k = resume
+      k 1
+  in E.ask ()
 
-fn main() -> Html { html { <p>{str(f())}</p> } }
+main :: Html
+main = <p>{str (f ())}</p>
 `, "resume-value.flow"),
     /'resume' must be called directly/,
   );
@@ -246,14 +253,17 @@ fn main() -> Html { html { <p>{str(f())}</p> } }
 
 test("algebraic: a handler operation must return the handled result", () => {
   assert.throws(
-    () => compileSource(`
-algebraic effect E { fn ask() -> Int }
+    () => compileSource(`algebraic effect E where
+  ask :: () -> Int
 
-fn f() -> Int {
-  handle E with { ask = fn() -> Unit { () } } { E.ask() }
-}
+f :: () -> Int
+f () =
+  handle E with
+    ask () = ()
+  in E.ask ()
 
-fn main() -> Html { html { <p>{str(f())}</p> } }
+main :: Html
+main = <p>{str (f ())}</p>
 `, "shape.flow"),
     /must return the handled result Int/,
   );
@@ -262,14 +272,14 @@ fn main() -> Html { html { <p>{str(f())}</p> } }
 test("algebraic: an effectful callback needs an effect row on the consumer", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-alg-cb-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, `use std::state::State
-use std::list::{map}
+  fs.writeFileSync(entry, `import State (State)
+import List (map)
 
-fn f() -> List<Int> {
-  map([1], fn(x: Int) -> Int { State.get() + x })
-}
+f :: () -> List Int
+f () = map [1] (\\(x :: Int) -> State.get () + x)
 
-fn main() -> Html { html { <p>{str(f())}</p> } }
+main :: Html
+main = <p>{str (f ())}</p>
 `);
   try {
     assert.throws(
@@ -282,26 +292,25 @@ fn main() -> Html { html { <p>{str(f())}</p> } }
 });
 
 test("algebraic: std::exn aborts, maps failures, and recovers at the failure point", async () => {
-  const source = `use std::exn::{attempt, recoverWith, recover, fail, Exn}
-use std::http::{get as httpGet, Router, RequestObject, Response, textResponse}
+  const source = `import Exn (attempt, recoverWith, recover, fail, Exn)
+import Http (get as httpGet, Router, RequestObject, Response, textResponse)
 
-fn risky(n: Int) -> Int ! {Exn} {
-  if (n < 0) { fail("negative") } else { n * 2 }
-}
+risky :: Int -> Int ! Exn
+risky n = if n < 0 then fail "negative" else n * 2
 
-fn run() -> Str {
-  let a = attempt(0, fn() -> Int { risky(21) });
-  let b = attempt(0 - 1, fn() -> Int { risky(0 - 3) });
-  let c = recoverWith(fn(_m: Str) -> Int { 5 }, fn() -> Int { risky(0 - 3) });
-  let d = recover(99, fn() -> Int { fail("soft") });
-  str(a) + "|" + str(b) + "|" + str(c) + "|" + str(d)
-}
+run :: () -> Str
+run () = do
+  let a = attempt 0 (\\() -> risky 21)
+  let b = attempt (0 - 1) (\\() -> risky (0 - 3))
+  let c = recoverWith (\\(_m :: Str) -> 5) (\\() -> risky (0 - 3))
+  let d = recover 99 (\\() -> fail "soft")
+  str a + "|" + str b + "|" + str c + "|" + str d
 
-fn routes() -> Unit {
-  Router.mount([ httpGet("/run", fn(_req: RequestObject) -> Response { textResponse(run()) }) ]);
-}
+routes :: () -> ()
+routes () = Router.mount [httpGet "/run" (\\(_req :: RequestObject) -> textResponse (run ()))]
 
-fn main() -> Html { html { <p>{"exn"}</p> } }
+main :: Html
+main = <p>{"exn"}</p>
 `;
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/run");
@@ -322,13 +331,16 @@ test("algebraic: unhandled operations fail loudly at runtime", async () => {
 });
 
 test("algebraic: the client entry drives main through the runtime", () => {
-  const r = compileSource(`
-algebraic effect E { fn ask() -> Int }
+  const r = compileSource(`algebraic effect E where
+  ask :: () -> Int
 
-fn main() -> Html {
-  let n = handle E with { ask = fn() -> Int { resume(3) } } { E.ask() };
-  html { <p>{str(n)}</p> }
-}
+main :: Html
+main = do
+  let n =
+        handle E with
+          ask () = resume 3
+        in E.ask ()
+  <p>{str n}</p>
 `, "client.flow");
   assert.ok(r.client.includes("R.run(() => main())"), "main is driven, not called bare");
   assert.ok(/function\*/.test(r.client), "the handled body is a generator");

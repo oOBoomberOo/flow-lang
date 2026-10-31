@@ -1,44 +1,38 @@
-// std::html — markup helpers and ready-made components.
+module Html (classNames, text, Card, Badge, Page, Button, Items) where
 
-pub fn classNames(xs: List<Str>) -> Str { join(xs, " ") }
+-- std::html — markup helpers and ready-made components.
+classNames :: List Str -> Str
+classNames xs = join xs " "
 
-pub fn text(s: Str) -> Html { html { <span class="text">{s}</span> } }
+text :: Str -> Html
+text s = <span class="text">{s}</span>
 
-pub fn Card(props: { title: Str, children: Html }) -> Html {
-  html {
-    <section class="card">
-      <h2 class="card-title">{props.title}</h2>
-      <div class="card-body">{props.children}</div>
-    </section>
-  }
-}
+Card :: { title :: Str, children :: Html } -> Html
+Card props =
+  <section class="card">
+    <h2 class="card-title">{props.title}</h2>
+    <div class="card-body">{props.children}</div>
+  </section>
 
-pub fn Badge(props: { label: Str }) -> Html {
-  html { <span class="badge">{props.label}</span> }
-}
+Badge :: { label :: Str } -> Html
+Badge props = <span class="badge">{props.label}</span>
 
-pub fn Page(props: { title: Str, children: Html }) -> Html {
-  html {
-    <main class="page">
-      <header class="page-header"><h1>{props.title}</h1></header>
-      <div class="page-body">{props.children}</div>
-    </main>
-  }
-}
+Page :: { title :: Str, children :: Html } -> Html
+Page props =
+  <main class="page">
+    <header class="page-header">
+      <h1>{props.title}</h1>
+    </header>
+    <div class="page-body">{props.children}</div>
+  </main>
 
-pub fn Button(props: { label: Str, onClick: (Event) -> Unit }) -> Html {
-  html {
-    <button class="btn" onClick={props.onClick}>{props.label}</button>
-  }
-}
+Button :: { label :: Str, onClick :: Event -> () } -> Html
+Button props = <button class="btn" onClick={props.onClick}>{props.label}</button>
 
-pub fn Items<a>(props: { items: List<a>, render: (a) -> Html }) -> Html {
-  html { <ul class="list">{mapItems(props.items, props.render)}</ul> }
-}
+Items :: { items :: List a, render :: a -> Html } -> Html
+Items props = <ul class="list">{mapItems props.items props.render}</ul>
 
-fn mapItems<a>(items: List<a>, render: (a) -> Html) -> Html {
-  match items {
-    [] => html { <i class="empty"></i> },
-    [x, ..rest] => html { <li class="list-item">{render(x)}{mapItems(rest, render)}</li> },
-  }
-}
+mapItems :: List a -> (a -> Html) -> Html
+mapItems items render = case items of
+  [] -> <i class="empty" />
+  x : rest -> <li class="list-item">{render x} {mapItems rest render}</li>

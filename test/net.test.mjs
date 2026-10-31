@@ -23,24 +23,22 @@ function emit(result, outDir) {
   );
 }
 
-const source = (port) => `use std::net::{get as netGet, NetResult}
-use std::fs::{tmpDir, writeText}
-use std::http::{get, Router, RequestObject, Response, textResponse}
+const source = (port) => `import Net (get as netGet, NetResult)
+import Fs (tmpDir, writeText)
+import Http (get, Router, RequestObject, Response, textResponse)
 
-fn routes() -> Unit {
-  Router.mount([
-    get("/start", fn(_req: RequestObject) -> Response {
-      netGet("http://127.0.0.1:${port}/ping", fn(result: NetResult) -> Unit {
-        writeText(tmpDir() + "/flow-net-test.txt", if (result.ok) { result.body } else { "error:" + result.error })
-      });
-      textResponse("started")
-    })
-  ]);
-}
+routes :: () -> ()
+routes () =
+  Router.mount [
+    get "/start" (\\_req -> do
+      netGet "http://127.0.0.1:${port}/ping" (\\result ->
+        writeText (tmpDir () + "/flow-net-test.txt") (if result.ok then result.body else "error:" + result.error))
+      textResponse "started")
+  ]
 
-fn main() -> Html { html { <p>{"net"}</p> } }
+main :: Html
+main = <p>{"net"}</p>
 `;
-
 function listen(server) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
 }

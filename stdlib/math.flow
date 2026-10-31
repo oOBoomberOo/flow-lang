@@ -1,83 +1,112 @@
-// std::math — Int helpers in Flow, float primitives through the FFI.
+module Math (sqrt, pow, floor, ceil, round, absF, minF, maxF, logF, expF, sinF, cosF, random, pi, e, abs, div, mod, minInt, maxInt, clamp, sum, product, sign) where
 
-// ---------------------------------------------------------------- float host ops
-// These used to be compiler builtins; now they are ordinary std bindings.
+-- std::math — Int helpers in Flow, float primitives through the FFI.
+-- ---------------------------------------------------------------- float host ops
+-- These used to be compiler builtins; now they are ordinary std bindings.
+foreign import js unsafe "Math.sqrt" f_sqrt :: Float -> Float
 
-unsafe extern js fn f_sqrt(x: Float) -> Float = "Math.sqrt"
-unsafe extern js fn f_pow(x: Float, y: Float) -> Float = "Math.pow"
-unsafe extern js fn f_floor(x: Float) -> Int = "Math.floor"
-unsafe extern js fn f_ceil(x: Float) -> Int = "Math.ceil"
-unsafe extern js fn f_round(x: Float) -> Int = "Math.round"
-unsafe extern js fn f_abs(x: Float) -> Float = "Math.abs"
-unsafe extern js fn f_min(a: Float, b: Float) -> Float = "Math.min"
-unsafe extern js fn f_max(a: Float, b: Float) -> Float = "Math.max"
-unsafe extern js fn f_log(x: Float) -> Float = "Math.log"
-unsafe extern js fn f_exp(x: Float) -> Float = "Math.exp"
-unsafe extern js fn f_sin(x: Float) -> Float = "Math.sin"
-unsafe extern js fn f_cos(x: Float) -> Float = "Math.cos"
-unsafe extern js fn f_random() -> Float = "Math.random"
-unsafe extern js fn f_pi() -> Float = "Math.PI"
-unsafe extern js fn f_e() -> Float = "Math.E"
+foreign import js unsafe "Math.pow" f_pow :: Float -> Float -> Float
 
-pub fn sqrt(x: Float) -> Float { f_sqrt(x) }
+foreign import js unsafe "Math.floor" f_floor :: Float -> Int
 
-pub fn pow(x: Float, y: Float) -> Float { f_pow(x, y) }
+foreign import js unsafe "Math.ceil" f_ceil :: Float -> Int
 
-pub fn floor(x: Float) -> Int { f_floor(x) }
+foreign import js unsafe "Math.round" f_round :: Float -> Int
 
-pub fn ceil(x: Float) -> Int { f_ceil(x) }
+foreign import js unsafe "Math.abs" f_abs :: Float -> Float
 
-pub fn round(x: Float) -> Int { f_round(x) }
+foreign import js unsafe "Math.min" f_min :: Float -> Float -> Float
 
-pub fn absF(x: Float) -> Float { f_abs(x) }
+foreign import js unsafe "Math.max" f_max :: Float -> Float -> Float
 
-pub fn minF(a: Float, b: Float) -> Float { f_min(a, b) }
+foreign import js unsafe "Math.log" f_log :: Float -> Float
 
-pub fn maxF(a: Float, b: Float) -> Float { f_max(a, b) }
+foreign import js unsafe "Math.exp" f_exp :: Float -> Float
 
-pub fn logF(x: Float) -> Float { f_log(x) }
+foreign import js unsafe "Math.sin" f_sin :: Float -> Float
 
-pub fn expF(x: Float) -> Float { f_exp(x) }
+foreign import js unsafe "Math.cos" f_cos :: Float -> Float
 
-pub fn sinF(x: Float) -> Float { f_sin(x) }
+foreign import js unsafe "Math.random" f_random :: () -> Float
 
-pub fn cosF(x: Float) -> Float { f_cos(x) }
+foreign import js unsafe "Math.PI" f_pi :: () -> Float
 
-pub fn random() -> Float { f_random() }
+foreign import js unsafe "Math.E" f_e :: () -> Float
 
-/// Constants are dotted FFI targets too: a nullary binding reads the value.
-pub fn pi() -> Float { f_pi() }
+sqrt :: Float -> Float
+sqrt x = f_sqrt x
 
-pub fn e() -> Float { f_e() }
+pow :: Float -> Float -> Float
+pow x y = f_pow x y
 
-// ---------------------------------------------------------------- Int helpers
+floor :: Float -> Int
+floor x = f_floor x
 
-pub fn abs(n: Int) -> Int { if (n < 0) { -n } else { n } }
+ceil :: Float -> Int
+ceil x = f_ceil x
 
-pub fn div(a: Int, b: Int) -> Int { a / b }
+round :: Float -> Int
+round x = f_round x
 
-pub fn mod(a: Int, b: Int) -> Int { a % b }
+absF :: Float -> Float
+absF x = f_abs x
 
-pub fn minInt(a: Int, b: Int) -> Int { if (a < b) { a } else { b } }
+minF :: Float -> Float -> Float
+minF a b = f_min a b
 
-pub fn maxInt(a: Int, b: Int) -> Int { if (a > b) { a } else { b } }
+maxF :: Float -> Float -> Float
+maxF a b = f_max a b
 
-pub fn clamp(n: Int, lo: Int, hi: Int) -> Int { minInt(maxInt(n, lo), hi) }
+logF :: Float -> Float
+logF x = f_log x
 
-pub fn sum(xs: List<Int>) -> Int {
-  match xs {
-    [] => 0,
-    [x, ..rest] => x + sum(rest),
-  }
-}
+expF :: Float -> Float
+expF x = f_exp x
 
-pub fn product(xs: List<Int>) -> Int {
-  match xs {
-    [] => 1,
-    [x, ..rest] => x * product(rest),
-  }
-}
+sinF :: Float -> Float
+sinF x = f_sin x
 
-pub fn sign(n: Int) -> Int {
-  if (n < 0) { -1 } else if (n > 0) { 1 } else { 0 }
-}
+cosF :: Float -> Float
+cosF x = f_cos x
+
+random :: () -> Float
+random () = f_random ()
+
+-- / Constants are dotted FFI targets too: a nullary binding reads the value.
+pi :: () -> Float
+pi () = f_pi ()
+
+e :: () -> Float
+e () = f_e ()
+
+-- ---------------------------------------------------------------- Int helpers
+abs :: Int -> Int
+abs n = if n < 0 then -n else n
+
+div :: Int -> Int -> Int
+div a b = a / b
+
+mod :: Int -> Int -> Int
+mod a b = a % b
+
+minInt :: Int -> Int -> Int
+minInt a b = if a < b then a else b
+
+maxInt :: Int -> Int -> Int
+maxInt a b = if a > b then a else b
+
+clamp :: Int -> Int -> Int -> Int
+clamp n lo hi = minInt (maxInt n lo) hi
+
+sum :: List Int -> Int
+sum xs = case xs of
+  [] -> 0
+  x : rest -> x + sum rest
+
+product :: List Int -> Int
+product xs = case xs of
+  [] -> 1
+  x : rest -> x * product rest
+
+sign :: Int -> Int
+sign n = if n < 0 then -1 else if n > 0 then 1 else 0

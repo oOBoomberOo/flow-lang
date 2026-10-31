@@ -1,31 +1,38 @@
-// std::time — timing built on the FFI, not on compiler intrinsics.
+module Time (nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration) where
 
-unsafe extern js fn date_now() -> Int = "Date.now"
-unsafe extern js fn perf_now() -> Float = "globalThis.performance.now"
+-- std::time — timing built on the FFI, not on compiler intrinsics.
+foreign import js unsafe "Date.now" date_now :: () -> Int
 
-/// Wall-clock milliseconds since the epoch.
-pub fn nowMs() -> Int { date_now() }
+foreign import js unsafe "globalThis.performance.now" perf_now :: () -> Float
 
-/// High-resolution milliseconds since the process started (fractional).
-pub fn nowPrecise() -> Float { perf_now() }
+-- / Wall-clock milliseconds since the epoch.
+nowMs :: () -> Int
+nowMs () = date_now ()
 
-pub fn elapsedSince(start: Int) -> Int { nowMs() - start }
+-- / High-resolution milliseconds since the process started (fractional).
+nowPrecise :: () -> Float
+nowPrecise () = perf_now ()
 
-pub fn since(start: Float) -> Float { perf_now() - start }
+elapsedSince :: Int -> Int
+elapsedSince start = nowMs () - start
 
-pub fn pad2(n: Int) -> Str {
-  if (n < 0) { "00" } else if (n < 10) { "0" + str(n) } else { str(n) }
-}
+since :: Float -> Float
+since start = perf_now () - start
 
-/// `hh:mm:ss` for a duration in milliseconds.
-pub fn hms(ms: Int) -> Str {
-  let total = ms / 1000;
-  pad2(total / 3600) + ":" + pad2((total / 60) % 60) + ":" + pad2(total % 60)
-}
+pad2 :: Int -> Str
+pad2 n = if n < 0 then "00" else if n < 10 then "0" + str n else str n
 
-/// A compact duration: `900ms`, `12s`, `3m 05s`.
-pub fn duration(ms: Int) -> Str {
-  if (ms < 1000) { str(ms) + "ms" }
-  else if (ms < 60000) { str(ms / 1000) + "s" }
-  else { str(ms / 60000) + "m " + pad2((ms / 1000) % 60) + "s" }
-}
+-- / `hh:mm:ss` for a duration in milliseconds.
+hms :: Int -> Str
+hms ms = do
+  let total = ms / 1000
+  pad2 (total / 3600) + ":" + pad2 (total / 60 % 60) + ":" + pad2 (total % 60)
+
+-- / A compact duration: `900ms`, `12s`, `3m 05s`.
+duration :: Int -> Str
+duration ms =
+  if ms < 1000
+    then str ms + "ms"
+    else if ms < 60000
+      then str (ms / 1000) + "s"
+      else str (ms / 60000) + "m " + pad2 (ms / 1000 % 60) + "s"

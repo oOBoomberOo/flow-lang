@@ -1,73 +1,89 @@
-// std::fs — server-side filesystem access.
-//
-// `Fs` is a server effect capability. The server runtime provides it with
-// Node's fs module; the client bundle never receives these primitives, so a
-// filesystem call is placed on the server by the effect's `@ server` authority.
+module Fs (FileInfo, Fs, readText, tryReadText, writeText, appendText, exists, listDir, makeDir, removeFile, removeDir, stat, tmpDir) where
 
-pub type FileInfo = {
-  size: Int,
-  isDir: Bool,
-  modified: Int,
-}
+-- std::fs — server-side filesystem access.
+--
+-- `Fs` is a server effect capability. The server runtime provides it with
+-- Node's fs module; the client bundle never receives these primitives, so a
+-- filesystem call is placed on the server by the effect's `@ server` authority.
+type FileInfo = { size :: Int, isDir :: Bool, modified :: Int }
 
-pub effect Fs @ server {
-  fn readText(path: Str) -> Str
-  fn tryReadText(path: Str) -> Option<Str>
-  fn writeText(path: Str, contents: Str) -> Unit
-  fn appendText(path: Str, contents: Str) -> Unit
-  fn exists(path: Str) -> Bool
-  fn listDir(path: Str) -> List<Str>
-  fn makeDir(path: Str) -> Unit
-  fn removeFile(path: Str) -> Unit
-  fn removeDir(path: Str) -> Unit
-  fn stat(path: Str) -> FileInfo
-  fn tmpDir() -> Str
-}
+effect Fs @ server where
+  readText :: Str -> Str
+  tryReadText :: Str -> Option Str
+  writeText :: Str -> Str -> ()
+  appendText :: Str -> Str -> ()
+  exists :: Str -> Bool
+  listDir :: Str -> List Str
+  makeDir :: Str -> ()
+  removeFile :: Str -> ()
+  removeDir :: Str -> ()
+  stat :: Str -> FileInfo
+  tmpDir :: () -> Str
 
-unsafe extern js fn host_read_text(path: Str) -> Str = "__flow.host.fsReadText"
-unsafe extern js fn host_try_read_text(path: Str) -> Option<Str> = "__flow.host.fsTryReadText"
-unsafe extern js fn host_write_text(path: Str, contents: Str) -> Unit = "__flow.host.fsWriteText"
-unsafe extern js fn host_append_text(path: Str, contents: Str) -> Unit = "__flow.host.fsAppendText"
-unsafe extern js fn host_exists(path: Str) -> Bool = "__flow.host.fsExists"
-unsafe extern js fn host_list_dir(path: Str) -> List<Str> = "__flow.host.fsListDir"
-unsafe extern js fn host_make_dir(path: Str) -> Unit = "__flow.host.fsMakeDir"
-unsafe extern js fn host_remove_file(path: Str) -> Unit = "__flow.host.fsRemoveFile"
-unsafe extern js fn host_remove_dir(path: Str) -> Unit = "__flow.host.fsRemoveDir"
-unsafe extern js fn host_stat(path: Str) -> FileInfo = "__flow.host.fsStat"
-unsafe extern js fn host_tmp_dir() -> Str = "__flow.host.fsTmpDir"
+foreign import js unsafe "__flow.host.fsReadText" host_read_text :: Str -> Str
 
-provide Fs with {
-  readText = host_read_text,
-  tryReadText = host_try_read_text,
-  writeText = host_write_text,
-  appendText = host_append_text,
-  exists = host_exists,
-  listDir = host_list_dir,
-  makeDir = host_make_dir,
-  removeFile = host_remove_file,
-  removeDir = host_remove_dir,
-  stat = host_stat,
-  tmpDir = host_tmp_dir,
-}
+foreign import js unsafe "__flow.host.fsTryReadText" host_try_read_text :: Str -> Option Str
 
-pub fn readText(path: Str) -> Str { Fs.readText(path) }
+foreign import js unsafe "__flow.host.fsWriteText" host_write_text :: Str -> Str -> ()
 
-pub fn tryReadText(path: Str) -> Option<Str> { Fs.tryReadText(path) }
+foreign import js unsafe "__flow.host.fsAppendText" host_append_text :: Str -> Str -> ()
 
-pub fn writeText(path: Str, contents: Str) -> Unit { Fs.writeText(path, contents) }
+foreign import js unsafe "__flow.host.fsExists" host_exists :: Str -> Bool
 
-pub fn appendText(path: Str, contents: Str) -> Unit { Fs.appendText(path, contents) }
+foreign import js unsafe "__flow.host.fsListDir" host_list_dir :: Str -> List Str
 
-pub fn exists(path: Str) -> Bool { Fs.exists(path) }
+foreign import js unsafe "__flow.host.fsMakeDir" host_make_dir :: Str -> ()
 
-pub fn listDir(path: Str) -> List<Str> { Fs.listDir(path) }
+foreign import js unsafe "__flow.host.fsRemoveFile" host_remove_file :: Str -> ()
 
-pub fn makeDir(path: Str) -> Unit { Fs.makeDir(path) }
+foreign import js unsafe "__flow.host.fsRemoveDir" host_remove_dir :: Str -> ()
 
-pub fn removeFile(path: Str) -> Unit { Fs.removeFile(path) }
+foreign import js unsafe "__flow.host.fsStat" host_stat :: Str -> FileInfo
 
-pub fn removeDir(path: Str) -> Unit { Fs.removeDir(path) }
+foreign import js unsafe "__flow.host.fsTmpDir" host_tmp_dir :: () -> Str
 
-pub fn stat(path: Str) -> FileInfo { Fs.stat(path) }
+provide Fs where
+  readText = host_read_text
+  tryReadText = host_try_read_text
+  writeText = host_write_text
+  appendText = host_append_text
+  exists = host_exists
+  listDir = host_list_dir
+  makeDir = host_make_dir
+  removeFile = host_remove_file
+  removeDir = host_remove_dir
+  stat = host_stat
+  tmpDir = host_tmp_dir
 
-pub fn tmpDir() -> Str { Fs.tmpDir() }
+readText :: Str -> Str
+readText path = Fs.readText path
+
+tryReadText :: Str -> Option Str
+tryReadText path = Fs.tryReadText path
+
+writeText :: Str -> Str -> ()
+writeText path contents = Fs.writeText path contents
+
+appendText :: Str -> Str -> ()
+appendText path contents = Fs.appendText path contents
+
+exists :: Str -> Bool
+exists path = Fs.exists path
+
+listDir :: Str -> List Str
+listDir path = Fs.listDir path
+
+makeDir :: Str -> ()
+makeDir path = Fs.makeDir path
+
+removeFile :: Str -> ()
+removeFile path = Fs.removeFile path
+
+removeDir :: Str -> ()
+removeDir path = Fs.removeDir path
+
+stat :: Str -> FileInfo
+stat path = Fs.stat path
+
+tmpDir :: () -> Str
+tmpDir () = Fs.tmpDir ()

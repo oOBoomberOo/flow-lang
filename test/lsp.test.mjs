@@ -94,24 +94,24 @@ function tmpFlow(src) {
 
 const uri = (file) => `file:///${path.resolve(file).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
-const GOOD = `effect Server @ server { fn secret(k: Str) -> Str }
-effect Client @ client { fn state<a>(init: a) -> Cell<a> }
+const GOOD = `effect Server @ server where
+  secret :: Str -> Str
 
-fn main() -> Html {
-  let n = Client.state(0);
-  html {
-    <div>
-      <button onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
-      <p>{"count: "}{n.get()}</p>
-      <p>{"secret: "}{Server.secret("k")}</p>
-    </div>
-  }
-}
+effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = do
+  let n = Client.state 0
+  <div>
+    <button onClick={\\(e :: Event) -> n.set (n.get () + 1)}>{"+1"}</button>
+    <p>{"count: "} {n.get ()}</p>
+    <p>{"secret: "} {Server.secret "k"}</p>
+  </div>
 `;
 
-const BAD = `fn main() -> Html {
-  html { <p>{1 + "a"}</p> }
-}
+const BAD = `main :: Html
+main = <p>{1 + "a"}</p>
 `;
 
 test("lsp: initialize advertises semantic tokens and hover", async () => {
@@ -207,7 +207,7 @@ test("lsp: hover reports the inferred type and placement", async () => {
     // position on `n` in `n.get()` inside the <p>
     const lines = GOOD.split("\n");
     const line = lines.findIndex((l) => l.includes('"count: "'));
-    const character = lines[line].indexOf("n.get()");
+    const character = lines[line].indexOf("n.get");
     const hover = await c.request("textDocument/hover", {
       textDocument: { uri: uri(file) },
       position: { line, character },
@@ -228,14 +228,14 @@ test("lsp: incremental edits re-diagnose", async () => {
     await c.waitFor((m) => m.method === "textDocument/publishDiagnostics" && m.params.diagnostics.length === 0);
 
     // break the file: replace `n.get() + 1` with `n.get() + "x"`
-    const lineIdx = GOOD.split("\n").findIndex((l) => l.includes("n.get() + 1"));
+    const lineIdx = GOOD.split("\n").findIndex((l) => l.includes("n.get () + 1"));
     const lineText = GOOD.split("\n")[lineIdx];
-    const start = lineText.indexOf("n.get() + 1");
+    const start = lineText.indexOf("n.get () + 1");
     c.notify("textDocument/didChange", {
       textDocument: { uri: uri(file), version: 2 },
       contentChanges: [{
-        range: { start: { line: lineIdx, character: start }, end: { line: lineIdx, character: start + "n.get() + 1".length } },
-        text: 'n.get() + "x"',
+        range: { start: { line: lineIdx, character: start }, end: { line: lineIdx, character: start + "n.get () + 1".length } },
+        text: 'n.get () + "x"',
       }],
     });
     const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics" && m.params.diagnostics.length > 0);

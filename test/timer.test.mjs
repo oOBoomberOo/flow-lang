@@ -16,23 +16,20 @@ function compileSource(source) {
   }
 }
 
-const TIMER = `type IO<a> = () -> a
+const TIMER = `type IO a = () -> a
 
-unsafe extern js fn unsafe_create_timer(callback: IO<Unit>, ms: Int) -> Int
-  = "window.setInterval"
+foreign import js unsafe "window.setInterval" unsafe_create_timer :: IO () -> Int -> Int
 
-fn make_timer(ms: Int, callback: IO<Unit>) -> Int {
-  let timer_id = unsafe_create_timer(callback, ms);
+make_timer :: Int -> IO () -> Int
+make_timer ms callback = do
+  let timer_id = unsafe_create_timer callback ms
   timer_id
-}
 
-fn main() -> Html {
-  Client.log("started");
-  let _ = make_timer(500) <| fn() {
-    Client.log("tick");
-  };
-  html { <div>{"x"}</div> }
-}
+main :: Html
+main = do
+  Client.log "started"
+  let _ = (make_timer 500) (\\() -> Client.log "tick")
+  <div>{"x"}</div>
 `;
 
 test("timer: FFI calls and discarded bindings run eagerly, not as lazy signals", () => {
@@ -44,19 +41,19 @@ test("timer: FFI calls and discarded bindings run eagerly, not as lazy signals",
 });
 
 test("timer: pure lets stay lazy signals", () => {
-  const client = compileSource(`fn main() -> Html {
-  let n = 1 + 2;
-  html { <p>{str(n)}</p> }
-}
+  const client = compileSource(`main :: Html
+main = do
+  let n = 1 + 2
+  <p>{str n}</p>
 `);
   assert.match(client, /const n = R\.sig\(/);
 });
 
 test("timer: a Unit-typed let runs in program order", () => {
-  const client = compileSource(`fn main() -> Html {
-  let u = Client.log("once");
-  html { <p>{"x"}</p> }
-}
+  const client = compileSource(`main :: Html
+main = do
+  let u = Client.log "once"
+  <p>{"x"}</p>
 `);
   assert.doesNotMatch(client, /const u = R\.sig/);
 });

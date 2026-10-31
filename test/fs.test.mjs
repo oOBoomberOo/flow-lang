@@ -22,42 +22,41 @@ function emit(result, outDir) {
   );
 }
 
-const SOURCE = `use std::fs::{
-  tmpDir, makeDir, writeText, appendText, readText, tryReadText, exists, listDir,
-  stat, removeFile, removeDir,
-}
-use std::http::{get, Router, RequestObject, Response, textResponse}
+const SOURCE = `import Fs (tmpDir, makeDir, writeText, appendText, readText, tryReadText, exists, listDir, stat, removeFile, removeDir)
+import Http (get, Router, RequestObject, Response, textResponse)
 
-fn routes() -> Unit {
-  Router.mount([
-    get("/fs", fn(_req: RequestObject) -> Response {
-      let dir = tmpDir() + "/flow-fs-test-dir";
-      makeDir(dir);
-      let file = dir + "/a.txt";
-      writeText(file, "hello");
-      appendText(file, " fs");
-      let text = readText(file);
-      let again = match tryReadText(file) { Some(x) => x, None => "missing" };
-      let missing = match tryReadText(file + ".nope") { Some(_) => "some", None => "none" };
-      let info = stat(file);
-      let names = listDir(dir);
-      let present = exists(file);
-      textResponse(text + "|" + again + "|" + str(info.size) + "|" + str(names) + "|" + missing + "|" + str(present))
-    }),
-    get("/fs-remove", fn(_req: RequestObject) -> Response {
-      let dir = tmpDir() + "/flow-fs-remove-dir";
-      makeDir(dir);
-      let file = dir + "/b.txt";
-      writeText(file, "x");
-      removeFile(file);
-      let gone = exists(file);
-      removeDir(dir);
-      textResponse(str(gone))
-    })
-  ]);
-}
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/fs" (\\(_req :: RequestObject) -> do
+      let dir = tmpDir () + "/flow-fs-test-dir"
+      makeDir dir
+      let file = dir + "/a.txt"
+      writeText file "hello"
+      appendText file " fs"
+      let text = readText file
+      let again = case tryReadText file of
+            Some x -> x
+            None -> "missing"
+      let missing = case tryReadText (file + ".nope") of
+            Some _ -> "some"
+            None -> "none"
+      let info = stat file
+      let names = listDir dir
+      let present = exists file
+      textResponse (text + "|" + again + "|" + str info.size + "|" + str names + "|" + missing + "|" + str present))
+    , get "/fs-remove" (\\(_req :: RequestObject) -> do
+      let dir = tmpDir () + "/flow-fs-remove-dir"
+      makeDir dir
+      let file = dir + "/b.txt"
+      writeText file "x"
+      removeFile file
+      let gone = exists file
+      removeDir dir
+      textResponse (str gone))
+    ]
 
-fn main() -> Html { html { <p>{"fs"}</p> } }
+main :: Html
+main = <p>{"fs"}</p>
 `;
 
 async function withFsHost(fn) {

@@ -1,28 +1,22 @@
-// Local capability handlers. `provide` is file-level; `handle Effect with { … }`
-// installs a scoped provider for the body and nests/restores correctly.
+-- Local capability handlers. `provide` is file-level; `handle Effect with { … }`
+-- installs a scoped provider for the body and nests/restores correctly.
+effect Local @ client where
+  ping :: Str -> Str
 
-effect Local @ client {
-  fn ping(msg: Str) -> Str
-}
+nested :: () -> Str
+nested () =
+  handle Local with
+    ping msg = "outer " + msg
+  in do
+    let inner =
+          handle Local with
+            ping msg = "inner " + msg
+          in Local.ping "x"
+    inner + " / " + Local.ping "y"
 
-fn nested() -> Str {
-  handle Local with {
-    ping = fn(msg: Str) -> Str { "outer " + msg }
-  } {
-    let inner = handle Local with {
-      ping = fn(msg: Str) -> Str { "inner " + msg }
-    } {
-      Local.ping("x")
-    };
-    inner + " / " + Local.ping("y")
-  }
-}
-
-fn main() -> Html {
-  html {
-    <div class="card">
-      <h1>{"Local handler"}</h1>
-      <p class="local">{nested()}</p>
-    </div>
-  }
-}
+main :: Html
+main =
+  <div class="card">
+    <h1>{"Local handler"}</h1>
+    <p class="local">{nested ()}</p>
+  </div>

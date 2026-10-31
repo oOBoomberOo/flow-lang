@@ -1,67 +1,36 @@
-// std::net — network requests through the placement-neutral `Net` capability.
-//
-// The host provides `fetch` on both sides (browser `fetch`, Node `fetch`).
-// `Net` has no fixed placement: a call is placed by its callback and arguments,
-// so the same API works from client code or server code.
+module Net (NetResult, Net, request, get, post, put, del, getText) where
 
-pub type NetResult = {
-  ok: Bool,
-  status: Int,
-  body: Str,
-  error: Str,
-}
+-- std::net — network requests through the placement-neutral `Net` capability.
+--
+-- The host provides `fetch` on both sides (browser `fetch`, Node `fetch`).
+-- `Net` has no fixed placement: a call is placed by its callback and arguments,
+-- so the same API works from client code or server code.
+type NetResult = { ok :: Bool, status :: Int, body :: Str, error :: Str }
 
-pub effect Net @ neutral {
-  fn request(
-    method: Str,
-    url: Str,
-    headers: List<(Str, Str)>,
-    body: Str,
-    onResult: (NetResult) -> Unit
-) -> Unit
-}
+effect Net @ neutral where
+  request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
 
-unsafe extern js fn host_request(
-  method: Str,
-  url: Str,
-  headers: List<(Str, Str)>,
-  body: Str,
-  onResult: (NetResult) -> Unit
-) -> Unit = "__flow.host.netRequest"
+foreign import js unsafe "__flow.host.netRequest" host_request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
 
-provide Net with {
-  request = host_request,
-}
+provide Net where
+  request = host_request
 
-pub fn request(
-  method: Str,
-  url: Str,
-  headers: List<(Str, Str)>,
-  body: Str,
-  onResult: (NetResult) -> Unit
-) -> Unit {
-  Net.request(method, url, headers, body, onResult)
-}
+request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
+request method url headers body onResult = Net.request method url headers body onResult
 
-pub fn get(url: Str, onResult: (NetResult) -> Unit) -> Unit {
-  Net.request("GET", url, [], "", onResult)
-}
+get :: Str -> (NetResult -> ()) -> ()
+get url onResult = Net.request "GET" url [] "" onResult
 
-pub fn post(url: Str, body: Str, onResult: (NetResult) -> Unit) -> Unit {
-  Net.request("POST", url, [], body, onResult)
-}
+post :: Str -> Str -> (NetResult -> ()) -> ()
+post url body onResult = Net.request "POST" url [] body onResult
 
-pub fn put(url: Str, body: Str, onResult: (NetResult) -> Unit) -> Unit {
-  Net.request("PUT", url, [], body, onResult)
-}
+put :: Str -> Str -> (NetResult -> ()) -> ()
+put url body onResult = Net.request "PUT" url [] body onResult
 
-pub fn del(url: Str, onResult: (NetResult) -> Unit) -> Unit {
-  Net.request("DELETE", url, [], "", onResult)
-}
+del :: Str -> (NetResult -> ()) -> ()
+del url onResult = Net.request "DELETE" url [] "" onResult
 
-/// Convenience for GET: `Some(body)` on success, `None` on failure.
-pub fn getText(url: Str, onText: (Option<Str>) -> Unit) -> Unit {
-  Net.request("GET", url, [], "", fn(result: NetResult) -> Unit {
-    if (result.ok) { onText(Some(result.body)) } else { onText(None) }
-  })
-}
+-- / Convenience for GET: `Some(body)` on success, `None` on failure.
+getText :: Str -> (Option Str -> ()) -> ()
+getText url onText =
+  Net.request "GET" url [] "" (\(result :: NetResult) -> if result.ok then onText (Some result.body) else onText None)

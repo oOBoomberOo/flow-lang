@@ -1,40 +1,27 @@
-// Cell sugar and monads.
-//
-// `c.value` reads, `c.value = e` writes, `c += n` / `c++` update, and
-// `do { x <- m; … }` / `>>=` chain Option and List.
+-- Cell sugar and monads.
+--
+-- `c.value` reads a cell, `c := e` writes it, `c += n` / `-=` / `*=` update it
+-- in place, and `>>=` (or `do` with `<-`) chains Option and List.
+import Monad (Monad)
 
-use std::monad::{Monad}
-
-fn main() -> Html {
-  let c = Client.state(1);
-  c.value = c.value + 1;
-  c += 2;
-  c -= 1;
-  c *= 3;
-  c /= 2;
-  c++;
-  c--;
-  c.update(fn(x: Int) -> Int { x + 10 });
-
-  let option = do {
-    x <- Some(2);
-    y <- Some(3);
-    Some(x + y)
-  };
-  let list = do {
-    x <- [1, 2];
-    y <- [10, 20];
-    [x + y]
-  };
-  let chained = Some(1) >>= fn(v: Int) -> Option<Int> { Some(v * 10) };
-
-  html {
-    <div class="card">
-      <h1>{"Cells and monads"}</h1>
-      <p class="cell">{str(c.value)}</p>
-      <p class="option">{str(option)}</p>
-      <p class="list">{str(list)}</p>
-      <p class="chain">{str(chained)}</p>
-    </div>
-  }
-}
+main :: Html
+main = do
+  let c = Client.state 1
+  c := c.value + 1
+  c += 2
+  c -= 1
+  c *= 3
+  c := c.value / 2
+  c.update (\x -> x + 10)
+  let option = Some 2 >>= \x -> Some 3 >>= \y -> Some (x + y)
+  let list = [1, 2] >>= \x -> [10, 20] >>= \y -> [x + y]
+  let chained = do
+        v <- Some 1
+        Some (v * 10)
+  <div class="card">
+    <h1>Cells and monads</h1>
+    <p class="cell">{str c.value}</p>
+    <p class="option">{str option}</p>
+    <p class="list">{str list}</p>
+    <p class="chain">{str chained}</p>
+  </div>

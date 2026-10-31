@@ -62,18 +62,16 @@ a mistake — it is a boundary that the compiler will build.
 An effect declares an interface:
 
 ```flow
-effect Server {
-  fn secret(name: Str) -> Str
-  fn now() -> Int
-}
+effect Server where
+  secret :: Str -> Str
+  now :: () -> Int
 ```
 
 A `provide` installs a file-level implementation:
 
 ```flow
-provide Audit with {
-  record = fn(msg: Str) -> Unit { Server.log(msg) }
-}
+provide Audit where
+  record msg = Server.log msg
 ```
 
 A `handle Effect with { … } { body }` expression installs a **scoped** capability
@@ -271,7 +269,7 @@ dictionary for its element type. Calling a trait method on a type variable
 without the matching bound is rejected at the call site.
 
 Traits still dispatch on one parameter: the type after `for` is the dispatch key.
-A parameter may itself be a type constructor (`trait Functor<f>`); `f<a>` is a
+A parameter may itself be a type constructor (`class Functor f`); `f a` is a
 higher-kinded application, normalized to `List<a>` / `Option<a>` after unification,
 and impls are written at the constructor (`impl Functor for List`). Dispatch uses
 the head constructor of the constructor-typed argument.
@@ -302,7 +300,7 @@ home(e) = resolve(e)           if p = cross
 |---|------|-----------|
 | 1 | If `typePlace(τ(e))` is one-sided, that side wins | an `Html` value cannot exist on the server |
 | 2 | `App`: the callee's home wins | compute where the function lives; arguments travel |
-| 3 | `If`/`Match`/`Block`: the first non-neutral branch wins | follow the work |
+| 3 | `if`/`case`/blocks: the first non-neutral branch wins | follow the work |
 | 4 | first non-neutral operand | data flow direction |
 | 5 | otherwise **neutral** | no part of it needs a side; run it in the enclosing context |
 
@@ -411,7 +409,7 @@ Two cuts, opposite directions, one expression — with no annotation anywhere.
 1. **No placement errors at runtime.** A value that cannot be serialized cannot cross; a
    DOM value cannot be produced on the server. Both are compile errors.
 2. **Every effect has a provider.** A call to an unprovided effect does not type-check.
-3. **Provider signatures match.** Each `provide` operation is checked against the declared
+3. **Provider signatures match.** Each provider operation is checked against the declared
    effect signature (in a rolled-back substitution, so polymorphism is preserved).
 4. **Exhaustive matches.** Missing constructors are reported at compile time.
 5. **Deterministic cuts.** `home` is a pure function of the typed tree; `flow explain` prints

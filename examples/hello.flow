@@ -1,8 +1,6 @@
-fn main() -> Html {
-  html {
-    <div class="card">
-      <h1>{"Hello, Flow"}</h1>
-      <p>{"One program. Two tiers. No boundary in the source."}</p>
-    </div>
-  }
-}
+main :: Html
+main =
+  <div class="card">
+    <h1>{"Hello, Flow"}</h1>
+    <p>{"One program. Two tiers. No boundary in the source."}</p>
+  </div>

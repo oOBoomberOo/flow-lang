@@ -1,19 +1,30 @@
-// std::log — logging through the host console, built on the FFI.
-//
-// No compiler support: `console.log` is an ordinary `unsafe extern js` binding.
+module Log (info, warn, error, debug, value) where
 
-unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
-unsafe extern js fn console_warn(msg: Str) -> Unit = "console.warn"
-unsafe extern js fn console_error(msg: Str) -> Unit = "console.error"
-unsafe extern js fn console_debug(msg: Str) -> Unit = "console.debug"
+-- std::log — logging through the host console, built on the FFI.
+--
+-- No compiler support: `console.log` is an ordinary `unsafe extern js` binding.
+foreign import js unsafe "console.log" console_log :: Str -> ()
 
-pub fn info(msg: Str) -> Unit { console_log(msg); () }
+foreign import js unsafe "console.warn" console_warn :: Str -> ()
 
-pub fn warn(msg: Str) -> Unit { console_warn("[warn] " + msg) }
+foreign import js unsafe "console.error" console_error :: Str -> ()
 
-pub fn error(msg: Str) -> Unit { console_error("[error] " + msg) }
+foreign import js unsafe "console.debug" console_debug :: Str -> ()
 
-pub fn debug(msg: Str) -> Unit { console_debug(msg) }
+info :: Str -> ()
+info msg = do
+  console_log msg
+  ()
 
-/// Log a value with a label, using the structural `str` from the prelude.
-pub fn value<a>(label: Str, x: a) -> Unit { console_log(label + " = " + str(x)) }
+warn :: Str -> ()
+warn msg = console_warn ("[warn] " + msg)
+
+error :: Str -> ()
+error msg = console_error ("[error] " + msg)
+
+debug :: Str -> ()
+debug msg = console_debug msg
+
+-- / Log a value with a label, using the structural `str` from the prelude.
+value :: Str -> a -> ()
+value label x = console_log (label + " = " + str x)

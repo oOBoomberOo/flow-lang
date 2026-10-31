@@ -50,30 +50,27 @@ function packageWith(files) {
 }
 
 test("qualified: values, constructors, types and effects work without a use", async () => {
-  const source = `use std::monad::{Monad}
-use std::http::{get, Router, Response, textResponse}
+  const source = `import Monad (Monad)
+import Http (get, Router, Response, textResponse)
 
-fn counted() -> Int {
-  handle std::state::State with {
-    get = fn() -> Int { resume(41) },
-    put = fn(x: Int) -> Int { resume(()) }
-  } {
-    std::state::State.get() + 1
-  }
-}
+counted :: () -> Int
+counted () =
+  handle State.State with
+    get () = resume 41
+    put x = resume ()
+  in State.State.get () + 1
 
-fn routes() -> Unit {
-  Router.mount([
-    get("/q", fn(_req: std::http::RequestObject) -> Response {
-      let n = std::list::length([1, 2]);
-      let s = std::math::sqrt(9.0);
-      let o = std::option::Some(2) >>= fn(x: Int) -> std::option::Option<Int> { std::option::Some(x + 1) };
-      textResponse(str(n) + "|" + str(s) + "|" + str(o) + "|" + str(counted()))
-    })
-  ]);
-}
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/q" (\\(_req :: Http.RequestObject) -> do
+      let n = List.length [1, 2]
+      let s = Math.sqrt 9.0
+      let o = Option.Some 2 >>= (\\(x :: Int) -> Option.Some (x + 1))
+      textResponse (str n + "|" + str s + "|" + str o + "|" + str (counted ())))
+    ]
 
-fn main() -> Html { html { <p>{"q"}</p> } }
+main :: Html
+main = <p>{"q"}</p>
 `;
   await withHost(source, async (host) => {
     const res = await fetch(host.url + "/q");
@@ -84,15 +81,23 @@ fn main() -> Html { html { <p>{"q"}</p> } }
 
 test("qualified: public cross-module paths work, private and missing names are rejected", () => {
   const { entry } = packageWith({
-    "util.flow": `pub fn tally(xs: List<Int>) -> Int { len(xs) }
-fn hidden() -> Int { 7 }
-pub type Report = { total: Int }
+    "util.flow": `module Util (tally, Report) where
+
+tally :: List Int -> Int
+tally xs = len xs
+
+hidden :: () -> Int
+hidden () = 7
+
+type Report = { total :: Int }
 `,
-    "main.flow": `fn main() -> Html {
-  let n = app::util::tally([1, 2, 3]);
-  let r: app::util::Report = { total: n };
-  html { <p>{str(r.total)}</p> }
-}
+    "main.flow": `main :: Html
+main = do
+  let n = Util.tally [1, 2, 3]
+  let
+    r :: Util.Report
+    r = { total = n }
+  <p>{str r.total}</p>
 `,
   });
   const result = compileFile(entry);
@@ -100,22 +105,34 @@ pub type Report = { total: Int }
   assert.ok(result.client.includes('"total"'), "the qualified record type resolved");
 
   const privateUse = packageWith({
-    "util.flow": `fn hidden() -> Int { 7 }
+    "util.flow": `module Util (visible) where
+
+visible :: () -> Int
+visible () = 1
+
+hidden :: () -> Int
+hidden () = 7
 `,
-    "main.flow": `fn main() -> Html { let n = app::util::hidden(); html { <p>{str(n)}</p> } }
+    "main.flow": `main :: Html
+main = do
+  let n = Util.hidden ()
+  <p>{str n}</p>
 `,
   });
   assert.throws(
     () => compileFile(privateUse.entry),
-    /unbound name 'app::util::hidden'/,
+    /'Util\.hidden' is private: hidden is not in the export list of module Util/,
   );
 
   const missing = packageWith({
-    "main.flow": `fn main() -> Html { let n = std::list::nope(); html { <p>{str(n)}</p> } }
+    "main.flow": `main :: Html
+main = do
+  let n = List.nope ()
+  <p>{str n}</p>
 `,
   });
   assert.throws(
     () => compileFile(missing.entry),
-    /unbound name 'std::list::nope'/,
+    /module List has no member 'nope'/,
   );
 });

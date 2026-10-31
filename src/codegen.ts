@@ -180,7 +180,7 @@ export class Codegen {
       if (this.rowHasAlgebraic(this.effOf(e))) {
         this.fail(
           `an algebraic effect cannot cross the ${h} tier boundary: handle it before the cut ` +
-          `('handle … with { … } { … }' must run on the side that performs it)`,
+          `('handle … with … in …' must run on the side that performs it)`,
           e.span,
         );
       }
@@ -301,7 +301,7 @@ export class Codegen {
     if (unhandled.length) {
       this.fail(
         `main performs algebraic effect(s) {${unhandled.sort().join(", ")}} without handling them: ` +
-        `wrap the work in 'handle ${unhandled[0]} with { … } { … }'`,
+        `wrap the work in 'handle ${unhandled[0]} with … in …'`,
         main.span,
       );
     }

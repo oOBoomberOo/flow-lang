@@ -90,13 +90,13 @@ test("http: the client bundle and runtime remain served", async () => {
 test("http: dispatch is a reusable in-language capability handler", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-http-handle-"));
   const file = path.join(root, "main.flow");
-  fs.writeFileSync(file, `use std::http::{get, dispatch, RequestObject, Response, textResponse}
+  fs.writeFileSync(file, `import Http (get, dispatch, RequestObject, Response, textResponse)
 
-fn main() -> Html {
-  let routes = [get("/x", fn(req: RequestObject) -> Response { textResponse(req.path) })];
-  let request = { method: "GET", path: "/x", query: "", body: "", headers: [], params: [] };
-  html { <p>{dispatch(routes, request).body}</p> }
-}
+main :: Html
+main = do
+  let routes = [get "/x" (\\(req :: RequestObject) -> textResponse req.path)]
+  let request = { method = "GET", path = "/x", query = "", body = "", headers = [], params = [] }
+  <p>{(dispatch routes request).body}</p>
 `);
   const r = compileFile(file);
   assert.deepEqual(r.diagnostics, []);

@@ -43,6 +43,18 @@ export interface SourceUnit {
   program: Program;
   /** names this unit declares (simple names) */
   declares: Map<string, Decl>;
+  /** module qualifiers usable in this file (`List`, `L` from `import List as L`) -> unit id */
+  quals: Map<string, string>;
+}
+
+const decap = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+const cap = (s: string) => s.split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+
+/** `std::list` -> `List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
+export function moduleDisplayName(unit: { pkg: string; modulePath: string[] }, currentPkg?: string): string {
+  const segs = unit.modulePath.map(cap);
+  if (unit.pkg === "std" || unit.pkg === currentPkg || unit.pkg === "main") return segs.join(".");
+  return [cap(unit.pkg), ...segs].join(".");
 }
 
 export type SymKind = "function" | "type" | "constructor" | "trait" | "effect" | "record" | "alias";
@@ -216,7 +228,25 @@ export class Linker {
     const rel = pkg.singleFile
       ? ["main"]
       : path.relative(pkg.srcDir, path.resolve(entryFile)).replace(/\.flow$/, "").split(/[\\/]/);
+    return this.linkUnit(pkg, rel);
+  }
 
+  /** Link a source that only exists in memory (tests, the REPL, docs snippets). */
+  linkSource(src: string, file: string): LinkedProgram {
+    this.errors = [];
+    const abs = path.resolve(file);
+    this.overlay.set(abs, src);
+    const pkg: Package = {
+      name: "main",
+      root: path.dirname(abs),
+      srcDir: path.dirname(abs),
+      deps: new Map(),
+      singleFile: abs,
+    };
+    return this.linkUnit(pkg, ["main"]);
+  }
+
+  private linkUnit(pkg: Package, rel: string[]): LinkedProgram {
     this.entry = this.loadUnit(pkg, rel);
     if (this.allStd) {
       let files: string[] = [];
@@ -256,7 +286,7 @@ export class Linker {
     if (cached) return cached;
 
     const file = MODULE_FILE(pkg, modulePath);
-    if (!fs.existsSync(file)) {
+    if (!fs.existsSync(file) && !this.overlay.has(path.resolve(file))) {
       throw new FlowError(`module '${id}' not found (expected ${file})`, { code: "E_MODULE" });
     }
     const src = this.read(file);
@@ -268,7 +298,7 @@ export class Linker {
       declares.set(d.k === "Extern" ? d.sig.name : d.name, d);
       if (d.k === "Adt") for (const v of d.variants) declares.set(v.name, d);
     }
-    const unit: SourceUnit = { id, pkg: pkg.name, pkgObj: pkg, modulePath, file, program, declares };
+    const unit: SourceUnit = { id, pkg: pkg.name, pkgObj: pkg, modulePath, file, program, declares, quals: new Map() };
     this.units.set(id, unit);
 
     // eagerly load imported modules so cycles work
@@ -276,7 +306,9 @@ export class Linker {
       if (use.k !== "Use") continue;
       try {
         for (const ref of this.resolveUse(pkg, unit, use)) {
-          if (!this.units.has(ref.id)) this.loadUnit(ref.pkg, ref.modulePath);
+          const target = this.units.get(ref.id) ?? this.loadUnit(ref.pkg, ref.modulePath);
+          const u = use as Decl & { k: "Use" };
+          unit.quals.set(u.alias ?? u.path.join("."), target.id);
         }
       } catch (e) {
         if (this.recover && e instanceof FlowError) this.errors.push(e);
@@ -284,70 +316,61 @@ export class Linker {
       }
     }
 
-    // `std::list::map` works without a `use`: load the module the path names.
+    // `List.map` works without an `import`: load the module the qualifier names.
     this.discoverQualified(unit);
     return unit;
   }
 
-  private packageFor(pkg: Package, name: string): Package | null {
-    if (name === "std") return stdPackage();
-    if (name === pkg.name) return pkg;
-    return pkg.deps.get(name) ?? null;
+  /** `["List"]` / `["Shapes","Circle"]` / `["FlowCharts","Bar"]` -> the module file's package and path. */
+  private findModule(pkg: Package, parts: string[]): { pkg: Package; modulePath: string[] } | null {
+    const exists = (p: Package, mp: string[]) => {
+      try { return mp.length > 0 && fs.existsSync(MODULE_FILE(p, mp)); } catch { return false; }
+    };
+    const lower = parts.map(decap);
+    // a lone file is a whole program: its neighbours in the directory are not modules
+    if (!pkg.singleFile && exists(pkg, lower)) return { pkg, modulePath: lower };
+    for (const [name, dep] of pkg.deps) {
+      if (parts.length > 1 && cap(name) === parts[0] && exists(dep, lower.slice(1))) {
+        return { pkg: dep, modulePath: lower.slice(1) };
+      }
+    }
+    const std = stdPackage();
+    if (exists(std, lower)) return { pkg: std, modulePath: lower };
+    return null;
   }
 
-  /** Load modules referenced by qualified paths in this unit. */
+  /** Load modules named by qualified references (`List.map`, `Option.Some`, `Util.f`). */
   private discoverQualified(unit: SourceUnit): void {
-    for (const full of collectQualifiedPaths(unit.program)) {
-      const segs = full.split("::");
-      if (segs.length < 3) continue;
-      const pkgName = segs[0]!;
-      const name = segs[segs.length - 1]!;
-      const modulePath = segs.slice(1, -1);
-      if (!name || modulePath.length === 0) continue;
-      const target = this.packageFor(unit.pkgObj, pkgName);
-      if (!target) continue;
-      let exists = false;
-      try { exists = fs.existsSync(MODULE_FILE(target, modulePath)); } catch { exists = false; }
-      if (!exists) continue;
-      const id = `${target.name}::${modulePath.join("::")}`;
-      if (this.units.has(id)) continue;
-      try { this.loadUnit(target, modulePath); }
-      catch (e) { if (this.recover && e instanceof FlowError) this.errors.push(e); else throw e; }
+    for (const qual of collectQualifiers(unit.program)) {
+      if (unit.quals.has(qual)) continue;
+      // a locally declared effect / type / constructor is not a module
+      if (unit.declares.has(qual.split(".")[0]!) && !qual.includes(".")) continue;
+      const found = this.findModule(unit.pkgObj, qual.split("."));
+      if (!found) continue;
+      try {
+        const target = this.loadUnit(found.pkg, found.modulePath);
+        unit.quals.set(qual, target.id);
+      } catch (e) {
+        if (this.recover && e instanceof FlowError) this.errors.push(e); else throw e;
+      }
     }
   }
 
   /* ---------- import resolution ---------- */
 
   private resolveUse(pkg: Package, unit: SourceUnit, use: Decl & { k: "Use" }) {
-    const [pkgName, ...rest] = use.path;
-    if (!pkgName) throw new FlowError("empty 'use' path", { file: unit.file, code: "E_MODULE" });
-    if (use.glob) {
-      throw new FlowError("glob imports ('*') are not supported; import names explicitly", { file: unit.file, code: "E_MODULE" });
+    if (!use.path.length) throw new FlowError("empty 'import'", { file: unit.file, line: use.span?.line, col: use.span?.col, code: "E_MODULE" });
+    const found = this.findModule(pkg, use.path);
+    if (!found) {
+      const name = use.path.join(".");
+      const first = use.path[0]!;
+      const hint = use.path.length > 1 && !pkg.deps.has(decap(first)) && !/^[A-Z]/.test(first) ? "" :
+        use.path.length > 1 && ![...pkg.deps.keys()].some((d) => cap(d) === first) && !this.findModule(pkg, [first])
+          ? ` — if '${first}' is a package, add it to flow.json`
+          : "";
+      throw new FlowError(`module '${name}' not found${hint}`, { file: unit.file, line: use.span?.line, col: use.span?.col, code: "E_MODULE" });
     }
-
-    let target: Package;
-    if (pkgName === "std") target = stdPackage();
-    else if (pkgName === pkg.name) target = pkg;
-    else {
-      const dep = pkg.deps.get(pkgName);
-      if (!dep) {
-        throw new FlowError(
-          `unknown package '${pkgName}' in 'use ${use.path.join("::")}' — add it to flow.json`,
-          { file: unit.file, code: "E_MODULE" },
-        );
-      }
-      target = dep;
-    }
-
-    if (!rest.length) throw new FlowError(`'use ${use.path.join("::")}' imports nothing`, { file: unit.file, code: "E_MODULE" });
-    const file = MODULE_FILE(target, rest);
-    if (!fs.existsSync(file)) {
-      throw new FlowError(
-        `module '${pkgName}::${rest.join("::")}' not found (expected ${file})`,
-        { file: unit.file, code: "E_MODULE" },
-      );
-    }
-    return [{ pkg: target, id: `${target.name}::${rest.join("::")}`, modulePath: rest }];
+    return [{ pkg: found.pkg, id: `${found.pkg.name}::${found.modulePath.join("::")}`, modulePath: found.modulePath }];
   }
 
   /** All resolved imports of a unit: alias -> target unit + exported name. */
@@ -366,16 +389,17 @@ export class Linker {
             throw new FlowError(`duplicate import '${alias}'`, { file: unit.file, code: "E_MODULE" });
           }
           const decl = target.declares.get(item.name);
+          const where = moduleDisplayName(target, unit.pkg);
           if (!decl) {
             throw new FlowError(
-              `'${item.name}' is not exported by ${targetUnit.id}`,
-              { file: unit.file, code: "E_MODULE" },
+              `'${item.name}' is not exported by module ${where}`,
+              { file: unit.file, line: d.span?.line, col: d.span?.col, code: "E_MODULE" },
             );
           }
           if (!(decl as { pub?: boolean }).pub) {
             throw new FlowError(
-              `'${item.name}' is private in ${targetUnit.id}; mark it 'pub' to export it`,
-              { file: unit.file, code: "E_MODULE" },
+              `'${item.name}' is private in module ${where}; add it to the export list of ${where}`,
+              { file: unit.file, line: d.span?.line, col: d.span?.col, code: "E_MODULE" },
             );
           }
           table.set(alias, { unit: target, name: item.name });
@@ -498,31 +522,30 @@ export class Linker {
     QUALIFIED_VALUES = qValues;
     QUALIFIED_TYPES = qTypes;
 
-    // Prelude declarations are conceptually part of the std modules that use
-    // them: `std::option::Option` / `std::option::Some` should resolve even
-    // though `Option` lives in the injected prelude.
+    // `Option` and its constructors live in the injected prelude but belong to
+    // the `Option` module as far as users are concerned: `Option.Some`,
+    // `Option.Option`.
     const prelude = this.units.get("std::prelude");
-    if (prelude) {
-      for (const u of units) {
-        if (u.pkg !== "std" || u.id === "std::prelude") continue;
-        for (const [n, d] of prelude.declares) {
-          const key = `${u.id}::${n}`;
-          if (qTypes.has(key) || qValues.has(key)) continue;
-          const final = finalName.get(`${prelude.id}::${n}`);
-          if (!final) continue;
-          if (isTypeName(d, n)) qTypes.set(key, final);
-          else qValues.set(key, final);
-        }
+    const optionUnit = this.units.get("std::option");
+    if (prelude && optionUnit) {
+      for (const n of ["Option", "None", "Some"]) {
+        const d = prelude.declares.get(n);
+        const final = finalName.get(`${prelude.id}::${n}`);
+        if (!d || !final) continue;
+        const key = `${optionUnit.id}::${n}`;
+        if (isTypeName(d, n)) qTypes.set(key, final); else qValues.set(key, final);
       }
     }
+    UNIT_BY_ID = new Map(units.map((u) => [u.id, u]));
 
     for (const u of units) {
       const values = new Map<string, string>();
       const types = new Map<string, string>();
+      const unitName = moduleDisplayName(u, this.entry.pkg);
       for (const [n, d] of u.declares) {
         const final = finalName.get(`${u.id}::${n}`);
         if (!final) continue;
-        display.set(final, `${u.id}::${n}`);
+        display.set(final, `${unitName}.${n}`);
         if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") types.set(n, final);
         if (d.k === "Adt") for (const v of d.variants) values.set(v.name, finalName.get(`${u.id}::${v.name}`)!);
         if (d.k === "Fn" || d.k === "Extern" || d.k === "Trait" || d.k === "Effect") values.set(n, final);
@@ -530,7 +553,7 @@ export class Linker {
       for (const [alias, ref] of this.importTable(u)) {
         const final = finalName.get(`${ref.unit.id}::${ref.name}`);
         if (!final) continue;
-        display.set(final, `${ref.unit.id}::${ref.name}`);
+        display.set(final, `${moduleDisplayName(ref.unit, this.entry.pkg)}.${ref.name}`);
         const decl = ref.unit.declares.get(ref.name)!;
         if (decl.k === "Adt" || decl.k === "RecordType" || decl.k === "Alias") types.set(alias, final);
         else values.set(alias, final);
@@ -549,6 +572,12 @@ export class Linker {
       for (const [k, v] of preludeValues) if (!values.has(k)) values.set(k, v);
       for (const [k, v] of preludeTypes) if (!types.has(k)) types.set(k, v);
 
+      CUR_QUALS = u.quals;
+      CUR_UNIT = u;
+      CUR_REPORT = (msg, span) => {
+        const err = new FlowError(msg, { file: u.file, line: span?.line, col: span?.col, code: "E_MODULE" });
+        if (this.recover) this.errors.push(err); else throw err;
+      };
       for (const d of u.program.decls) {
         if (d.k === "Use") continue;
         out.push(rewriteDecl(d, values, types, u.file));
@@ -578,11 +607,16 @@ export function stdPackage(): Package {
 /* AST rewriting                                                      */
 /* ------------------------------------------------------------------ */
 
-/** Every `pkg::module::name` reference in a unit, for on-demand loading. */
-function collectQualifiedPaths(program: Program): Set<string> {
+/**
+ * Every dotted reference in a unit — `Option.map`, `Option.Some`, `Shapes.Circle.area`,
+ * `List.List a` — as the full name; the qualifier is everything before the last dot.
+ */
+function collectQualifiers(program: Program): Set<string> {
   const out = new Set<string>();
   const add = (name?: string) => {
-    if (name && name.includes("::") && !name.startsWith("::")) out.add(name);
+    if (!name) return;
+    const i = name.lastIndexOf(".");
+    if (i > 0) out.add(name.slice(0, i));
   };
   const ty = (t?: TypeExpr): void => {
     if (!t) return;
@@ -601,6 +635,7 @@ function collectQualifiedPaths(program: Program): Set<string> {
       case "PTuple": p.items.forEach(pat); return;
       case "PRecord": p.fields.forEach((f) => pat(f.pat)); return;
       case "PList": p.items.forEach(pat); return;
+      case "PVar": ty(p.ann); return;
       default: return;
     }
   };
@@ -622,8 +657,7 @@ function collectQualifiedPaths(program: Program): Set<string> {
   const ex = (e?: Expr): void => {
     if (!e) return;
     switch (e.k) {
-      case "Lit": return;
-      case "Var": add(e.name); return;
+      case "Lit": case "Var": return;
       case "Ctor": add(e.name); e.args.forEach(ex); return;
       case "Lam":
         e.params.forEach((p) => ty(p.type)); ty(e.ret); e.eff?.effects.forEach(add);
@@ -636,17 +670,22 @@ function collectQualifiedPaths(program: Program): Set<string> {
         return;
       case "Let": ty(e.ann); ex(e.value); ex(e.body); return;
       case "Record": e.fields.forEach((f) => ex(f.value)); return;
-      case "Field": ex(e.target); return;
+      case "Field":
+        // `Option.map`: a constructor-shaped target is a candidate module qualifier
+        if (e.target.k === "Ctor" && e.target.args.length === 0) add(`${e.target.name}.${e.name}`);
+        else ex(e.target);
+        return;
       case "Tuple": case "List": e.items.forEach(ex); return;
       case "Binary": ex(e.l); ex(e.r); return;
       case "Unary": ex(e.e); return;
       case "Html": e.nodes.forEach(html); return;
       case "Handle":
+        add(e.effect);
         for (const op of e.ops) ex(op.fn);
         ex(e.body); return;
       case "Assign": ex(e.target); ex(e.value); return;
       case "Block":
-        for (const s of e.stmts) ex(s.k === "LetStmt" ? s.value : s.e);
+        for (const s of e.stmts) { if (s.k === "LetStmt") { ty(s.ann); ex(s.value); } else ex(s.e); }
         ex(e.value); return;
     }
   };
@@ -683,12 +722,43 @@ const BUILTIN_TYPES = new Set([
   "Int", "Float", "Str", "Bool", "Unit", "Html", "List", "Option", "Cell", "Event", "Dom",
 ]);
 
+/* Per-unit state of the rewrite in progress (the rewriters are plain recursive functions). */
 let CURRENT_VALUES: Map<string, string> = new Map();
 let QUALIFIED_VALUES: Map<string, string> = new Map();
 let QUALIFIED_TYPES: Map<string, string> = new Map();
+let UNIT_BY_ID: Map<string, SourceUnit> = new Map();
+let CUR_QUALS: Map<string, string> = new Map();
+let CUR_UNIT: SourceUnit | null = null;
+let CUR_REPORT: (msg: string, span?: { line?: number; col?: number }) => void = () => {};
+
+/** `List` + `map` -> the final name of `List.map`, or reports why it cannot be used. */
+function qualify(qual: string, name: string, kind: "value" | "type", span?: { line?: number; col?: number }): string | null {
+  const unitId = CUR_QUALS.get(qual);
+  if (!unitId) return null;
+  const key = `${unitId}::${name}`;
+  const hit = (kind === "type" ? QUALIFIED_TYPES : QUALIFIED_VALUES).get(key);
+  if (hit) return hit;
+  const target = UNIT_BY_ID.get(unitId);
+  const where = target ? moduleDisplayName(target, CUR_UNIT?.pkg) : qual;
+  const decl = target?.declares.get(name);
+  if (decl && !(decl as { pub?: boolean }).pub) {
+    CUR_REPORT(`'${qual}.${name}' is private: ${name} is not in the export list of module ${where}`, span);
+  } else {
+    CUR_REPORT(`module ${where} has no ${kind === "type" ? "type" : "member"} '${name}'`, span);
+  }
+  return null;
+}
+
+/** A dotted name `A.B.f` in a value position. */
+function qualValue(full: string, span?: { line?: number; col?: number }): string | undefined {
+  const i = full.lastIndexOf(".");
+  if (i <= 0) return undefined;
+  return qualify(full.slice(0, i), full.slice(i + 1), "value", span) ?? undefined;
+}
+
 const effLabels = (row: { effects: string[] }) => ({
   ...row,
-  effects: row.effects.map((e) => CURRENT_VALUES.get(e) ?? QUALIFIED_VALUES.get(e) ?? e),
+  effects: row.effects.map((e) => CURRENT_VALUES.get(e) ?? qualValue(e) ?? e),
 });
 
 function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, string>, file: string): Decl {
@@ -704,6 +774,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
         name: values.get(d.name) ?? d.name,
         params,
         ret: d.ret ? rwType(d.ret, types) : undefined,
+        eff: d.eff ? effLabels(d.eff) : undefined,
         body: rwExpr(d.body, scope, values, types),
       };
     }
@@ -728,7 +799,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
     case "Impl":
       return {
         ...d,
-        trait: values.get(d.trait) ?? QUALIFIED_VALUES.get(d.trait) ?? d.trait,
+        trait: values.get(d.trait) ?? qualValue(d.trait, d.span) ?? d.trait,
         traitArgs: d.traitArgs.map((t) => rwType(t, types)),
         target: rwType(d.target, types),
         methods: d.methods.map((m) => ({
@@ -739,7 +810,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
     case "Provide":
       return {
         ...d,
-        effect: values.get(d.effect) ?? QUALIFIED_VALUES.get(d.effect) ?? d.effect,
+        effect: values.get(d.effect) ?? qualValue(d.effect, d.span) ?? d.effect,
         target: d.target ? rwType(d.target, types) : undefined,
         ops: d.ops.map((o) => ({ ...o, fn: rwExpr(o.fn, new Set(), values, types) })),
       };
@@ -761,8 +832,12 @@ function rwSig(s: { params: { name: string; type: TypeExpr; span: Span }[]; ret?
 function rwType(t: TypeExpr, types: Map<string, string>): TypeExpr {
   switch (t.k) {
     case "TVar": return t;
-    case "TCon":
-      return { ...t, name: types.get(t.name) ?? QUALIFIED_TYPES.get(t.name) ?? t.name, args: t.args.map((a) => rwType(a, types)) };
+    case "TCon": {
+      const name = types.get(t.name)
+        ?? (t.name.includes(".") ? (qualify(t.name.slice(0, t.name.lastIndexOf(".")), t.name.slice(t.name.lastIndexOf(".") + 1), "type", t.span) ?? undefined) : undefined)
+        ?? t.name;
+      return { ...t, name, args: t.args.map((a) => rwType(a, types)) };
+    }
     case "TFun":
       return { ...t, params: t.params.map((p) => rwType(p, types)), ret: rwType(t.ret, types), eff: t.eff ? effLabels(t.eff) : t.eff };
     case "TRecord":
@@ -778,11 +853,11 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
   switch (e.k) {
     case "Lit": return e;
     case "Var":
-      return scope.has(e.name)
-        ? e
-        : { ...e, name: values.get(e.name) ?? QUALIFIED_VALUES.get(e.name) ?? e.name };
-    case "Ctor":
-      return { ...e, name: values.get(e.name) ?? QUALIFIED_VALUES.get(e.name) ?? e.name, args: e.args.map((a) => rwExpr(a, scope, values, types)) };
+      return scope.has(e.name) ? e : { ...e, name: values.get(e.name) ?? e.name };
+    case "Ctor": {
+      const name = values.get(e.name) ?? (e.name.includes(".") ? qualValue(e.name, e.span) : undefined) ?? e.name;
+      return { ...e, name, args: e.args.map((a) => rwExpr(a, scope, values, types)) };
+    }
     case "Lam": {
       const inner = new Set(scope);
       for (const p of e.params) inner.add(p.name);
@@ -798,21 +873,29 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
         scrut: rwExpr(e.scrut, scope, values, types),
         arms: e.arms.map((a) => {
           const inner = new Set(scope);
-          rwPattern(a.pat, inner, values);
+          rwPattern(a.pat, inner, values, types);
           return { ...a, guard: a.guard ? rwExpr(a.guard, inner, values, types) : undefined, body: rwExpr(a.body, inner, values, types) };
         }),
       };
     }
     case "Let": {
-      const value = rwExpr(e.value, scope, values, types);
+      // the name is in scope in its own value, so local functions can recurse
       const inner = new Set(scope);
       inner.add(e.name);
+      const value = rwExpr(e.value, inner, values, types);
       return { ...e, ann: e.ann ? rwType(e.ann, types) : undefined, value, body: rwExpr(e.body, inner, values, types) };
     }
     case "Record":
       return { ...e, fields: e.fields.map((f) => ({ ...f, value: rwExpr(f.value, scope, values, types) })) };
-    case "Field":
+    case "Field": {
+      // `Option.map` — a module-qualified name — versus `Server.log`, an effect operation
+      const t = e.target;
+      if (t.k === "Ctor" && t.args.length === 0 && !values.has(t.name) && CUR_QUALS.has(t.name)) {
+        const hit = qualify(t.name, e.name, "value", e.span);
+        if (hit) return { k: "Var", name: hit, span: e.span };
+      }
       return { ...e, target: rwExpr(e.target, scope, values, types) };
+    }
     case "Tuple": case "List":
       return { ...e, items: e.items.map((i) => rwExpr(i, scope, values, types)) };
     case "Binary":
@@ -830,7 +913,7 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
     case "Handle":
       return {
         ...e,
-        effect: values.get(e.effect) ?? QUALIFIED_VALUES.get(e.effect) ?? e.effect,
+        effect: values.get(e.effect) ?? qualValue(e.effect, e.span) ?? e.effect,
         ops: e.ops.map((op) => ({ ...op, fn: rwExpr(op.fn, scope, values, types) })),
         body: rwExpr(e.body, scope, values, types),
       };
@@ -838,9 +921,9 @@ function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types:
       let inner = new Set(scope);
       const stmts = e.stmts.map((s) => {
         if (s.k === "LetStmt") {
-          const value = rwExpr(s.value, inner, values, types);
           const next = new Set(inner);
           next.add(s.name);
+          const value = rwExpr(s.value, next, values, types);
           inner = next;
           return { ...s, ann: s.ann ? rwType(s.ann, types) : undefined, value };
         }
@@ -860,20 +943,23 @@ function rwHtml(n: HtmlNode, scope: Set<string>, values: Map<string, string>, ty
     case "Component":
       return {
         ...n,
-        name: values.get(n.name) ?? n.name,
+        name: values.get(n.name) ?? (n.name.includes(".") ? qualValue(n.name, n.span) : undefined) ?? n.name,
         attrs: n.attrs.map((a) => (a.value.k === "expr" ? { ...a, value: { k: "expr", e: rwExpr(a.value.e, scope, values, types) } } : a)),
         children: n.children.map((c) => rwHtml(c, scope, values, types)),
       };
   }
 }
 
-function rwPattern(p: Pattern, scope: Set<string>, values: Map<string, string>): void {
+function rwPattern(p: Pattern, scope: Set<string>, values: Map<string, string>, types: Map<string, string>): void {
   switch (p.k) {
-    case "PVar": scope.add(p.name); return;
-    case "PTuple": p.items.forEach((q) => rwPattern(q, scope, values)); return;
-    case "PRecord": p.fields.forEach((f) => rwPattern(f.pat, scope, values)); return;
-    case "PList": p.items.forEach((q) => rwPattern(q, scope, values)); if (p.rest) scope.add(p.rest); return;
-    case "PCtor": (p as { name: string }).name = values.get(p.name) ?? QUALIFIED_VALUES.get(p.name) ?? p.name; p.args.forEach((q) => rwPattern(q, scope, values)); return;
+    case "PVar": scope.add(p.name); if (p.ann) (p as { ann?: TypeExpr }).ann = rwType(p.ann, types); return;
+    case "PTuple": p.items.forEach((q) => rwPattern(q, scope, values, types)); return;
+    case "PRecord": p.fields.forEach((f) => rwPattern(f.pat, scope, values, types)); return;
+    case "PList": p.items.forEach((q) => rwPattern(q, scope, values, types)); if (p.rest) scope.add(p.rest); return;
+    case "PCtor":
+      (p as { name: string }).name = values.get(p.name) ?? (p.name.includes(".") ? qualValue(p.name, p.span) : undefined) ?? p.name;
+      p.args.forEach((q) => rwPattern(q, scope, values, types));
+      return;
     default: return;
   }
 }

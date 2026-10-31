@@ -1,51 +1,49 @@
-// Algebraic data types, pattern matching, and exhaustiveness checking.
+-- Algebraic data types, pattern matching, and exhaustiveness checking.
+data Shape = Circle Float | Rect Float Float | Triangle Float Float Float
 
-type Shape =
-  | Circle(Float)
-  | Rect(Float, Float)
-  | Triangle(Float, Float, Float)
+data Maybe a = Nothing | Just a
 
-type Maybe<a> = Nothing | Just(a)
+pi :: () -> Float
+pi () = 3.141592653589793
 
-fn pi() -> Float { 3.141592653589793 }
+area :: Shape -> Float
+area s = case s of
+  Circle r -> pi () * r * r
+  Rect w h -> w * h
+  Triangle a b _c -> 0.5 * a * b
 
-fn area(s: Shape) -> Float {
-  match s {
-    Circle(r) => pi() * r * r,
-    Rect(w, h) => w * h,
-    Triangle(a, b, _c) => 0.5 * a * b,
-  }
-}
+describe :: Option Shape -> Str
+describe o = case o of
+  None -> "no shape"
+  Some (Circle r) -> "circle of radius " + str r
+  Some (Rect w h) -> "rect " + str w + "x" + str h
+  Some (Triangle _ _ _) -> "triangle"
 
-fn describe(o: Option<Shape>) -> Str {
-  match o {
-    None => "no shape",
-    Some(Circle(r)) => "circle of radius " + str(r),
-    Some(Rect(w, h)) => "rect " + str(w) + "x" + str(h),
-    Some(Triangle(_, _, _)) => "triangle",
-  }
-}
+safeDiv :: Int -> Int -> Maybe Int
+safeDiv a b = if b == 0 then Nothing else Just (a / b)
 
-fn safeDiv(a: Int, b: Int) -> Maybe<Int> {
-  if (b == 0) { Nothing } else { Just(a / b) }
-}
+view :: List Shape -> Html
+view shapes =
+  <ul class="shapes">
+    <li>{"first: "} {describe (head shapes)}</li>
+    <li>
+      {"area: "}
+      {case head shapes of
+        Some s -> area s
+        None -> 0.0}
+    </li>
+  </ul>
 
-fn view(shapes: List<Shape>) -> Html {
-  html {
-    <ul class="shapes">
-      <li>{"first: "}{describe(head(shapes))}</li>
-      <li>{"area: "}{match head(shapes) { Some(s) => area(s), None => 0.0 }}</li>
-    </ul>
-  }
-}
-
-fn main() -> Html {
-  let shapes = [Rect(3.0, 4.0), Circle(2.0)];
-  html {
-    <div class="card">
-      <h1>{"ADTs"}</h1>
-      {view(shapes)}
-      <p>{"division: "}{match safeDiv(10, 2) { Just(n) => str(n), Nothing => "undefined" }}</p>
-    </div>
-  }
-}
+main :: Html
+main = do
+  let shapes = [Rect 3.0 4.0, Circle 2.0]
+  <div class="card">
+    <h1>{"ADTs"}</h1>
+    {view shapes}
+    <p>
+      {"division: "}
+      {case safeDiv 10 2 of
+        Just n -> str n
+        Nothing -> "undefined"}
+    </p>
+  </div>

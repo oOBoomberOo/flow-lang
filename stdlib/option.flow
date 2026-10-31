@@ -1,27 +1,25 @@
-// std::option
+-- std::option
+map :: Option a -> (a -> b) -> Option b
+map o f = case o of
+  None -> None
+  Some x -> Some (f x)
 
-pub fn map<a, b>(o: Option<a>, f: (a) -> b) -> Option<b> {
-  match o {
-    None => None,
-    Some(x) => Some(f(x)),
-  }
-}
+withDefault :: Option a -> a -> a
+withDefault o fallback = case o of
+  None -> fallback
+  Some x -> x
 
-pub fn withDefault<a>(o: Option<a>, fallback: a) -> a {
-  match o {
-    None => fallback,
-    Some(x) => x,
-  }
-}
+isSome :: Option a -> Bool
+isSome o = case o of
+  None -> False
+  Some _ -> True
 
-pub fn isSome<a>(o: Option<a>) -> Bool {
-  match o { None => false, Some(_) => true }
-}
+isNone :: Option a -> Bool
+isNone o = case o of
+  None -> True
+  Some _ -> False
 
-pub fn isNone<a>(o: Option<a>) -> Bool {
-  match o { None => true, Some(_) => false }
-}
-
-pub fn toList<a>(o: Option<a>) -> List<a> {
-  match o { None => [], Some(x) => [x] }
-}
+toList :: Option a -> List a
+toList o = case o of
+  None -> []
+  Some x -> [x]

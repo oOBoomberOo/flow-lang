@@ -19,13 +19,13 @@ export type TypeExpr =
 
 export type Place = "client" | "server" | "neutral";
 
-export interface EffRow { effects: string[]; var?: string; varSpan?: Span; spans?: { name: string; span: Span }[] }
+export interface EffRow { effects: string[]; /** the row was written in the source, even if empty (`! {}` declares purity) */ written?: boolean; var?: string; varSpan?: Span; spans?: { name: string; span: Span }[] }
 
 /* ---------- expressions ---------- */
 
 export type Pattern =
   | { k: "PWild"; span: Span }
-  | { k: "PVar"; name: string; span: Span }
+  | { k: "PVar"; name: string; ann?: TypeExpr; span: Span }
   | { k: "PLit"; lit: Literal; span: Span }
   | { k: "PCtor"; name: string; args: Pattern[]; span: Span }
   | { k: "PTuple"; items: Pattern[]; span: Span }
@@ -93,7 +93,7 @@ export interface FnSig {
 }
 
 export type Decl =
-  | { k: "Use"; path: string[]; items: { name: string; alias?: string }[]; glob: boolean; span: Span }
+  | { k: "Use"; path: string[]; items: { name: string; alias?: string }[]; glob: boolean; alias?: string; span: Span }
   | { k: "Adt"; name: string; params: string[]; paramBounds?: Record<string, string[]>; variants: { name: string; args: TypeExpr[]; span: Span }[]; pub: boolean; span: Span }
   | { k: "RecordType"; name: string; params: string[]; paramBounds?: Record<string, string[]>; fields: { name: string; type: TypeExpr }[]; pub: boolean; span: Span }
   | { k: "Alias"; name: string; params: string[]; paramBounds?: Record<string, string[]>; type: TypeExpr; pub: boolean; span: Span }

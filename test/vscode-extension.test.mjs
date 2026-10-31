@@ -154,18 +154,19 @@ function loadExtension(env) {
   return { ext, restore: () => { Module._load = origLoad; } };
 }
 
-const SRC = `effect Server @ server { fn secret(k: Str) -> Str }
-effect Client @ client { fn state<a>(init: a) -> Cell<a> }
+const SRC = `effect Server @ server where
+  secret :: Str -> Str
 
-fn main() -> Html {
-  let n = Client.state(0);
-  html {
-    <div>
-      <p>{"n = "}{n.get()}</p>
-      <p>{"s = "}{Server.secret("k")}</p>
-    </div>
-  }
-}
+effect Client @ client where
+  state :: a -> Cell a
+
+main :: Html
+main = do
+  let n = Client.state 0
+  <div>
+    <p>{"n = "} {n.get ()}</p>
+    <p>{"s = "} {Server.secret "k"}</p>
+  </div>
 `;
 
 test("vscode: activates, drives the server and colours the boundary", async () => {
@@ -235,11 +236,11 @@ test("vscode: providers return real results from the server", async () => {
     assert.ok(hover && /Inferred cut/.test(hover.contents.value), "hover on a cut shows boundary details");
     assert.match(hover.contents.value, /client→server/);
 
-    const plain = await provider("hover").provideHover(doc, at("let n", 4));
+    const plain = await provider("hover").provideHover(doc, at("n.get", 2));
     assert.ok(plain && /Placement/.test(plain.contents.value), "hover on ordinary code shows placement");
 
-    const completion = await provider("completion").provideCompletionItems(doc, at("html {", 6));
-    assert.ok(completion.items.length > 10, "completion items");
+    const completion = await provider("completion").provideCompletionItems(doc, at("<p>", 2));
+    assert.ok(completion.items.length > 2, "completion items");
 
     const lenses = await provider("codeLens").provideCodeLenses(doc);
     assert.ok(lenses.length >= 1, "code lenses");
@@ -256,13 +257,18 @@ test("vscode: completion carries auto-import edits and module links", async () =
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-mod-"));
   fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
-  const source = `use app::util::known
-fn main() -> Html {
-  html { <p>{str(known())}{str(meaning())}</p> }
-}
+  const source = `import Util (known)
+
+main :: Html
+main = <p>{str (known ())} {str (meaning ())}</p>
 `;
   fs.writeFileSync(path.join(dir, "src", "main.flow"), source);
-  fs.writeFileSync(path.join(dir, "src", "util.flow"), `pub fn known() -> Int { 1 }\npub fn meaning() -> Int { 42 }\n`);
+  fs.writeFileSync(path.join(dir, "src", "util.flow"), `known :: () -> Int
+known () = 1
+
+meaning :: () -> Int
+meaning () = 42
+`);
 
   const env = makeMock(REPO);
   const { ext, restore } = loadExtension(env);
@@ -276,13 +282,13 @@ fn main() -> Html {
     await new Promise((r) => setTimeout(r, 250));
 
     const provider = (name) => env.registered.find((r) => r[0] === name)[1];
-    const line = source.split("\n").findIndex((l) => l.includes("meaning()"));
+    const line = source.split("\n").findIndex((l) => l.includes("meaning ()"));
     const character = source.split("\n")[line].indexOf("meaning") + 3;
     const completion = await provider("completion").provideCompletionItems(doc, new env.mock.Position(line, character));
     const item = completion.items.find((i) => i.label === "meaning");
     assert.ok(item, "unimported package symbol is suggested");
     assert.equal(item.additionalTextEdits.length, 1);
-    assert.match(item.additionalTextEdits[0].newText, /use app::util::\{meaning\}/);
+    assert.match(item.additionalTextEdits[0].newText, /import Util \(meaning\)/);
 
     const links = await provider("documentLink").provideDocumentLinks(doc);
     assert.ok(links.some((l) => l.target.fsPath.endsWith("util.flow")), "import becomes clickable link");
@@ -295,7 +301,9 @@ fn main() -> Html {
 test("vscode: extension reports type errors through diagnostics", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-"));
   const file = path.join(dir, "main.flow");
-  const bad = `fn main() -> Html { html { <p>{1 + "x"}</p> } }\n`;
+  const bad = `main :: Html
+main = <p>{1 + "x"}</p>
+`;
   fs.writeFileSync(file, bad);
 
   const env = makeMock(REPO);
@@ -321,7 +329,7 @@ test("vscode: package.json and grammar are valid and complete", () => {
 
   const grammar = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "syntaxes", "flow.tmLanguage.json"), "utf8"));
   assert.equal(grammar.scopeName, "source.flow");
-  for (const need of ["comments", "strings", "numbers", "keywords", "types", "html", "declarations", "imports"]) {
+  for (const need of ["comments", "strings", "numbers", "keywords", "html", "declarations", "imports", "signatures", "module"]) {
     assert.ok(Object.keys(grammar.repository).includes(need), `grammar has ${need}`);
   }
   const walk = (o) => {

@@ -1,109 +1,95 @@
-// std::list — list transforms, written in Flow itself.
+module List (length, isEmptyList, map, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
 
-pub fn length<a>(xs: List<a>) -> Int { len(xs) }
+-- std::list — list transforms, written in Flow itself.
+length :: List a -> Int
+length xs = len xs
 
-pub fn isEmptyList<a>(xs: List<a>) -> Bool { isEmpty(xs) }
+isEmptyList :: List a -> Bool
+isEmptyList xs = isEmpty xs
 
-pub fn map<a, b>(xs: List<a>, f: (a) -> b) -> List<b> {
-  match xs {
-    [] => [],
-    [x, ..rest] => concat([f(x)], map(rest, f)),
-  }
-}
+map :: List a -> (a -> b) -> List b
+map xs f = case xs of
+  [] -> []
+  x : rest -> concat [f x] (map rest f)
 
-pub fn filter<a>(xs: List<a>, keep: (a) -> Bool) -> List<a> {
-  match xs {
-    [] => [],
-    [x, ..rest] => if (keep(x)) { concat([x], filter(rest, keep)) } else { filter(rest, keep) },
-  }
-}
+filter :: List a -> (a -> Bool) -> List a
+filter xs keep = case xs of
+  [] -> []
+  x : rest -> if keep x then concat [x] (filter rest keep) else filter rest keep
 
-pub fn fold<a, b>(xs: List<a>, init: b, step: (b, a) -> b) -> b {
-  match xs {
-    [] => init,
-    [x, ..rest] => fold(rest, step(init, x), step),
-  }
-}
+fold :: List a -> b -> (b -> a -> b) -> b
+fold xs init step = case xs of
+  [] -> init
+  x : rest -> fold rest (step init x) step
 
-pub fn forEach<a, b>(xs: List<a>, f: (a) -> b) -> Unit {
-  match xs {
-    [] => (),
-    [x, ..rest] => { f(x); forEach(rest, f) }
-  }
-}
+forEach :: List a -> (a -> b) -> ()
+forEach xs f = case xs of
+  [] -> ()
+  x : rest ->
+    do
+      f x
+      forEach rest f
 
-pub fn headOf<a>(xs: List<a>) -> Option<a> { head(xs) }
+headOf :: List a -> Option a
+headOf xs = head xs
 
-pub fn take<a>(xs: List<a>, n: Int) -> List<a> {
-  if (n <= 0) { [] }
-  else {
-    match xs {
-      [] => [],
-      [x, ..rest] => concat([x], take(rest, n - 1)),
-    }
-  }
-}
+take :: List a -> Int -> List a
+take xs n =
+  if n <= 0
+    then []
+    else case xs of
+      [] -> []
+      x : rest -> concat [x] (take rest (n - 1))
 
-pub fn drop<a>(xs: List<a>, n: Int) -> List<a> {
-  if (n <= 0) { xs }
-  else {
-    match xs {
-      [] => [],
-      [_, ..rest] => drop(rest, n - 1),
-    }
-  }
-}
+drop :: List a -> Int -> List a
+drop xs n =
+  if n <= 0
+    then xs
+    else case xs of
+      [] -> []
+      _ : rest -> drop rest (n - 1)
 
-pub fn range(n: Int) -> List<Int> {
-  if (n <= 0) { [] } else { concat(range(n - 1), [n - 1]) }
-}
+range :: Int -> List Int
+range n = if n <= 0 then [] else concat (range (n - 1)) [n - 1]
 
-pub fn zip<a, b>(xs: List<a>, ys: List<b>) -> List<(a, b)> {
-  match xs {
-    [] => [],
-    [x, ..xr] => match ys {
-      [] => [],
-      [y, ..yr] => concat([(x, y)], zip(xr, yr)),
-    },
-  }
-}
+zip :: List a -> List b -> List (a, b)
+zip xs ys = case xs of
+  [] -> []
+  x : xr ->
+    case ys of
+      [] -> []
+      y : yr -> concat [(x, y)] (zip xr yr)
 
-pub fn any<a>(xs: List<a>, p: (a) -> Bool) -> Bool {
-  match xs {
-    [] => false,
-    [x, ..rest] => if (p(x)) { true } else { any(rest, p) },
-  }
-}
+any :: List a -> (a -> Bool) -> Bool
+any xs p = case xs of
+  [] -> False
+  x : rest -> if p x then True else any rest p
 
-pub fn all<a>(xs: List<a>, p: (a) -> Bool) -> Bool {
-  match xs {
-    [] => true,
-    [x, ..rest] => if (p(x)) { all(rest, p) } else { false },
-  }
-}
+all :: List a -> (a -> Bool) -> Bool
+all xs p = case xs of
+  [] -> True
+  x : rest -> if p x then all rest p else False
 
-// ---------------------------------------------------------------- sorting
-// JS sort, reached through the FFI; the input list is copied first.
+-- ---------------------------------------------------------------- sorting
+-- JS sort, reached through the FFI; the input list is copied first.
+foreign import js unsafe "@sort" sort_in_place :: List a -> (a -> a -> Int) -> List a
 
-unsafe extern js fn sort_in_place<a>(xs: List<a>, cmp: (a, a) -> Int) -> List<a> = "@sort"
+sortBy :: List a -> (a -> a -> Int) -> List a
+sortBy xs cmp = sort_in_place (slice_to xs 0 (len xs)) cmp
 
-pub fn sortBy<a>(xs: List<a>, cmp: (a, a) -> Int) -> List<a> {
-  sort_in_place(slice_to(xs, 0, len(xs)), cmp)
-}
+sortInts :: List Int -> List Int
+sortInts xs = sortBy xs (\(a :: Int) (b :: Int) -> a - b)
 
-pub fn sortInts(xs: List<Int>) -> List<Int> { sortBy(xs, fn(a: Int, b: Int) -> Int { a - b }) }
+sortStrings :: List Str -> List Str
+sortStrings xs = sortBy xs (\(a :: Str) (b :: Str) -> if a < b then -1 else if a > b then 1 else 0)
 
-pub fn sortStrings(xs: List<Str>) -> List<Str> {
-  sortBy(xs, fn(a: Str, b: Str) -> Int { if (a < b) { -1 } else if (a > b) { 1 } else { 0 } })
-}
+contains :: List a -> a -> Bool
+contains xs x = any xs (\(y :: a) -> y == x)
 
-pub fn contains<a>(xs: List<a>, x: a) -> Bool { any(xs, fn(y: a) -> Bool { y == x }) }
+indexOfItem :: List a -> a -> Int
+indexOfItem xs x = indexFrom xs x 0
 
-pub fn indexOfItem<a>(xs: List<a>, x: a) -> Int { indexFrom(xs, x, 0) }
-
-fn indexFrom<a>(xs: List<a>, x: a, i: Int) -> Int {
-  match xs {
-    [] => -1,
-    [y, ..rest] => if (y == x) { i } else { indexFrom(rest, x, i + 1) },
-  }
-}
+indexFrom :: List a -> a -> Int -> Int
+indexFrom xs x i = case xs of
+  [] -> -1
+  y : rest -> if y == x then i else indexFrom rest x (i + 1)

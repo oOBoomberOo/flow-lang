@@ -41,7 +41,8 @@ function write(dir, name, text) {
   return file;
 }
 
-const MAIN = `fn main() -> Html { html { <p>{"hello"}</p> } }`;
+const MAIN = `main :: Html
+main = <p>{"hello"}</p>`;
 
 test("cli: help lists the commands and options", async () => {
   const r = await run(["--help"]);
@@ -88,26 +89,32 @@ test("cli: check succeeds with Cargo-style progress", async () => {
 
 test("cli: type errors render as rustc-style diagnostics with a summary", async () => {
   const dir = tmp("flow-cli-bad-");
-  const file = write(dir, "bad.flow", `fn f() -> str { "hello" }
-fn g() -> Str { 42 }
-fn main() -> Html { html { <p>{f()}{g()}</p> } }
+  const file = write(dir, "bad.flow", `f :: () -> Strr
+f () = "hello"
+
+g :: () -> Str
+g () = 42
+
+main :: Html
+main = <p>{f ()} {g ()}</p>
 `);
   const r = await run(["check", file, "--color", "never"]);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /error\[E_TYPE\]: unknown type 'str'/);
-  assert.match(r.stderr, /--> .*bad\.flow:1:11/);
-  assert.match(r.stderr, /1 \| fn f\(\) -> str \{ "hello" \}/);
-  assert.match(r.stderr, /\| {11}\^\^\^/);
-  assert.match(r.stderr, /= help: 'str' is a value, not a type; did you mean 'Str'\?/);
+  assert.match(r.stderr, /error\[E_TYPE\]: unknown type 'Strr'/);
+  assert.match(r.stderr, /--> .*bad\.flow:1:12/);
+  assert.match(r.stderr, /1 \| f :: \(\) -> Strr/);
+  assert.match(r.stderr, /\| {12}\^\^\^\^/);
+  assert.match(r.stderr, /did you mean 'Str'\?/);
   assert.match(r.stderr, /return type mismatch in fn g: expected Str, got Int/);
-  assert.match(r.stderr, /2 \| fn g\(\) -> Str \{ 42 \}/);
+  assert.match(r.stderr, /5 \| g \(\) = 42/);
   assert.match(r.stderr, /due to 2 previous errors/);
   assert.doesNotMatch(r.stderr, /\x1b\[/, "no color when piped");
 });
 
 test("cli: --color always forces ANSI, --color never strips it", async () => {
   const dir = tmp("flow-cli-color-");
-  const file = write(dir, "bad.flow", `fn main() -> Html { html { <p>{1 + "x"}</p> } }`);
+  const file = write(dir, "bad.flow", `main :: Html
+main = <p>{1 + "x"}</p>`);
 
   const always = await run(["check", file, "--color", "always"]);
   assert.equal(always.code, 1);
@@ -168,7 +175,8 @@ test("cli: build emits modules and the runtime", async () => {
 
 test("cli: build failure renders diagnostics and does not emit", async () => {
   const dir = tmp("flow-cli-buildfail-");
-  const file = write(dir, "bad.flow", `fn main() -> Html { 42 }`);
+  const file = write(dir, "bad.flow", `main :: Html
+main = 42`);
   const out = path.join(dir, "dist");
   const r = await run(["build", file, "--out", out]);
   assert.equal(r.code, 1);
@@ -210,18 +218,21 @@ async function stopWatch(w) {
 
 test("cli: watch rebuilds on edits and recovers from errors", { timeout: 30000 }, async () => {
   const dir = tmp("flow-cli-watch-");
-  const file = write(dir, "main.flow", `fn main() -> Html { html { <p>{"one"}</p> } }`);
+  const file = write(dir, "main.flow", `main :: Html
+main = <p>{"one"}</p>`);
   const out = path.join(dir, "out");
   const w = startWatch(["watch", file, "--out", out, "--debounce", "50", "--color", "never"]);
   try {
     await w.waitFor(/Watching .* for changes/);
     assert.match(fs.readFileSync(path.join(out, "app.js"), "utf8"), /"one"/);
 
-    write(dir, "main.flow", `fn main() -> Html { html { <p>{1 + "x"}</p> } }`);
+    write(dir, "main.flow", `main :: Html
+main = <p>{1 + "x"}</p>`);
     await w.waitFor(/error\[E_TYPE\].*right operand of '\+'/);
     await w.waitFor(/waiting for changes\.\.\./);
 
-    write(dir, "main.flow", `fn main() -> Html { html { <p>{"two"}</p> } }`);
+    write(dir, "main.flow", `main :: Html
+main = <p>{"two"}</p>`);
     await w.waitFor(/Finished check in [\d.]+s \(no cuts\)\s*\n[\s\S]*Finished check/);
     assert.match(fs.readFileSync(path.join(out, "app.js"), "utf8"), /"two"/);
   } finally {
@@ -231,12 +242,14 @@ test("cli: watch rebuilds on edits and recovers from errors", { timeout: 30000 }
 
 test("cli: watch --run restarts the server and serves the new bundle", { timeout: 30000 }, async () => {
   const dir = tmp("flow-cli-watchrun-");
-  const file = write(dir, "main.flow", `fn main() -> Html { html { <p>{"alpha"}</p> } }`);
+  const file = write(dir, "main.flow", `main :: Html
+main = <p>{"alpha"}</p>`);
   const out = path.join(dir, "out");
   const w = startWatch(["watch", file, "--run", "--port", "0", "--out", out, "--debounce", "50", "--color", "never"]);
   try {
     await w.waitFor(/Running http:\/\/localhost:\d+/);
-    write(dir, "main.flow", `fn main() -> Html { html { <p>{"beta"}</p> } }`);
+    write(dir, "main.flow", `main :: Html
+main = <p>{"beta"}</p>`);
     await w.waitFor(/Running http:\/\/localhost:\d+[\s\S]*Running http:\/\/localhost:\d+/);
     assert.match(fs.readFileSync(path.join(out, "app.js"), "utf8"), /"beta"/);
   } finally {

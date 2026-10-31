@@ -1,320 +1,169 @@
 # Flow
 
-A tierless web language where **the client/server boundary is inferred by the type
-system** — with modules, packages, a standard library, a language server, and a VS
-Code extension that colours the boundary in your editor.
+A tierless web language with a **Haskell-style surface** — layout-driven, curried, inferred —
+where the client/server boundary is derived from the types. Modules, packages, a standard
+library, a language server, and a VS Code extension that colours the boundary in your editor.
 
 You write one program. Every expression gets a *placement* derived from the authority it
 requires — `Client` for the DOM, `Server` for secrets and state, user effects for whatever their
 provider needs. Where placements disagree, the compiler cuts the program into a browser bundle
 and a server bundle, and turns the seam into a wire.
 
+```flow
+import Server
+import Client
+
+greeting :: Str -> Html
+greeting name = <p>{"Hello, " + name}</p>
+
+main :: Html
+main = do
+  let who = Server.secret "user"
+  let count = Client.state 0
+  <div class="card">
+    <h1>{greeting who}</h1>
+    <button onClick={\e -> count := count.value + 1}>{"+1"}</button>
+    <p>{str count.value}</p>
+  </div>
+```
+
 A function is a value, not a region: a callback is hosted by whoever invokes it, and the
-statements inside it cross individually when they need the other side. A client `Timer.every`
-callback that logs with `Server.log` stays in the browser; only the log statement is a server
-call.
+statements inside it cross individually when they need the other side. A client timer callback
+that logs with `Server.log` stays in the browser; only the log statement is a server call.
+
+## The syntax in one screen
 
 ```flow
-effect Server { fn secret(name: Str) -> Str }
-effect Client { fn state<a>(init: a) -> Cell<a> }
+module Shapes (Shape(..), area, main) where
 
-fn main() -> Html {
-  let reveal = Client.state(false);
-  html {
-    <div class="card">
-      <button onClick={fn(e: Event) { reveal.set(not reveal.get()) }}>{"toggle"}</button>
-      {if (reveal.get()) {
-        <p>{"server says: "}{Server.secret("flag")}</p>
-      } else {
-        <p>{"nothing to see here"}</p>
-      }}
-    </div>
-  }
-}
+import List (map, sum)
+import Option as O
+
+-- data, records and aliases
+data Shape = Circle Float | Rect Float Float
+type Point = { x :: Float, y :: Float }
+
+area :: Shape -> Float
+area (Circle r) = 3.14 * r * r
+area (Rect w h) = w * h
+
+-- clauses, guards and where
+classify :: Int -> Str
+classify n
+  | n < 0 = "neg"
+  | n == 0 = "zero"
+  | otherwise = "pos"
+
+total :: List Int -> Int
+total xs = go xs 0
+  where
+    go [] acc = acc
+    go (x : rest) acc = go rest (acc + x)
+
+-- currying, sections, composition
+incs = map (+ 1)
+evens = filter (\x -> x `mod` 2 == 0)
+banner = upper . trim
+
+main :: Html
+main = do
+  let shapes = [Circle 2.0, Rect 3.0 4.0]
+  <ul>{map (\s -> <li>{str (area s)}</li>) shapes}</ul>
 ```
 
-No `"use client"`, no loaders, no API layer, no serialization code. `flow explain` prints what
-the type checker decided:
+Layout is the block structure: `where`, `let`, `of`, `do` and `with` open a block, and a line
+that starts at or left of the block's indentation closes it. Brackets and `{expr}` holes inside
+markup suspend layout, so multi-line literals just work.
 
+## Modules are namespaces
+
+```flow
+import Option (withDefault)
+import List as L
+import Http (get, Router, textResponse)
+
+main :: Html
+main = <p>{withDefault (Option.map Option.Some 3) "none"}</p>
 ```
-cut cut1: reactive server-side block @16 deps=[] type=Str
-```
 
-The `if` stays in the browser (branches are markup, and `Html` cannot exist on the server); the
-secret is cut out as a server node and fetched only when the branch is taken.
+* `import Module (a, b)` brings names into scope.
+* `import Module as M` (or just mentioning `Module.x`) lets you write `M.x`.
+* Qualified names work **without any import**: `Option.map`, `Option.withDefault`, `List.sortBy`,
+  `Http.textResponse`. The linker loads the module on demand and checks its export list.
 
----
+`module Name (exports) where` makes everything else private. A file without a header exports
+everything.
 
-## Quickstart
-
-Requires **Node ≥ 22.6** (native TypeScript type-stripping). No dependencies, no build step.
+## Commands
 
 ```bash
-node bin/flow.mjs check   examples/boundary.flow
+node bin/flow.mjs check   examples/hello.flow
 node bin/flow.mjs explain examples/boundary.flow
-node bin/flow.mjs watch   examples/boundary.flow --run --port 4173
-# open http://localhost:4173; edits rebuild and restart automatically
-```
-
-Errors are rendered Cargo-style: `error[E_TYPE]: …`, a ` --> file:line:col` arrow,
-the source line with a caret underline, notes, and a `could not … due to N previous
-errors` summary. `flow watch` re-checks (or rebuilds and restarts with `--run`) on
-save; progress lines honour `--quiet`, `NO_COLOR` and `--color`.
-
-A package with real dependencies:
-
-```bash
-cd packages/app
-node ../../bin/flow.mjs install .        # vendor flow_modules/, write flow.lock
-node ../../bin/flow.mjs check src/main.flow
+node bin/flow.mjs run     examples/counter.flow --port 4173
+node bin/flow.mjs fmt     src/main.flow          # format in place
+node bin/flow.mjs migrate old-syntax.flow --write # rewrite the old Rust-style syntax
 ```
 
 ```
-examples/hello.flow      markup only
-examples/counter.flow    client state + events + components
+examples/hello.flow      the smallest app
+examples/counter.flow    client state and events
 examples/boundary.flow   if across the boundary, uplink, downlink
-examples/adt.flow        sum types, records, exhaustive matching
-examples/traits.flow     trait dispatch, generic instances, list patterns
-examples/bounds.flow     trait bounds, bounded generic instances, dictionaries
-examples/hkt.flow        higher-kinded type parameters (Functor for List/Option)
-examples/handler.flow    scoped and nested local capability handlers
-examples/algebraic.flow  algebraic effects: state, resume, aborting handlers
-examples/cell-monad.flow cell sugar and do-blocks over Option/List
-examples/fp.flow         inferred lambda params, currying, pipes and combinators
-examples/net.flow        server-or-client network effect capability
-examples/fs.flow         server-side filesystem effect capability
-examples/http.flow       request/routing effect capabilities and easy routing
-examples/effects.flow    user-defined capability, request/response cut chain
-
-packages/demo/           package with a local module (util.flow)
-packages/app/            package with registry dependencies (flow-charts, flow-time)
-stdlib/                  std::prelude, list, option, math, random, string, html, log, time, http, net, fs, state, exn, ref, monad, fn
-registry/                a small package registry (index.json + packages/)
+examples/effects.flow    capabilities and providers
+examples/algebraic.flow  algebraic effects, resume, handlers
+examples/fp.flow         currying, sections, composition, partial application
+examples/modules.flow    local modules, imports and namespacing
+examples/http.flow       routes, request capabilities
+examples/bounds.flow     trait bounds
+examples/hkt.flow        higher-kinded type parameters
+examples/traits.flow     user traits and instances
+examples/lists.flow      list functions
+examples/adt.flow        data types and pattern matching
+examples/ffi.flow        unsafe FFI
+examples/fs.flow         server-side filesystem access
+examples/net.flow        outbound HTTP from the server
+examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` — **229 tests** across grammar, types, boundaries, modules, packages,
-the language server, the CLI and watcher, HTTP capabilities, network capabilities, filesystem capabilities,
-algebraic effects, cell sugar, monads, currying, qualified paths, trait bounds, higher-kinded types, local handlers and the VS Code extension.
+Tests: `npm test` — **232 tests** across grammar, layout, types, boundaries, modules, packages,
+the standard library, algebraic effects, cell sugar, monads, currying, qualified paths, trait
+bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
----
+## Feature list
 
-## Editor support
-
-```
-$ node src/lsp/server.ts     # LSP on stdio
-```
-
-* **Syntax highlighting** — TextMate grammar (`vscode-extension/syntaxes/flow.tmLanguage.json`).
+* **One language, two tiers** — `Client` / `Server` effects decide placement; the compiler
+  emits a browser bundle and a server bundle plus the wire between them
+* **Haskell-style syntax** — layout blocks, partial application, `\x -> e`, `if/then/else`,
+  `case … of`, `let … in`, `where`, operator sections, `$` and `.`
+* **Full inference** — signatures are optional; unannotated functions are inferred callee-first
+  and generalized, lambda parameters take their types from the caller
+* **Modules as namespaces** — `Option.map`, `Option.withDefault`, `List.sortBy`, plus the
+  `import` forms; no `::` paths to remember
+* **Data and records** — `data Shape = Circle Float | Rect Float Float`, `type P = { x :: Int }`
+* **Classes and instances** — `class Show a where`, `instance Show Int where`, contexts
+  (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: (a -> b) -> f a -> f b`)
+* **Effects are capabilities** — `effect Server @ server where`, `provide`, `handle`
+* **Algebraic effects** — `algebraic effect State where get :: () -> Int`, resumed with `resume`
+* **Cell sugar** — `cell.value`, `cell := e`, `cell += n`, `cell.update`
 * **Boundary colouring** — client code washed blue, server code amber; every inferred cut is
-  underlined and gets a **gutter arrow** pointing at the other tier (`→ server` violet,
-  `→ client` blue), a centre overview-ruler mark and an inline direction label. Cross-tier
-  expressions get a dotted `⇄ mixed` marker. Hover shows cut id, direction, mode, deps and
-  type; inlay hints mark each cut (`cut1→server`).
-* **Inlay hints** — `fn render server`, `let total: Int`, `cut1→server`: the boundary is inline.
-* **Code lenses** — `client · 2 cuts` above each function; status bar `Flow · client 6 · server 0 · cuts 2`.
-* **Diagnostics** — every type error in the package, with quick fixes (*make public*, *import*).
-* **Completion** — keywords, locals, package symbols, module members after `::`, fields and
-  Cell members after `.`.
-* **Navigation** - go-to-definition (including from `use` lines, effects, effect operations and
-  builtin types such as `Html`/`List`/`Int`), find references, rename
-  (package-wide for globals, scoped for locals), document/workspace symbols.
-* **Editing** — signature help, folding, selection ranges, document highlights, formatting.
+  underlined, with a gutter marker and an overview ruler
+* **Inlay hints** — `fn render server`, `let total: Int`, `cut1→server`: the boundary is inline
+* **Language server** — completion, hover, definitions, references, rename, semantic tokens,
+  folding, formatting, code actions, code lenses, boundary regions
+* **Formatter and migration** — `flow fmt` prints canonical syntax; `flow migrate` rewrites
+  programs written in the old Rust-style syntax
 
-Install the extension: `npm run package:extension && code --install-extension build/flow-language.vsix --force`
-(add `--profile "<name>"` if your workspace uses a VS Code profile).
+## How it works
 
-Details: [`docs/editor.md`](editor.md).
-
----
-
-## The idea in one paragraph
+1. **Parse** (`src/parser.ts`) — layout-sensitive recursive descent into one AST.
+2. **Link** (`src/modules.ts`) — imports, exports, namespacing and one flat program.
+3. **Infer** (`src/infer.ts`) — types, effect rows, trait dispatch, and the placement lattice.
+4. **Cut** (`src/codegen.ts`) — resolve `cross` nodes into two programs and the wire.
+5. **Runtime** (`src/runtime/`) — a dependency-tracking dataflow graph shared by both sides.
 
 Most "full-stack" tools make you *write* the boundary: file directives, server actions, RPC
-stubs. Flow makes the boundary a **consequence of the types**. Every effect is a capability; the
-placement of an effect is the placement of its provider; a call inherits the placement of its
-effects. When a client-placed context and a server-placed computation meet, the join is `cross` —
-not an error, but a frontier the compiler resolves by data-flow direction. The result is two
-programs that cooperate, generated from one typed tree, with no continuation ever serialized: the
-seam is an edge in a dataflow graph.
+stubs. Flow treats tiers as an effect system: you write one program, and the compiler works out
+where each part has to run.
 
-Full details: [`docs/type-system.md`](docs/type-system.md).
+## Licence
 
----
-
-## What you get
-
-**A real type system**
-
-```flow
-type Shape = Circle(Float) | Rect(Float, Float) | Triangle(Float, Float, Float)
-
-fn area(s: Shape) -> Float {
-  match s {
-    Circle(r) => 3.141592653589793 * r * r,
-    Rect(w, h) => w * h,
-    Triangle(a, b, _) => 0.5 * a * b,
-  }
-}
-```
-
-* Hindley–Milner inference, let-generalization, universal polymorphism
-* Algebraic data types, records, tuples, lists — with **exhaustiveness checking**
-* **Traits** with static dictionary dispatch and generic instances
-* **Trait bounds** - `fn render<a: Show>(x: a)` and bounded generic instances
-  (`impl Show<a> for List<a> where a: Show`) with dictionary passing at call sites
-* **Higher-kinded type parameters** - `trait Functor<f>` with `f<a>` / `f<b>`;
-  instances at the constructor (`impl Functor for List`), dispatch by head constructor
-* **Cells with syntax sugar** - `cell.value` reads, `cell.value = e` writes,
-  `cell.update(f)` and `+=`/`-=`/`*=`/`/=`/`++`/`--` update in place; all lower to
-  `CellOps` get/set with the same `Client` placement as the long forms
-* **Currying and pipes** - functions partially apply (`add(1)` is `(Int) -> Int`,
-  `add(1)(2)` works), lambdas infer parameter types (`fn(x) => x + 1`), and
-  `x |> f`, `f <| x`, `f $ x` chain and apply; `std::fn` adds `compose`, `flip`,
-  `apply` and friends
-* **Qualified paths** - `std::list::length(xs)`, `std::option::Some(1)`,
-  `std::state::State.get()` and qualified types/patterns work without a `use`;
-  modules load on demand and `pub` is enforced
-* **Error-resilient editor** - a syntax or type error in one declaration does not
-  blank the file: symbols, hover, definitions, semantic tokens and completion keep
-  working, and completion knows modules after `std::` / members after `std::list::`
-* **Monads** - `std::monad` provides `Monad<f>` (`bind`/`map`) for Option and List,
-  with `m >>= f` and `do { x <- m; … }` sugar that desugars to nested binds
-* **Local capability handlers** - `handle Effect with { … } { body }` scopes a
-  provider, nests/restores correctly, and removes the handled effect from the row
-* **Algebraic effects** - `algebraic effect State { fn get() -> Int }` suspends at
-  its operations; `handle State with { get = fn() -> a { resume(cell.get()) } }`
-  continues the computation, can run code after `resume`, or abort without it.
-  `std::state` and `std::exn` ship on top of it
-* **HTTP capabilities** - `std::http` declares `Request` and `Router` as effect
-  capabilities, with easy `get`/`post` route helpers and a host-backed dispatcher
-* **Network** - `std::net` is a placement-neutral `Net` effect capability with
-  callback-based `get`/`post`/`put`/`del` requests on the client or the server
-* **Server filesystem** - `std::fs` is an `Fs @ server` effect capability over Node
-  `fs`: text read/write/append, directories, stat, existence and temp paths
-* **Effect rows** on arrows, inferred and propagated; declared rows are checked upper bounds
-* **Placement inference** - the thing no other mainstream language does
-* **Checked placement annotations** - `@client` / `@server` on returns, parameters and
-  `let` bindings; effect rows are per-instantiation, so one server call does not poison
-  unrelated call sites
-* **Unsafe FFI** - `unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"`; the
-  standard library (logging, timing, arithmetic, strings, lists) is built on it rather
-  than on compiler-emitted primitives
-* **Cargo-style CLI** - `flow check/build/run/watch/explain` with `error[E_TYPE]`
-  diagnostics, `--> file:line:col` arrows, source snippets with carets, colour on a
-  TTY, `--quiet` and a `could not … due to N previous errors` summary; `flow watch`
-  re-checks (or rebuilds and restarts with `--run`) on every save
-
-**Modules, packages, and a standard library**
-
-```flow
-use app::dashboard::{Card, bars}
-use flow-charts::bar::Chart
-use flow-time::format::hms
-use std::list::map
-```
-
-* `pub` visibility, compile-time linking, deterministic name qualification on collision
-* `flow.json` manifest, `flow install` / `flow add`, `flow_modules/`, `flow.lock` with
-  `sha256` integrity per package, semver ranges (`^`, `~`, exact, `*`)
-* A registry (`registry/index.json`) with real packages, plus `std` (resolved by the compiler)
-* The standard library is written in Flow and compiled with your program
-
-**Native markup and events**
-
-```flow
-html {
-  <div class="card">
-    <h1>{"Counter"}</h1>
-    <button onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
-    <Counter n={n.get()} />
-  </div>
-}
-```
-
-**Two cut modes, chosen by context — not by a flag**
-
-| Where the cut sits | Emitted | Semantics |
-|---|---|---|
-| render path (`html`, cells) | `R.remote(id, deps)` | a stream; no request, no waterfall |
-| inside an event handler | `await R.call(id, args)` | one round trip per event |
-
-Because the transport is symmetric, the *server* can consume client values too:
-
-```flow
-{"skew: "}{Server.now() - Client.now()}
-```
-
-```
-cut cut2: reactive server-side block @28  →  Server.now() - R.remote("cut3")
-cut cut3: reactive client-side block @28  →  Client.now()
-```
-
----
-
-## Repository layout
-
-```
-src/
-  lexer.ts        tokens with source offsets
-  parser.ts       recursive descent + Pratt; native HTML; `use`/`pub`
-  ast.ts          syntax tree
-  types.ts        unification, effect rows, placement lattice, sendability
-  infer.ts        Γ ⊢ e : τ ! ε @ p — inference, traits, exhaustiveness, providers
-  codegen.ts      home assignment, cut detection, dual emission
-  modules.ts      package discovery, import resolution, linking, AST rewriting
-  pkg.ts          manifest, semver, registry, install, lockfile, integrity
-  analysis.ts     editor-facing analysis (diagnostics, regions, typed nodes)
-  host.ts         HTTP host: shell, bundles, SSE down, POST up
-  cli.ts          check / explain / build / run / install / add / verify / registry
-  lsp/server.ts   language server (stdio JSON-RPC, no dependencies)
-  runtime/
-    core.js       dependency-tracking dataflow + symmetric transport + capabilities
-    dom.js        el / text / hole / attr / mount
-    client.js     browser entry (served at /runtime/client.js)
-    server.js     server entry + SSE hub
-stdlib/           prelude, list, option, math, random, string, html, log, time (written in Flow)
-registry/         index.json + packages/{flow-charts,flow-time}
-packages/         demo (local modules), app (registry dependencies)
-vscode-extension/ package.json, tmLanguage grammar, extension.js
-docs/
-  grammar.ebnf    normative grammar
-  type-system.md  judgement, lattice, cut algorithm, guarantees
-  language.md     practical guide
-  modules.md      modules, packages, registry, standard library
-  editor.md       LSP protocol and VS Code extension
-test/
-  grammar.test.mjs          38 lexical/grammar tests
-  typecheck.test.mjs        31 type-system and boundary tests
-  modules.test.mjs          17 module/package/stdlib tests
-  lsp.test.mjs              6 language-server tests
-  e2e.test.mjs              4 end-to-end transport tests
-  vscode-extension.test.mjs 4 extension tests
-```
-
----
-
-## Guarantees (and the ones you do not get)
-
-Compile-time: no un-sendable value crosses a cut; `Html` can never be produced on the server;
-every effect call has a provider whose signature matches; every `match` is exhaustive; every
-imported name exists and is `pub`; installed packages match their lockfile hashes; cuts are
-deterministic and printable; annotated placements are checked and effect rows are
-per-instantiation.
-
-Not in 0.1: latency is not modelled (a handler cut is a real round trip); reactive cuts re-run
-their body when inputs change, so side effects belong in handler cuts; one session per server;
-whole-program compilation means client and server deploy atomically; no publishing command
-(copy into `registry/`).
-
-`docs/language.md §13` lists every remaining limitation explicitly.
-
----
-
-## Related work
-
-The idea is old and good. Links (2006) proved "web programming without tiers"; Hop, Opa and
-Ur/Web each built a real implementation; ScalaLoci gave placement types; Electric Clojure
-(formerly Hyperfiddle Photon) showed that a reactive dataflow cut removes the request waterfall
-in practice. Flow's specific bet is **capability-first placement**:
-`place(effect) = place(provider)`, so authority — not syntax — is the source of truth, and
-moving an implementation moves the boundary with it.
+MIT.

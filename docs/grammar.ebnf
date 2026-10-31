@@ -1,366 +1,121 @@
-; =====================================================================
-; Flow — grammar
-; Version 0.1.0
-;
-; This file is normative: it is the grammar the implementation in src/
-; accepts. Comments use ';'. EBNF conventions:
-;   { x }     zero or more
-;   [ x ]     optional
-;   x | y     alternative
-;   'x'       terminal
-; =====================================================================
+(* Flow — grammar (Haskell-style surface syntax)
+   Layout is significant: `where`, `let`, `of`, `do` and `with` open an implicit
+   block at the indentation of the next token. A line that starts at or left of
+   that indentation inserts a virtual `;` (same column) or closes the block
+   (smaller column). Brackets, list literals, records and `{expr}` holes suspend
+   layout. *)
 
+program         = [ module-header ] { declaration } ;
+module-header   = 'module' module-name [ '(' export-list ')' ] 'where' ;
+module-name     = con { '.' con } ;
+export-list     = export { ',' export } ;
+export          = ( identifier | con [ '(' [ '..' | con { ',' con } ] ')' ] ) ;
 
-; ---------------------------------------------------------------------
-; 1. Lexical grammar
-; ---------------------------------------------------------------------
+declaration     = import-decl | data-decl | type-decl | class-decl | instance-decl
+                | effect-decl | provide-decl | foreign-decl
+                | signature | clause ;
 
-letter          = "A".."Z" | "a".."z" ;
-digit           = "0".."9" ;
-ident-char      = letter | digit | "_" | "'" ;
+import-decl     = 'import' module-name [ 'as' con ]
+                  [ '(' import-item { ',' import-item } ')' ] ;
+import-item     = ( identifier | con ) [ 'as' identifier ] ;
 
-lower           = "a".."z" | "_" ;
-upper           = "A".."Z" ;
+data-decl       = 'data' con { var } '=' constructor { '|' constructor } ;
+constructor     = con { atype } ;
+type-decl       = 'type' con { var } '=' ( type | record-fields ) ;
+record-fields   = '{' [ field { ',' field } ] '}' ;
+field           = identifier '::' type ;
 
-identifier      = lower { ident-char } ;            ; value names, type variables
-constructor     = upper { ident-char } ;            ; type names, constructors, components
+class-decl      = 'class' [ context '=>' ] con { var } 'where' { signature } ;
+instance-decl   = 'instance' [ context '=>' ] con atype { atype } 'where' { clause } ;
+context         = class-assert { ',' class-assert } | '(' class-assert { ',' class-assert } ')' ;
+class-assert    = con var ;
 
-integer         = digit { digit } ;
-float           = digit { digit } "." digit { digit } ;
+effect-decl     = [ 'algebraic' ] 'effect' con [ '@' placement ] 'where' { signature } ;
+provide-decl    = 'provide' con [ 'for' atype ] 'where' { clause } ;
+foreign-decl    = 'foreign' 'import' 'js' 'unsafe' str signature ;
 
-string          = '"' { string-char } '"' ;
-string-char     = any character except '"' | newline
-                | "\" ( '"' | "\" | "n" | "t" | "r" | "0" ) ;
-
-line-comment    = "//" { any character except newline } newline ;
-block-comment   = "/*" { any character | block-comment } "*/" ;
-
-whitespace      = " " | "\t" | "\r" | "\n" ;
-
-; Keywords (reserved, may not be used as identifiers)
-;   fn let mut if else match type trait impl effect algebraic provide with
-;   use extern unsafe html handle do pub return for in true false and or not
-
-; Multi-character symbols
-;   =>  ->  ==  !=  <=  >=  &&  ||  ..  ::
-
-; Single-character symbols
-;   (  )  {  }  [  ]  ,  ;  :  .  =  !  |  @  +  -  *  /  %  <  >  ?  &  ^  _
-
-
-; ---------------------------------------------------------------------
-; 2. Program
-; ---------------------------------------------------------------------
-
-program         = { declaration } EOF ;
-
-declaration     = use-decl
-                | [ 'pub' ] type-decl
-                | [ 'pub' ] trait-decl
-                | impl-decl
-                | [ 'pub' ] [ 'algebraic' ] effect-decl
-                | provide-decl
-                | [ 'pub' ] extern-decl
-                | [ 'pub' ] fn-decl ;
-
-; `pub` marks a declaration as exported from its module. Without it the name is
-; private to the file and importing it is an error.
-
-; ---------------------------------------------------------------------
-; 3b. FFI — raw JavaScript, explicitly unsafe
-; ---------------------------------------------------------------------
-
-;   unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"
-;
-; Targets:
-;   "Math.floor"   a global path, called with its parent as receiver
-;   "@toUpperCase" a method on the first argument
-;   "#length"      a property of the first argument
-;   "#index"       an element of the first argument
-;
-; This is the escape hatch that the standard library is built on: logging,
-; timing, arithmetic and list/string primitives are ordinary std code bound to
-; the host with `unsafe extern`, not compiler-injected.
-extern-decl     = 'unsafe' 'extern' ffi-target 'fn' identifier [ type-params ]
-                  '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ]
-                  '=' json-string ';'? ;
-
-ffi-target      = identifier ;                      ; only `js` is implemented
-
-; ---------------------------------------------------------------------
-; 3a. Modules and imports
-; ---------------------------------------------------------------------
-
-; A module is one file. Its id is `package::path::to::file` (directories become
-; `::` segments when importing).
-;
-; Resolution rule for the last segment: when the import is braced (`::{a, b}`) or
-; globbed (`::*`) the path is the module and the braces list the names. Otherwise
-; the trailing segment is the imported name — `use std::list::map` imports `map`
-; from `std::list`, and `use std::list::map as m` renames it.
-use-decl        = 'use' use-path [ '::' ( import-list | '*' ) ] [ ';' ] ;
-
-use-path        = path-segment { '::' path-segment } [ 'as' identifier ] ;
-path-segment    = word { '-' word } ;                ; `std`, `flow-charts`, `html`, …
-
-import-list     = '{' import-item { ',' import-item } [ ',' ] '}' ;
-import-item     = name [ 'as' identifier ] ;
-
-name            = identifier | constructor ;
-
-; `use` binds only exported (`pub`) declarations. Importing an ADT also brings
-; its constructors into scope under their own names. Glob imports are parsed and
-; rejected — be explicit.
-
-
-; ---------------------------------------------------------------------
-; 3. Type declarations
-; ---------------------------------------------------------------------
-
-type-decl       = 'type' constructor [ type-params ] '=' type-body [ ';' ] ;
-
-; A right-hand side that is a variant list denotes an algebraic data type.
-; A variant list must be unambiguous: either a leading '|', or a constructor
-; followed by a payload '(' or another '|'. Anything else is a transparent
-; alias, so `type Id = Int` is an alias and `type Color = | Red` is a
-; single-variant ADT.
-type-body       = [ '|' ] variant { '|' variant }      ; ADT
-                | record-type-fields                   ; record type
-                | type                                 ; alias
-
-variant         = constructor [ '(' [ type { ',' type } ] ')' ] ;
-
-type-params     = '<' type-param { ',' type-param } '>' ;
-type-param      = ( identifier | constructor ) [ ':' trait-bound { '+' trait-bound } ] ;
-
-; Trait bounds on type parameters (e.g. `fn render<a: Describe>(x: a)`).
-trait-bound     = constructor ;
-
-record-type-fields
-                = '{' [ field { ',' field } [ ',' ] ] '}' ;
-field           = identifier ':' type ;
-
-
-; ---------------------------------------------------------------------
-; 4. Types
-; ---------------------------------------------------------------------
-
-type            = type-atom [ '@' placement ] [ '->' type ] ;
+signature       = identifier '::' [ context '=>' ] type [ '!' effect-row ] ;
+clause          = identifier { apat } ( '=' expr | guards ) [ 'where' block ] ;
+guards          = { '|' expr '=' expr } ;
+block           = { clause } ;                      (* layout *)
 
 placement       = 'client' | 'server' ;
+effect-row      = con { ',' con } | '{' [ con { ',' con } ] '}' ;
 
-; Effect declarations may also be neutral: calls follow their arguments/callbacks.
-effect-placement = 'client' | 'server' | 'neutral' ;
+(* ---------------------------------------------------------------- types *)
 
-qualified-name  = path-segment { '::' path-segment } ;
-path-segment    = identifier | constructor | keyword ;   ; `std`, `flow-charts`, `type`
+type            = btype [ '@' placement ] [ '->' type [ '!' effect-row ] ] ;
+btype           = atype { atype } ;
+atype           = con { '.' con } | var
+                | '(' ')' | '(' type { ',' type ')' | '[' type ']'
+                | record-fields ;
 
-type-atom       = ( constructor | qualified-name ) [ '<' type { ',' type } '>' ]   ; named / generic
-                | '(' ')'                                      ; Unit
-                | '(' type { ',' type } ')'                    ; tuple
-                | '{' record-type-fields-loose '}'             ; record type
-                | type-param [ '<' type { ',' type } '>' ]     ; type variable / higher-kinded application
-                ;
+(* ---------------------------------------------------------------- expressions *)
 
-; A type parameter may be applied to type arguments as a higher-kinded type:
-;   trait Functor<f> { fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b> }
-; Instances are written at the constructor (`impl Functor for List`) and
-; dispatch on the head constructor of the constructor-typed argument.
-
-record-type-fields-loose
-                = [ field { ',' field } [ ',' ] ] ;
-
-; Effects are attached to function types and signatures.
-effect-row      = '{' [ effect-list ] '}' | constructor ;
-effect-list     = constructor { ',' constructor } | identifier ;
-
-
-; ---------------------------------------------------------------------
-; 5. Traits, effects, provides
-; ---------------------------------------------------------------------
-
-trait-decl      = 'trait' constructor [ type-params ] '{' { fn-signature [ ';' ] } '}' ;
-
-impl-decl       = 'impl' qualified-name [ type-args ] 'for' type [ where-clause ] '{' { impl-method } '}' ;
-impl-method     = 'fn' identifier '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
-
-where-clause    = 'where' where-bound { ',' where-bound } ;
-where-bound     = identifier ':' trait-bound { '+' trait-bound } ;
-
-effect-decl     = 'effect' constructor [ '@' effect-placement ] '{' { fn-signature [ ';' ] } '}' ;
-; An algebraic effect has no placement marker:
-;   algebraic effect State { fn get() -> Int  fn put(x: Int) -> Unit }
-; Its handler operations may call `resume(value)`.
-
-provide-decl    = 'provide' qualified-name [ 'for' type ] 'with' '{' { provide-op } '}' [ ';' ] ;
-provide-op      = identifier '=' expr [ ',' | ';' ] ;
-
-fn-signature    = identifier [ type-params ] '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] ;
-
-type-args       = '<' type { ',' type } '>' ;
-
-
-; ---------------------------------------------------------------------
-; 6. Functions
-; ---------------------------------------------------------------------
-
-fn-decl         = [ 'pub' ] 'fn' identifier [ type-params ]
-                  '(' [ param-list ] ')' [ '->' type ] [ '!' effect-row ] block ;
-
-; 'pub' is accepted and currently has no effect (a program is one file).
-
-param-list      = param { ',' param } ;
-param           = identifier ':' type ;
-
-
-; ---------------------------------------------------------------------
-; 7. Blocks and statements
-; ---------------------------------------------------------------------
-
-; A block's value is its final expression, if it is not followed by ';'.
-block           = '{' { statement } [ expr ] '}' ;
-
-statement       = let-statement | expr ';' ;
-
-let-statement   = 'let' [ 'mut' ] identifier [ ':' type ] '=' expr ';' ;
-
-; 'mut' is parsed and currently treated as 'let' (cells are the mutation
-; primitive; see docs/language.md §7).
-
-
-; ---------------------------------------------------------------------
-; 8. Expressions
-; ---------------------------------------------------------------------
-
-expr            = assignment-expr ;
-
-; Assignment is lowest and right-associative: reading/writing a Cell.
-assignment-expr = binary-expr [ assign-op expr ]          ; cell.value = e, cell += e
-                | binary-expr ( '++' | '--' )             ; cell++
-                | binary-expr ;
-assign-op       = '=' | '+=' | '-=' | '*=' | '/=' ;
-
-; Precedence, lowest to highest:
-;   0    $            right-assoc apply:  f $ x  = f(x)
-;   0.5  |>  <|       pipe / apply:       x |> f = f(x) with x first; f <| x = f(x)
-;   1    or   ||
-;   2    and  &&
-;   3    ==  !=  <  <=  >  >=
-;   4    +  -
-;   5    *  /  %
-;   6    unary -  not  !
-;   7    postfix   f(x)   r.field
-; `m >>= f` is right-associative Monad bind (see do-expr).
-
-binary-expr     = unary-expr { binary-op binary-expr } ;
-
-binary-op       = 'or' | '||' | 'and' | '&&'
-                | '==' | '!=' | '<' | '<=' | '>' | '>='
-                | '>>='                                   ; Monad bind (right-assoc)
+expr            = op-expr [ '::' type ] [ assign-op expr ] ;
+assign-op       = ':=' | '+=' | '-=' | '*=' ;
+op-expr         = operand { operator operand } ;
+operator        = infix-op | '`' ( identifier | con ) '`' ;
+infix-op        = '$' | '|>' | '<|' | '>>=' | '.' | ':' | '++'
+                | '||' | '&&' | '==' | '/=' | '<' | '<=' | '>' | '>='
                 | '+' | '-' | '*' | '/' | '%' ;
 
-unary-expr      = ( '-' | 'not' | '!' ) unary-expr
-                | postfix-expr ;
+operand         = '-' operand | app ;
+app             = postfix { atype-arg } | postfix block-arg ;
+block-arg       = lambda | 'do' do-block | 'case' case-block
+                | 'if' if-expr | 'let' let-expr | 'handle' handle-expr ;
+postfix         = primary { '.' ( identifier | num ) } ;
 
-postfix-expr    = primary { '(' [ expr { ',' expr } ] ')' | '.' ( identifier | integer ) } ;
+primary         = literal | identifier | con
+                | '(' expr ')' | '(' expr ',' expr { ',' expr } ')'
+                | section
+                | '[' [ expr { ',' expr } ] ']'
+                | '{' [ rec-field { ',' rec-field } ] '}'
+                | '\\' apat { apat } '->' expr
+                | '\\' 'case' case-block
+                | 'if' expr 'then' expr 'else' expr
+                | 'case' expr 'of' case-block
+                | 'let' block 'in' expr
+                | 'do' do-block
+                | 'handle' con 'with' block 'in' expr
+                | markup ;
 
-primary-expr    = literal
-                | identifier
-                | qualified-name
-                | constructor [ '(' [ expr { ',' expr } ] ')' ]
-                | lambda
-                | if-expr
-                | match-expr
-                | handle-expr
-                | do-expr
-                | html-expr
-                | element                                   ; bare markup is an expression
-                | '(' ')'                                   ; Unit
-                | '(' expr ')'                              ; grouping
-                | '(' expr { ',' expr } ')'                 ; tuple
-                | '[' [ expr { ',' expr } [ ',' ] ] ']'     ; list
-                | record-literal
-                | block ;
+section         = '(' operator expr ')' | '(' expr operator ')' | '(' operator ')' ;
+literal         = int | float | str | 'True' | 'False' | '()' ;
+rec-field       = identifier [ '=' expr ] ;
 
-lambda          = 'fn' '(' [ lambda-param { ',' lambda-param } ] ')'
-                  [ '->' type ] [ '!' effect-row ]
-                  ( block | '=>' expr ) ;
-lambda-param    = identifier [ ':' type ] ;      ; untyped parameters are inferred
+case-block      = { alt } ;                         (* layout *)
+alt             = pat [ '|' expr ] '->' expr [ 'where' block ] ;
+do-block        = { stmt } ;                        (* layout *)
+stmt            = pat '<-' expr | 'let' block | expr ;
 
-if-expr         = 'if' '(' expr ')' block [ 'else' ( block | if-expr ) ] ;
+lambda          = '\\' apat { apat } '->' expr ;
+if-expr         = 'if' expr 'then' expr 'else' expr ;
+let-expr        = 'let' block 'in' expr ;
 
-match-expr      = 'match' expr '{' { match-arm } '}' ;
-match-arm       = pattern [ 'if' expr ] '=>' expr [ ',' | ';' ] ;
+(* ---------------------------------------------------------------- patterns *)
 
-; A scoped capability handler. `provide` is file-level; this is its local form.
-handle-expr     = 'handle' qualified-name 'with'
-                  '{' { identifier '=' expr [ ',' | ';' ] } '}'
-                  block ;
+pat             = pat10 { ':' pat } ;
+pat10           = con { apat } | apat ;
+apat            = var | '_' | literal
+                | con | '(' pat ')' | '(' pat { ',' pat } ')'
+                | '[' [ pat { ',' pat } ] ']'
+                | '{' [ pat-field { ',' pat-field } ] '}' ;
+pat-field       = identifier [ '=' pat ] ;
 
-; do { x <- m; let y = …; result } desugars to nested '>>=' applications.
-do-expr         = 'do' '{' { ( identifier '<-' expr ';' ) | let-statement } expr [ ';' ] '}' ;
+(* ---------------------------------------------------------------- markup *)
 
-record-literal  = '{' identifier ':' expr { ',' identifier ':' expr } [ ',' ] '}' ;
+markup          = element | fragment ;
+fragment        = '<>' { markup-node } '</>' ;
+element         = '<' tag { attribute } ( '/>' | '>' { markup-node } '</' tag '>' ) ;
+tag             = identifier | con ;
+attribute       = identifier [ '=' ( str | '{' expr '}' ) ] ;
+markup-node     = element | fragment | '{' expr '}' | text ;
 
-; Disambiguation: '{' identifier ':' ... is a record literal;
-; any other '{' opens a block.
+(* ---------------------------------------------------------------- lexical *)
 
-literal         = integer | float | string | 'true' | 'false' ;
-
-
-; ---------------------------------------------------------------------
-; 9. Patterns
-; ---------------------------------------------------------------------
-
-pattern         = '_'                                       ; wildcard
-                | identifier                                ; binder
-                | literal
-                | ( constructor | qualified-name ) [ '(' [ pattern { ',' pattern } ] ')' ]
-                | '(' pattern { ',' pattern } ')'           ; tuple
-                | '{' identifier ':' pattern { ',' identifier ':' pattern } '}'
-                | '[' [ pattern { ',' pattern } ] [ ',' '..' identifier ] ']' ;
-
-
-; ---------------------------------------------------------------------
-; 10. HTML
-; ---------------------------------------------------------------------
-
-; Native markup. Element tags are lower-case; component tags are upper-case
-; and are desugared to a call with a single record argument.
-html-expr       = 'html' '{' { html-child } '}' ;
-
-html-child      = element
-                | component
-                | '{' expr '}'                              ; hole (interpolation)
-                | text ;                                    ; raw run between markup
-
-element         = '<' tag-name { attribute } ( '/>' | '>' { html-child } '</' tag-name '>' ) ;
-component       = '<' constructor { attribute } ( '/>' | '>' { html-child } '</' constructor '>' ) ;
-
-tag-name        = identifier ;
-
-attribute       = identifier [ '=' ( string | '{' expr '}' ) ] ;
-
-; Attributes named on<Event> bind a listener: onClick, onInput, onSubmit, ...
-; A component call `<Card title={"x"}>…</Card>` becomes
-;   Card({ title: "x", children: <html> })
-; where <html> is the fragment formed by the children.
-
-text            = { any character except '<' | '{' | '}' } ;
-
-
-; ---------------------------------------------------------------------
-; 11. Complete example
-; ---------------------------------------------------------------------
-
-;   effect Server { fn secret(name: Str) -> Str }
-;
-;   fn main() -> Html {
-;     let reveal = Client.state(false);
-;     html {
-;       <div class="card">
-;         <button onClick={fn(e: Event) { reveal.set(not reveal.get()) }}>{"go"}</button>
-;         {if (reveal.get()) { <p>{Server.secret("flag")}</p> } else { <p>{"no"}</p> }}
-;       </div>
-;     }
-;   }
+comment         = '--' { any-except-newline } | '{-' ... '-}' ;   (* block comments nest *)
+keyword         = 'module' | 'import' | 'as' | 'data' | 'type' | 'class' | 'instance'
+                | 'where' | 'let' | 'in' | 'if' | 'then' | 'else' | 'case' | 'of'
+                | 'do' | 'effect' | 'algebraic' | 'provide' | 'handle' | 'with'
+                | 'for' | 'foreign' ;

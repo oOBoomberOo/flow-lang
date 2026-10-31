@@ -1,44 +1,58 @@
-// Everything here is std code on top of `unsafe extern js` — logging, timing
-// and arithmetic are no longer compiler builtins.
+-- Everything here is std code on top of `unsafe extern js` — logging, timing
+-- and arithmetic are no longer compiler builtins.
+import Log (info, value)
+import Time (nowMs, duration)
+import Math (sqrt, floor, pow, pi)
 
-use std::log::{info, value}
-use std::time::{nowMs, duration}
-use std::math::{sqrt, floor, pow, pi}
+-- User code can bind raw JavaScript directly — the same mechanism std uses.
+foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
 
-// User code can bind raw JavaScript directly — the same mechanism std uses.
-unsafe extern js fn hypot(a: Float, b: Float) -> Float = "Math.hypot"
-unsafe extern js fn shout(s: Str) -> Str = "@toUpperCase"
-unsafe extern js fn countOf(xs: List<Int>) -> Int = "#length"
-unsafe extern js fn itemAt(xs: List<Int>, i: Int) -> Int = "#index"
+foreign import js unsafe "@toUpperCase" shout :: Str -> Str
 
-fn main() -> Html {
-  let started = nowMs();
-  let root = sqrt(144.0);
-  let whole = floor(2.7);
-  let big = pow(2.0, 10.0);
-  let hyp = hypot(3.0, 4.0);
-  let loud = shout("flow ffi");
-  let n = countOf([10, 20, 30]);
-  let second = itemAt([10, 20, 30], 1);
-  let circle = pi() * 4.0;
+foreign import js unsafe "#length" countOf :: List Int -> Int
 
-  info("flow: ffi demo");
-  value("sqrt(144)", root);
-  value("floor(2.7)", whole);
-  value("2^10", big);
-  value("hypot(3,4)", hyp);
-  value("uppercase", loud);
-  value("boot took", duration(nowMs() - started));
+foreign import js unsafe "#index" itemAt :: List Int -> Int -> Int
 
-  // a server-placed log still uses the Server capability
-  Server.log("server saw sqrt(144) = " + str(root));
-
-  html {
-    <div class="card">
-      <h1>{"FFI primitives"}</h1>
-      <p class="math">{"sqrt(144) = "}{str(root)}{", floor(2.7) = "}{str(whole)}{", 2^10 = "}{str(big)}{", pi*4 = "}{str(circle)}</p>
-      <p class="direct">{"hypot(3,4) = "}{str(hyp)}{", upper = "}{loud}{", length = "}{str(n)}{", index 1 = "}{str(second)}</p>
-      <p class="time">{"started at "}{str(started)}</p>
-    </div>
-  }
-}
+main :: Html
+main = do
+  let started = nowMs ()
+  let root = sqrt 144.0
+  let whole = floor 2.7
+  let big = pow 2.0 10.0
+  let hyp = hypot 3.0 4.0
+  let loud = shout "flow ffi"
+  let n = countOf [10, 20, 30]
+  let second = itemAt [10, 20, 30] 1
+  let circle = pi () * 4.0
+  info "flow: ffi demo"
+  value "sqrt(144)" root
+  value "floor(2.7)" whole
+  value "2^10" big
+  value "hypot(3,4)" hyp
+  value "uppercase" loud
+  value "boot took" (duration (nowMs () - started))
+  Server.log ("server saw sqrt(144) = " + str root)
+  <div class="card">
+    <h1>{"FFI primitives"}</h1>
+    <p class="math">
+      {"sqrt(144) = "}
+      {str root}
+      {", floor(2.7) = "}
+      {str whole}
+      {", 2^10 = "}
+      {str big}
+      {", pi*4 = "}
+      {str circle}
+    </p>
+    <p class="direct">
+      {"hypot(3,4) = "}
+      {str hyp}
+      {", upper = "}
+      {loud}
+      {", length = "}
+      {str n}
+      {", index 1 = "}
+      {str second}
+    </p>
+    <p class="time">{"started at "} {str started}</p>
+  </div>

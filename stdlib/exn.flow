@@ -1,37 +1,30 @@
-// std::exn — abortive algebraic effects.
-//
-// `Exn.fail` suspends; a handler may resume (recovering) or return a fallback,
-// which aborts the rest of the handled computation.
+-- std::exn — abortive algebraic effects.
+--
+-- `Exn.fail` suspends; a handler may resume (recovering) or return a fallback,
+-- which aborts the rest of the handled computation.
+algebraic effect Exn where
+  fail :: Str -> a
 
-pub algebraic effect Exn {
-  fn fail<a>(msg: Str) -> a
-}
+fail :: Str -> a ! Exn
+fail msg = Exn.fail msg
 
-pub fn fail<a>(msg: Str) -> a ! {Exn} { Exn.fail(msg) }
+-- / Run `action`, returning `fallback` when it fails.
+attempt :: a -> (() -> a ! Exn) -> a
+attempt fallback action =
+  handle Exn with
+    fail msg = fallback
+  in action ()
 
-/// Run `action`, returning `fallback` when it fails.
-pub fn attempt<a>(fallback: a, action: () -> a ! {Exn}) -> a {
-  handle Exn with {
-    fail = fn(msg: Str) -> a { fallback }
-  } {
-    action()
-  }
-}
+-- / Run `action`, mapping a failure message to a value.
+recoverWith :: (Str -> a) -> (() -> a ! Exn) -> a
+recoverWith onFail action =
+  handle Exn with
+    fail msg = onFail msg
+  in action ()
 
-/// Run `action`, mapping a failure message to a value.
-pub fn recoverWith<a>(onFail: (Str) -> a, action: () -> a ! {Exn}) -> a {
-  handle Exn with {
-    fail = fn(msg: Str) -> a { onFail(msg) }
-  } {
-    action()
-  }
-}
-
-/// Run `action`, recovering at the failure point with `value`.
-pub fn recover<a>(value: a, action: () -> a ! {Exn}) -> a {
-  handle Exn with {
-    fail = fn(_msg: Str) -> a { resume(value) }
-  } {
-    action()
-  }
-}
+-- / Run `action`, recovering at the failure point with `value`.
+recover :: a -> (() -> a ! Exn) -> a
+recover value action =
+  handle Exn with
+    fail _msg = resume value
+  in action ()

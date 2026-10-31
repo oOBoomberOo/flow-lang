@@ -1,36 +1,24 @@
-// Higher-kinded type parameters: `Functor<f>` is implemented at the type
-// constructor level, for both List and Option. The trait method uses `f<a>` and
-// `f<b>`, so dispatch is on the head constructor (List/Option).
+-- Higher-kinded type parameters: `Functor<f>` is implemented at the type
+-- constructor level, for both List and Option. The trait method uses `f<a>` and
+-- `f<b>`, so dispatch is on the head constructor (List/Option).
+class Functor f where
+  map :: f a -> (a -> b) -> f b
 
-trait Functor<f> {
-  fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b>
-}
+instance Functor List where
+  map value mapper = case value of
+    [] -> []
+    x : rest -> concat [mapper x] (map rest mapper)
 
-impl Functor for List {
-  fn map<a, b>(value: List<a>, mapper: (a) -> b) -> List<b> {
-    match value {
-      [] => [],
-      [x, ..rest] => concat([mapper(x)], map(rest, mapper)),
-    }
-  }
-}
+instance Functor Option where
+  map value mapper = case value of
+    None -> None
+    Some x -> Some (mapper x)
 
-impl Functor for Option {
-  fn map<a, b>(value: Option<a>, mapper: (a) -> b) -> Option<b> {
-    match value {
-      None => None,
-      Some(x) => Some(mapper(x)),
-    }
-  }
-}
-
-fn main() -> Html {
-  let xs = Functor.map([1, 2], fn(n: Int) -> Int { n + 1 });
-  let o = Functor.map(Some(10), fn(n: Int) -> Int { n + 1 });
-  html {
-    <div class="card">
-      <h1>{"Higher-kinded Functor"}</h1>
-      <p class="hkt">{"list: "}{str(xs)}{", option: "}{str(o)}</p>
-    </div>
-  }
-}
+main :: Html
+main = do
+  let xs = Functor.map [1, 2] (\(n :: Int) -> n + 1)
+  let o = Functor.map (Some 10) (\(n :: Int) -> n + 1)
+  <div class="card">
+    <h1>{"Higher-kinded Functor"}</h1>
+    <p class="hkt">{"list: "} {str xs} {", option: "} {str o}</p>
+  </div>

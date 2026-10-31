@@ -21,23 +21,39 @@ test("bounds: the example compiles and emits dictionary dispatch", () => {
 });
 
 test("bounds: an unbounded trait call on a type variable is an error", () => {
-  const src = `
-trait Show<a> { fn show(x: a) -> Str }
-impl Show for Int { fn show(x: Int) -> Str { "Int" } }
-fn bad<a>(x: a) -> Str { Show.show(x) }
-fn main() -> Html { html { <p>{bad(1)}</p> } }
+  const src = `class Show a where
+  show :: a -> Str
+
+instance Show Int where
+  show x = "Int"
+
+bad :: a -> Str
+bad x = Show.show x
+
+main :: Html
+main = <p>{bad 1}</p>
 `;
   assert.throws(() => compileSource(src, "bounds.flow"), /add a trait bound such as <a: Show>/);
 });
 
 test("bounds: multiple bounds are carried as multiple dictionaries", () => {
-  const src = `
-trait A<a> { fn a(x: a) -> Str }
-trait B<a> { fn b(x: a) -> Str }
-impl A for Int { fn a(x: Int) -> Str { "a" } }
-impl B for Int { fn b(x: Int) -> Str { "b" } }
-fn both<a: A + B>(x: a) -> Str { A.a(x) + B.b(x) }
-fn main() -> Html { html { <p>{both(1)}</p> } }
+  const src = `class A a where
+  a :: a -> Str
+
+class B a where
+  b :: a -> Str
+
+instance A Int where
+  a x = "a"
+
+instance B Int where
+  b x = "b"
+
+both :: (A a, B a) => a -> Str
+both x = A.a x + B.b x
+
+main :: Html
+main = <p>{both 1}</p>
 `;
   const r = compileSource(src, "bounds.flow");
   assert.deepEqual(r.diagnostics, []);
@@ -48,10 +64,14 @@ fn main() -> Html { html { <p>{both(1)}</p> } }
 });
 
 test("bounds: a nullary trait method can use a unique instance", () => {
-  const src = `
-trait Zero<a> { fn zero() -> a }
-impl Zero for Int { fn zero() -> Int { 0 } }
-fn main() -> Html { html { <p>{str(Zero.zero())}</p> } }
+  const src = `class Zero a where
+  zero :: () -> a
+
+instance Zero Int where
+  zero () = 0
+
+main :: Html
+main = <p>{str (Zero.zero ())}</p>
 `;
   const r = compileSource(src, "bounds.flow");
   assert.deepEqual(r.diagnostics, []);

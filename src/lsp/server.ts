@@ -12,6 +12,10 @@
 
 import path from "node:path";
 import { analyze, findNodeAt, readSource, offsetToPosition, spanRange } from "../analysis.ts";
+import { moduleDisplayName } from "../modules.ts";
+
+/** `std::list` -> `List` for the cheap std index, which carries only ids. */
+const moduleNameOf = (m: { id: string }) => m.id.split("::").slice(1).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
@@ -449,9 +453,11 @@ function semanticTokens(uri: string): { data: number[] } {
     else if (t.kind === "sym") type = 8;
     else if (t.kind === "Con") type = 3;
     else if (t.kind === "id") {
-      type = prev && prev.value === "fn" ? 1 : 9;
+      // a name beside `::` or `=` starts a definition; `f x` is a call
       const next = lexed[i + 1];
-      if (next && next.value === "(") type = 1;
+      type = 9;
+      if (next && (next.value === "::" || next.value === "=")) type = 1;
+      if (prev && (prev.value === "->" || prev.value === "|")) type = 1;
     }
     if (type < 0) continue;
     const region = inRegion(regions, t.line - 1, t.col - 1);
@@ -464,7 +470,7 @@ function semanticTokens(uri: string): { data: number[] } {
     toks.push({ line: t.line - 1, char: t.col - 1, len: t.value.length, type, mods });
   }
 
-  const re = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+  const re = /--[^\n]*|\{-[\s\S]*?-\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const before = text.slice(0, m.index);
@@ -488,9 +494,9 @@ function semanticTokens(uri: string): { data: number[] } {
 /* ------------------------------------------------------------------ */
 
 const KEYWORDS = [
-  "fn", "let", "mut", "if", "else", "match", "type", "trait", "impl", "effect", "algebraic",
-  "provide", "with", "use", "pub", "unsafe", "extern", "html", "true", "false",
-  "and", "or", "not", "handle", "do",
+  "module", "import", "as", "data", "type", "class", "instance", "where", "let", "in",
+  "if", "then", "else", "case", "of", "do", "effect", "algebraic", "provide", "handle",
+  "with", "for", "foreign",
 ];
 
 const HTML_TAGS = [
@@ -510,53 +516,49 @@ const HTML_ATTRS = [
 /** Are we in markup position inside an `html { … }` block?
  *  depth 1 = directly in markup; depth ≥ 2 = inside a `{expr}` hole. */
 function htmlContext(before: string): { inside: boolean; depth: number; inTag: boolean; afterLt: boolean } {
-  const open = before.lastIndexOf("html {");
-  if (open < 0) return { inside: false, depth: 0, inTag: false, afterLt: false };
-  let depth = 1;
-  let inStr = false;
-  for (let i = open + "html {".length; i < before.length; i++) {
-    const c = before[i];
-    if (c === '"') inStr = !inStr;
-    if (inStr) continue;
-    if (c === "{") depth++;
-    else if (c === "}") depth--;
-  }
-  if (depth <= 0) return { inside: false, depth: 0, inTag: false, afterLt: false };
-  const lastLt = before.lastIndexOf("<");
-  const lastGt = before.lastIndexOf(">");
-  const inTag = lastLt > lastGt;
-  const afterLt = inTag && /^[A-Za-z]*$/.test(before.slice(lastLt + 1));
-  return { inside: true, depth, inTag, afterLt };
+  // markup is bare syntax, so decide from the current line: `<di` or `<div ` is a tag
+  const line = before.slice(before.lastIndexOf("\n") + 1);
+  const afterLt = /<([A-Za-z][\w-]*)?$/.test(line);
+  const inTag = /<[A-Za-z][\w-]*\s+[^<>]*$/.test(line) || afterLt;
+  const inside = afterLt || inTag;
+  return { inside, depth: inside ? 1 : 0, inTag, afterLt };
 }
 
 const KEYWORD_DOC: Record<string, string> = {
-  fn: "fn name(params) -> Type { body }",
-  let: "let name = value;",
-  match: "match value { Pattern => expr, … }",
-  html: "html { <div>{expr}</div> }",
-  type: "type Name = A | B(T)  — algebraic data type",
-  effect: "effect Name @ client|server { fn op(x: T) -> R }  — a capability",
-  algebraic: "algebraic effect Name { fn op(x: T) -> R }  — suspends; handled with resume",
-  provide: "provide Effect with { op = fn(…) { … } }",
-  use: "use pkg::module::{name}",
-  pub: "pub fn f() …  — exported from this module",
+  module: "module Name (exported, names) where  — private by default",
+  import: "import Module (name)",
+  data: "data Name a = Variant T | Other",
+  type: "type Name = T  — an alias; `{ field :: T }` for a record",
+  class: "class Name a where\n  method :: a -> T",
+  instance: "instance Name T where\n  method x = …",
+  let: "let name = value in expression",
+  if: "if condition then a else b",
+  case: "case value of\n  Pattern -> expression",
+  do: "do\n  x <- action\n  result",
+  effect: "effect Name @ client|server where\n  op :: T -> R",
+  algebraic: "algebraic effect Name where\n  op :: T -> R",
+  provide: "provide Effect where\n  op x = …",
+  handle: "handle Effect with\n  op x = resume x\nin body",
+  foreign: 'foreign import js unsafe "Math.floor" name :: Float -> Int',
+  where: "where  — bind helpers under a clause",
 };
 
 const KEYWORD_SNIPPETS: Record<string, string> = {
-  fn: "fn ${1:name}(${2}) -> ${3:Type} {\n\t${0}\n}",
-  let: "let ${1:name} = ${2:value};",
-  match: "match ${1:value} {\n\t${2:Pattern} => ${3:expr},\n}",
-  html: "html {\n\t${0}\n}",
-  type: "type ${1:Name} =\n  | ${2:Variant}",
-  trait: "trait ${1:Name}<a> {\n\tfn ${2:method}(x: a) -> ${3:Type}\n}",
-  effect: "effect ${1:Name} @ ${2|client,server|} {\n\tfn ${3:op}() -> ${4:Type}\n}",
-  algebraic: "algebraic effect ${1:Name} {\n\tfn ${2:op}(${3}) -> ${4:Type}\n}",
-  provide: "provide ${1:Effect} with {\n\t${2:op} = fn() -> ${3:Type} { ${0} }\n}",
-  handle: "handle ${1:Effect} with {\n\t${2:op} = fn(${3}) -> ${4:Type} { ${0} }\n} {\n\t${5}\n}",
-  resume: "resume(${1:value})",
-  do: "do {\n\t${1:x} <- ${2:monad};\n\t${0:result}\n}",
-  unsafe: "unsafe extern js fn ${1:name}(${2}) -> ${3:Type} = \"${4:Math.floor}\"",
-  use: "use ${1:pkg}::${2:module}::{${3:name}}",
+  module: "module ${1:Name} (${2}) where\n\n${0}",
+  import: "import ${1:Module} (${2:name})",
+  data: "data ${1:Name} = ${2:Variant} ${3:Type}",
+  type: "type ${1:Name} = ${2:T}",
+  class: "class ${1:Name} a where\n\t${2:method} :: a -> ${3:Type}",
+  instance: "instance ${1:Name} ${2:T} where\n\t${3:method} x = ${0}",
+  let: "let ${1:name} = ${2:value} in ${0}",
+  if: "if ${1:condition} then ${2:a} else ${3:b}",
+  case: "case ${1:value} of\n\t${2:Pattern} -> ${0}",
+  do: "do\n\t${1:x} <- ${2:action}\n\t${0}",
+  effect: "effect ${1:Name} @ ${2|client,server|} where\n\t${3:op} :: ${4:Type}",
+  algebraic: "algebraic effect ${1:Name} where\n\t${2:op} :: ${3:Type}",
+  provide: "provide ${1:Effect} where\n\t${2:op} ${3:x} = ${0}",
+  handle: "handle ${1:Effect} with\n\t${2:op} ${3:x} = resume ${3:x}\nin ${0}",
+  foreign: "foreign import js unsafe \"${1:Math.floor}\" ${2:name} :: ${3:Type}",
 };
 
 function completion(file: string, pos: Position) {
@@ -564,64 +566,46 @@ function completion(file: string, pos: Position) {
   const off = offsetAt(text, pos);
   const before = text.slice(0, off);
 
-  const qualifier = /((?:[A-Za-z0-9_-]+::)+)\s*$/.exec(before);
+  // a module qualifier is capitalised (`Option.`, `FlowCharts.Bar.`); `props.r.` is a field
+  const qualifier = /((?:[A-Z][A-Za-z0-9_]*\.)+)$/.exec(before);
   const dot = /([A-Za-z0-9_.()]+)\.\s*$/.exec(before);
   const prefixMatch = /[A-Za-z0-9_']*$/.exec(before);
   const prefix = prefixMatch ? prefixMatch[0] : "";
 
-  // Module members: `std::list::map`, and modules after `std::`
+  // Module members: `Option.map`, `List.`
   if (qualifier) {
     const q = qualifier[1]!;
     const a = lastAnalysis;
     const prefixLower = prefix.toLowerCase();
-
-    const modules = new Map<string, string>();
-    const addModule = (id: string) => {
-      if (!id.startsWith(q) || id === q) return;
-      const rest = id.slice(q.length);
-      const cut = rest.indexOf("::");
-      const seg = cut >= 0 ? rest.slice(0, cut) : rest;
-      if (seg) modules.set(seg, cut >= 0 ? `${q}${seg}` : id);
-    };
-    for (const u of a?.units ?? []) addModule(u.id);
-    for (const m of a?.modules ?? []) addModule(m.id);
-    const moduleItems = [...modules]
-      .filter(([name]) => !prefix || name.toLowerCase().startsWith(prefixLower))
-      .map(([name, id]) => ({
-        label: name,
-        kind: 9,
-        detail: `module ${id}`,
-        documentation: { kind: "markdown", value: `\`${id}\` — complete the path or import a name from it` },
-        sortText: "0" + name,
-      }));
-
     const seen = new Set<string>();
-    const memberItems: Record<string, unknown>[] = [];
-    const addMember = (name: string, kind: number, detail: string) => {
+    const items: Record<string, unknown>[] = [];
+
+    const add = (name: string, kind: number, detail: string, sort: string) => {
       if (prefix && !name.toLowerCase().startsWith(prefixLower)) return;
       if (seen.has(name)) return;
       seen.add(name);
-      memberItems.push({
+      items.push({
         label: name,
         kind,
         detail,
         documentation: { kind: "markdown", value: `\`${detail}\`` },
-        sortText: "1" + name,
+        sortText: sort + name,
       });
     };
-    // Loaded modules have real declaration sites.
+    // loaded modules carry real declaration sites
     for (const s of a?.symbols ?? []) {
       if (!s.display.startsWith(q)) continue;
       const rest = s.display.slice(q.length);
-      if (!rest || rest.includes("::")) continue;
-      addMember(s.name, symbolKind(s.kind), s.display);
+      if (!rest || rest.includes(".")) continue;
+      add(s.name, symbolKind(s.kind), s.display, "0");
     }
-    // Modules the program does not import yet come from the std index.
+    // std modules the program has not imported yet come from the cheap index
     for (const m of a?.modules ?? []) {
-      if (`${m.id}::` !== q) continue;
-      for (const mem of m.members) addMember(mem.name, symbolKind(mem.kind), `${m.id}::${mem.name}`);
+      const disp = moduleNameOf(m);
+      if (`${disp}.` !== q) continue;
+      for (const mem of m.members) add(mem.name, symbolKind(mem.kind), `${disp}.${mem.name}`, "0");
     }
-    return { isIncomplete: false, items: [...moduleItems, ...memberItems] };
+    return { isIncomplete: false, items };
   }
 
   // Field access: `props.` / `cell.`
@@ -693,7 +677,7 @@ function completion(file: string, pos: Position) {
   }
   const curUnit = (lastAnalysis?.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
   const imported = lastAnalysis?.importedByFile?.get(path.resolve(file)) ?? new Set<string>();
-  const lastUseLine = text.split("\n").reduce((acc, l, i) => (l.startsWith("use ") ? i : acc), -1);
+  const lastUseLine = text.split("\n").reduce((acc, l, i) => (l.startsWith("import ") ? i : acc), -1);
   const prefixLower = prefix.toLowerCase();
   const seenSymbols = new Set<string>();
 
@@ -710,17 +694,17 @@ function completion(file: string, pos: Position) {
     const item: Record<string, unknown> = {
       label: s.name,
       kind: symbolKind(s.kind),
-      detail: inScope ? s.kind : `${s.kind} · ${s.display.split("::").slice(0, -1).join("::")}`,
+      detail: inScope ? s.kind : `${s.kind} · ${s.display.split(".").slice(0, -1).join(".")}`,
       documentation: { kind: "markdown", value: `\`${s.display}\`` },
       sortText: (inScope ? "1" : "2") + prefixRank + s.name,
     };
     if (!inScope) {
       // completing a name from another module inserts its import
-      const dir = s.display.split("::").slice(0, -1).join("::");
+      const dir = s.display.split(".").slice(0, -1).join(".");
       const at = { line: lastUseLine + 1, character: 0 };
       item.additionalTextEdits = [{
         range: { start: at, end: at },
-        newText: `use ${dir}::{${s.name}}\n`,
+        newText: `import ${dir} (${s.name})\n`,
       }];
     }
     items.push(item);
@@ -743,12 +727,12 @@ function completion(file: string, pos: Position) {
       items.push({
         label: mem.name,
         kind: symbolKind(mem.kind),
-        detail: `${mem.kind} · ${m.id}`,
-        documentation: { kind: "markdown", value: `\`${m.id}::${mem.name}\`` },
+        detail: `${mem.kind} · ${moduleNameOf(m)}`,
+        documentation: { kind: "markdown", value: `\`${moduleNameOf(m)}.${mem.name}\`` },
         sortText: `2${mem.name.toLowerCase().startsWith(prefixLower) ? "0" : "1"}${mem.name}`,
         additionalTextEdits: [{
           range: { start: at, end: at },
-          newText: `use ${m.id}::{${mem.name}}\n`,
+          newText: `import ${moduleNameOf(m)} (${mem.name})\n`,
         }],
       });
     }
@@ -780,11 +764,14 @@ function signatureHelp(file: string, pos: Position) {
     else if (c === "," && depth === 0) commas++;
   }
   const sig = call.signature;
+  // Haskell-style signature: `tally :: List Int -> Int`
+  const typeText = sig.params.length ? `${sig.params.map((p) => p.type).join(" -> ")} -> ${sig.ret}` : sig.ret;
+  const effect = sig.effects.length ? ` ! {${sig.effects.join(", ")}}` : "";
   return {
     signatures: [{
-      label: `${sig.name}(${sig.params.map((p) => `${p.name}: ${p.type}`).join(", ")}) -> ${sig.ret}`,
-      documentation: sig.effects.length ? `effects: {${sig.effects.join(", ")}}` : undefined,
-      parameters: sig.params.map((p) => ({ label: `${p.name}: ${p.type}` })),
+      label: `${sig.name} :: ${typeText}${effect}`,
+      documentation: sig.params.length ? `parameters: ${sig.params.map((p) => p.name).join(", ")}` : undefined,
+      parameters: sig.params.map((p) => ({ label: p.type })),
     }],
     activeSignature: 0,
     activeParameter: Math.min(commas, Math.max(0, sig.params.length - 1)),
@@ -918,25 +905,36 @@ function foldingRanges(file: string) {
   const text = textOf(file);
   const lines = text.split("\n");
   const ranges: unknown[] = [];
-  const stack: number[] = [];
-  let inBlock = false;
-
+  // layout blocks: `do`, `case … of`, `where`, `let` fold to the end of their indented run
+  const indentOf = (l: string) => l.length - l.trimStart().length;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    if (line.includes("/*")) inBlock = true;
-    if (!inBlock) {
-      for (const c of line) {
-        if (c === "{") stack.push(i);
-        else if (c === "}") {
-          const start = stack.pop();
-          if (start !== undefined && i > start) ranges.push({ startLine: start, endLine: i - 1, kind: "region" });
-        }
+    if (!/(\bdo|\bof|\bwhere|\blet)\s*(--.*)?$/.test(line.replace(/\s+$/, ""))) continue;
+    const base = indentOf(line);
+    let end = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j]!;
+      if (!l.trim()) continue;
+      if (indentOf(l) <= base) break;
+      end = j;
+    }
+    if (end > i) ranges.push({ startLine: i, endLine: end, kind: "region" });
+  }
+  // markup: an element that spans lines folds to its closing tag
+  const openTag = /<([A-Za-z][\w-]*)(?:\s[^>]*)?>\s*$/;
+  for (let i = 0; i < lines.length; i++) {
+    const m = openTag.exec(lines[i]!);
+    if (!m) continue;
+    const tag = m[1]!;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (new RegExp(`</${tag}>`).test(lines[j]!)) {
+        if (j > i) ranges.push({ startLine: i, endLine: j, kind: "region" });
+        break;
       }
     }
-    if (line.includes("*/")) inBlock = false;
   }
   // comment blocks
-  const re = /\/\*[\s\S]*?\*\//g;
+  const re = /\{-[\s\S]*?-\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const start = text.slice(0, m.index).split("\n").length - 1;
@@ -986,35 +984,14 @@ function documentHighlights(file: string, pos: Position) {
 /* formatting                                                         */
 /* ------------------------------------------------------------------ */
 
+/** Layout-sensitive code is indentation-driven, so formatting only normalises
+ *  trailing whitespace and the final newline; it never re-indents. */
 function format(file: string) {
   const text = textOf(file);
   const lines = text.split("\n");
-  const out: string[] = [];
-  let depth = 0;
-  let inBlock = false;
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) { out.push(""); continue; }
-
-    const startsClose = /^[})\)]/.test(line);
-    const isVariant = /^\|/.test(line);
-    const d = Math.max(0, depth - (startsClose ? 1 : 0));
-    const indent = "  ".repeat(d + (isVariant ? 1 : 0));
-    out.push(indent + line);
-
-    // track depth on a copy with strings/comments removed
-    if (!inBlock) {
-      let code = line.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/\/\/.*$/, "");
-      if (code.includes("/*")) { inBlock = true; code = code.slice(0, code.indexOf("/*")); }
-      for (const c of code) {
-        if (c === "{") depth++;
-        else if (c === "}") depth = Math.max(0, depth - 1);
-      }
-    }
-    if (raw.includes("*/")) inBlock = false;
-  }
-  return [{ range: { start: { line: 0, character: 0 }, end: { line: lines.length, character: 0 } }, newText: out.join("\n") }];
+  const out = lines.map((l) => l.replace(/[ \t]+$/, ""));
+  while (out.length && out[out.length - 1] === "") out.pop();
+  return [{ range: { start: { line: 0, character: 0 }, end: { line: lines.length, character: 0 } }, newText: out.join("\n") + "\n" }];
 }
 
 /* ------------------------------------------------------------------ */
@@ -1032,14 +1009,11 @@ function codeActions(file: string, range: Range, diagnostics: { message: string 
   const sym = symbolsInFile(file).find((s) =>
     s.range.start.line <= startLine && s.range.end.line >= startLine);
   if (sym) {
-    const lineText = lines[sym.range.start.line] ?? "";
-    if (!/^\s*pub\b/.test(lineText)) {
-      actions.push({
-        title: `Make '${sym.name}' public`,
-        kind: "refactor.rewrite",
-        edit: { changes: { [pathToUri(file)]: [{ range: { start: sym.range.start, end: sym.range.start }, newText: "pub " }] } },
-      });
-    }
+    actions.push({
+      title: `Export '${sym.name}' from this module`,
+      kind: "refactor.rewrite",
+      edit: { changes: { [pathToUri(file)]: [exportEdit(file, text, sym.name)] } },
+    });
   }
 
   // "import 'x'" for unbound names
@@ -1049,17 +1023,31 @@ function codeActions(file: string, range: Range, diagnostics: { message: string 
     const name = m[1]!;
     const target = (a?.symbols ?? []).find((s) => s.name === name);
     if (!target) continue;
-    const modPath = target.display.split("::").slice(0, -1).join("::");
+    const modPath = target.display.split(".").slice(0, -1).join(".");
     if (!modPath) continue;
-    const lastUse = lines.reduce((acc, l, i) => (l.startsWith("use ") ? i : acc), -1);
+    const lastUse = lines.reduce((acc, l, i) => (l.startsWith("import ") ? i : acc), -1);
     const at = { line: lastUse + 1, character: 0 };
     actions.push({
       title: `Import '${name}' from ${modPath}`,
       kind: "quickfix",
-      edit: { changes: { [pathToUri(file)]: [{ range: { start: at, end: at }, newText: `use ${modPath}::{${name}}\n` }] } },
+      edit: { changes: { [pathToUri(file)]: [{ range: { start: at, end: at }, newText: `import ${modPath} (${name})\n` }] } },
     });
   }
   return actions;
+}
+
+/** Add `name` to the module export list, creating the header when there is none. */
+function exportEdit(file: string, text: string, name: string): { range: Range; newText: string } {
+  const lines = text.split("\n");
+  const header = lines.findIndex((l) => l.startsWith("module "));
+  if (header >= 0) {
+    const close = lines[header]!.lastIndexOf(")");
+    const at = { line: header, character: close > 0 ? close : lines[header]!.length };
+    return { range: { start: at, end: at }, newText: close > 0 ? `, ${name}` : ` (${name})` };
+  }
+  const start = { line: 0, character: 0 };
+  const fileName = path.basename(file).replace(/\.flow$/, "").replace(/^./, (c) => c.toUpperCase());
+  return { range: { start, end: start }, newText: `module ${fileName} (${name}) where\n\n` };
 }
 
 function codeLens(file: string) {
@@ -1120,22 +1108,26 @@ function documentLinks(file: string) {
   const out: unknown[] = [];
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const m = /^(\s*use\s+)([A-Za-z0-9_:-]+)/.exec(lines[i]!);
+    const m = /^(\s*import\s+)([A-Za-z0-9_.]+)/.exec(lines[i]!);
     if (!m) continue;
     const p = m[2]!;
-    const parts = p.split("::");
+    const parts = p.split(".");
     let target: string | null = null;
+    let unitName = p;
     for (let n = parts.length; n > 0; n--) {
-      const id = parts.slice(0, n).join("::");
-      const unit = a.units.find((u) => u.id === id);
-      if (unit) { target = unit.file; break; }
+      const wanted = parts.slice(0, n).map((s) => s.toLowerCase());
+      const unit = a.units.find((u) => {
+        const tail = u.id.split("::").slice(1);
+        return tail.length === wanted.length && tail.every((seg, k) => seg === wanted[k]);
+      });
+      if (unit) { target = unit.file; unitName = unit.id.split("::").slice(1).map((s) => s[0]!.toUpperCase() + s.slice(1)).join("."); break; }
     }
     if (!target) continue;
     const start = m[1]!.length;
     out.push({
       range: { start: { line: i, character: start }, end: { line: i, character: start + p.length } },
       target: pathToUri(target),
-      tooltip: `open ${p}`,
+      tooltip: `open module ${unitName}`,
     });
   }
   return out;
@@ -1338,7 +1330,7 @@ reader.onMessage((msg) => {
           name: s.name,
           kind: symbolKind(s.kind),
           location: { uri: pathToUri(s.file), range: s.range },
-          containerName: s.display.split("::").slice(0, -1).join("::"),
+          containerName: s.display.split(".").slice(0, -1).join("."),
         })));
       return;
     }

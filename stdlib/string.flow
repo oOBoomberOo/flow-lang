@@ -1,64 +1,57 @@
-// std::string
-//
-// The primitive operations live in the prelude (`trim`, `upper`, `lower`,
-// `split`, `replace`, `contains`, `join`, `chars`, `len`). This module adds the
-// composed helpers, with names that do not shadow the prelude.
+module String (length, isEmptyStr, joinWith, repeat, padLeft, words, startsWith, capitalize, take, drop) where
 
-pub fn length(s: Str) -> Int { strLen(s) }
+-- std::string
+--
+-- The primitive operations live in the prelude (`trim`, `upper`, `lower`,
+-- `split`, `replace`, `contains`, `join`, `chars`, `len`). This module adds the
+-- composed helpers, with names that do not shadow the prelude.
+length :: Str -> Int
+length s = strLen s
 
-pub fn isEmptyStr(s: Str) -> Bool { strLen(s) == 0 }
+isEmptyStr :: Str -> Bool
+isEmptyStr s = strLen s == 0
 
-pub fn joinWith(xs: List<Str>, sep: Str) -> Str { join(xs, sep) }
+joinWith :: List Str -> Str -> Str
+joinWith xs sep = join xs sep
 
-pub fn repeat(s: Str, n: Int) -> Str {
-  if (n <= 0) { "" } else { s + repeat(s, n - 1) }
-}
+repeat :: Str -> Int -> Str
+repeat s n = if n <= 0 then "" else s + repeat s (n - 1)
 
-pub fn padLeft(s: Str, width: Int, fill: Str) -> Str {
-  if (length(s) >= width) { s } else { repeat(fill, width - length(s)) + s }
-}
+padLeft :: Str -> Int -> Str -> Str
+padLeft s width fill = if length s >= width then s else repeat fill (width - length s) + s
 
-pub fn words(s: Str) -> List<Str> {
-  filterBlank(split(trim(s), " "))
-}
+words :: Str -> List Str
+words s = filterBlank (split (trim s) " ")
 
-fn filterBlank(xs: List<Str>) -> List<Str> {
-  match xs {
-    [] => [],
-    [x, ..rest] => if (isEmptyStr(x)) { filterBlank(rest) } else { concat([x], filterBlank(rest)) },
-  }
-}
+filterBlank :: List Str -> List Str
+filterBlank xs = case xs of
+  [] -> []
+  x : rest -> if isEmptyStr x then filterBlank rest else concat [x] (filterBlank rest)
 
-pub fn startsWith(s: Str, prefix: Str) -> Bool {
-  if (length(prefix) > length(s)) { false }
-  else { takeStr(s, length(prefix)) == prefix }
-}
+startsWith :: Str -> Str -> Bool
+startsWith s prefix = if length prefix > length s then False else takeStr s (length prefix) == prefix
 
-fn takeStr(s: Str, n: Int) -> Str {
-  join(take(chars(s), n), "")
-}
+takeStr :: Str -> Int -> Str
+takeStr s n = join (take (chars s) n) ""
 
-pub fn capitalize(s: Str) -> Str {
-  if (isEmptyStr(s)) { s }
-  else { upper(join(take(chars(s), 1), "")) + join(drop(chars(s), 1), "") }
-}
+capitalize :: Str -> Str
+capitalize s =
+  if isEmptyStr s
+    then s
+    else upper (join (take (chars s) 1) "") + join (drop (chars s) 1) ""
 
-pub fn take<a>(xs: List<a>, n: Int) -> List<a> {
-  if (n <= 0) { [] }
-  else {
-    match xs {
-      [] => [],
-      [x, ..rest] => concat([x], take(rest, n - 1)),
-    }
-  }
-}
+take :: List a -> Int -> List a
+take xs n =
+  if n <= 0
+    then []
+    else case xs of
+      [] -> []
+      x : rest -> concat [x] (take rest (n - 1))
 
-pub fn drop<a>(xs: List<a>, n: Int) -> List<a> {
-  if (n <= 0) { xs }
-  else {
-    match xs {
-      [] => [],
-      [_, ..rest] => drop(rest, n - 1),
-    }
-  }
-}
+drop :: List a -> Int -> List a
+drop xs n =
+  if n <= 0
+    then xs
+    else case xs of
+      [] -> []
+      _ : rest -> drop rest (n - 1)

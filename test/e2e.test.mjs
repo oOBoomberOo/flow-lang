@@ -130,12 +130,13 @@ test("a server cut answers a subscription over the real transport", async () => 
 });
 
 test("reactive cuts stream updates when their dependencies change", async () => {
-  const src = `
-effect Server @ server { fn now() -> Int }
-fn main() -> Html {
-  let t = Server.now();
-  html { <p>{t}</p> }
-}`;
+  const src = `effect Server @ server where
+  now :: () -> Int
+
+main :: Html
+main = do
+  let t = Server.now ()
+  <p>{t}</p>`;
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-e2e-"));
   const { compileSource } = await import("../src/compile.ts");
   emit(compileSource(src, "stream.flow"), outDir);

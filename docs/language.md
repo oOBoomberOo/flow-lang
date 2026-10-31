@@ -1,776 +1,321 @@
-# Flow — language guide
+# Flow — language reference
 
-Flow is a web language with no client/server boundary in the source. You write functions,
-data, markup and effects; the type checker works out which parts must run on the server (they
-need server authority), which must run in the browser (they need the DOM), and cuts the
-program between them.
-
-```flow
-effect Server { fn secret(name: Str) -> Str }
-effect Client { fn state<a>(init: a) -> Cell<a> }
-
-fn main() -> Html {
-  let reveal = Client.state(false);
-  html {
-    <div class="card">
-      <button onClick={fn(e: Event) { reveal.set(not reveal.get()) }}>{"toggle"}</button>
-      {if (reveal.get()) {
-        <p>{"server says: "}{Server.secret("flag")}</p>
-      } else {
-        <p>{"nothing to see here"}</p>
-      }}
-    </div>
-  }
-}
-```
-
-Nothing above says "client" or "server" about *code*. The `if` stays in the browser (its
-branches are markup); the secret is fetched from the server, and only when the branch is
-taken. `flow explain` prints exactly that:
+Flow is a tierless web language with a Haskell-style surface: layout-driven blocks, curried
+functions, pattern matching and full type inference. You write one program; the compiler splits
+it into a browser bundle and a server bundle based on the effects each expression requires.
 
 ```
-cut cut1: reactive server-side block @24 deps=[] type=Str
+docs/language.md      this reference
+docs/modules.md       modules, packages and namespacing
+docs/type-system.md   types, effects and placement inference
+docs/editor.md        the language server and the VS Code extension
+docs/http.md          server-side routes
+docs/grammar.ebnf     the grammar
 ```
 
 ---
 
-## 1. Install and run
+## 1. Layout
 
-```
-node bin/flow.mjs check   examples/boundary.flow     # type-check only
-node bin/flow.mjs explain examples/boundary.flow     # + inferred boundary
-node bin/flow.mjs watch   examples/boundary.flow     # re-check on every save
-node bin/flow.mjs watch   examples/boundary.flow --run --port 4173
-node bin/flow.mjs build   examples/boundary.flow --out dist
-node bin/flow.mjs run     examples/boundary.flow --port 4173 --secret flag=hunter2
-```
-
-`flow watch` watches the package directory (sources, `flow.json`, `flow.lock`),
-rebuilds after a short debounce, and keeps running when a build fails. Add
-`--run` to rebuild and restart the server on every successful change.
-
-Progress goes to stderr (`Checking`, `Compiling`, `Finished in 0.12s`) and honours
-`--quiet`, `NO_COLOR` and `--color always|never`.
-
-Requires Node ≥ 22.6 (TypeScript type-stripping). No dependencies, no build step.
-
-A program is a package: `flow.json` plus `src/**.flow`, entry `src/main.flow`.
-Modules are linked at compile time and the standard library is available as
-`std::list`, `std::option`, `std::math`, `std::random`, `std::string`, `std::html`,
-`std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`, `std::fn` — see [`docs/modules.md`](modules.md). A single
-file without a manifest still works. Host access goes through explicitly `unsafe`
-FFI bindings (§12).
-
----
-
-## 2. Values and functions
+There are no braces for blocks. `where`, `let`, `of`, `do` and `with` open an implicit block at
+the indentation of the next token, and a line that starts at or left of that indentation closes
+it. This is Haskell's offside rule:
 
 ```flow
-fn area(w: Float, h: Float) -> Float { w * h }
-
-fn main() -> Html {
-  let x = 1 + 2 * 3;            // Int
-  let s = "a" + "b";            // Str (no implicit conversion)
-  let f = 3.5;                  // Float
-  let b = not (x == 0);         // Bool
-  let t = (1, "two");           // tuple
-  let xs = [1, 2, 3];           // List<Int>
-  html { <p>{s}{x}{b}{f}</p> }
-}
+total :: List Int -> Int
+total xs = go xs 0
+  where
+    go [] acc = acc
+    go (x : rest) acc = go rest (acc + x)
 ```
 
-* Types are inferred; function declarations may annotate parameters, while lambdas can omit
-  them (`fn(x) => x + 1`) and infer from the expected function type.
-* Arithmetic requires matching numeric types — there is no implicit `Int`/`Float` coercion.
-* Strings concatenate with `+`; `str(x)` renders any value.
-* Functions are values and **curry**: `add(1)` partially applies, `add(1)(2)` calls the result.
-* Chain with `|>` (data first), or apply with `<|` / `$`:
+Brackets, list and record literals, and `{expr}` holes inside markup suspend layout, so these
+all work:
 
 ```flow
-fn add(a: Int, b: Int) -> Int { a + b }
-fn inc(x: Int) -> Int { x + 1 }
-
-let f = add(1);                 // (Int) -> Int
-let n = f(2);                   // 3
-let m = 1 |> inc |> add(1);     // add(inc(1)) = 3
-let k = inc $ 1 + 1;            // inc(2) = 3
+let xs = [ 1
+         , 2
+         ]
+main = <p>{if ready then "yes" else "no"}</p>
 ```
 
----
+`--` starts a line comment; `{- … -}` is a block comment and nests.
 
-## 3. Blocks, `let`, and reactivity
+## 2. Declarations
 
 ```flow
-fn main() -> Html {
-  let n = Client.state(0);
-  let doubled = n.get() * 2;         // derived: re-evaluates when n changes
-  html {
-    <div>
-      <button onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
-      <p>{"n = "}{n.get()}{", doubled = "}{doubled}</p>
-    </div>
-  }
-}
+module Shapes (Shape(..), area) where   -- exports; everything else is private
+
+import List (map, filter)               -- bring names into scope
+import Option as O                      -- qualified access as O.map
+import Http (get as httpGet)            -- rename on import
+
+data Shape = Circle Float | Rect Float Float
+type Point = { x :: Float, y :: Float }
+type Name = Str
+
+area :: Shape -> Float
+area (Circle r) = 3.14 * r * r
+area (Rect w h) = w * h
 ```
 
-A block's value is its final expression. `let` bindings are **reactive thunks**: a binding that
-reads a cell is recomputed when the cell changes, so `doubled` stays correct without you wiring
-anything. A binding that performs a request/response cut (an effect call inside a handler) is
-evaluated once, because a round trip yields a value, not a stream.
+A file without a `module` header exports everything. `pub` does not exist.
 
-`mut` is accepted and treated as `let`; mutation is expressed with cells (`Cell<τ>`), which
-exist only on the client.
-
-### Cell sugar
-
-Reads and writes have short forms that lower to `CellOps.get`/`set` and keep the
-`Client` placement:
+### Signatures are optional
 
 ```flow
-let n = Client.state(0);
-n.value = n.value + 1;    // set(n, get(n) + 1)
-n += 2;                   // update: set(n, get(n) + 2)
-n -= 1; n *= 3; n /= 2;
-n++; n--;                 // Int cells
-n.update(fn(x: Int) -> Int { x + 10 });
-
-html { <p>{str(n.value)}</p> }   // reading a cell recomputes reactively
+double xs = List.map xs (\x -> x + x)   -- inferred
 ```
 
-* `cell.value` reads the cell; using `.value` on a non-`Cell` is an error.
-* `cell.value = e` writes it, and the value must match the cell's element type.
-* `+=` works for `Int`, `Float` and `Str`; `-=`, `*=`, `/=` work for `Int`/`Float`;
-  `/=` on `Int` truncates; `++`/`--` are `Int`-only.
-* The long forms `cell.get()` and `cell.set(value)` keep working.
+An unannotated function is inferred when its callees have been, and generalized afterwards, so
+callers can use it at several types. Lambda parameters take their types from the caller:
+`List.map xs (\x -> x + 1)` needs no annotation when `xs :: List Int`.
 
----
-
-## 4. ADTs and pattern matching
+A definition with no parameters is a constant:
 
 ```flow
-type Shape =
-  | Circle(Float)
-  | Rect(Float, Float)
-  | Triangle(Float, Float, Float)
-
-fn area(s: Shape) -> Float {
-  match s {
-    Circle(r) => 3.141592653589793 * r * r,
-    Rect(w, h) => w * h,
-    Triangle(a, b, _) => 0.5 * a * b,
-  }
-}
+pi = 3.14159
+main = <p>{str pi}</p>
 ```
 
-* `type T = A | B(x) | C(x, y)` declares a sum type. Constructors are ordinary functions for
-  the arity they declare.
-* `match` is exhaustive: leaving out `Triangle` is a compile error.
-  ```
-  non-exhaustive match on Shape: missing Triangle
-  ```
-* Patterns: `_`, binders, literals, `Ctor(…)`, tuples `(a, b)`, records `{ x: a }`, lists
-  `[]`, `[x, ..rest]`.
-* Constructors are JSON-shaped at runtime (`{ $: "Circle", args: [r] }`), which is why they can
-  cross the boundary.
-
-Record types:
+### Clauses, guards and `where`
 
 ```flow
-type Money = { cents: Int, currency: Str }
-let m = { cents: 1250, currency: "USD" };   // record literal
-m.cents                                      // field access
+fact :: Int -> Int
+fact 0 = 1
+fact n = n * fact (n - 1)
+
+classify :: Int -> Str
+classify n
+  | n < 0 = "negative"
+  | n == 0 = "zero"
+  | otherwise = "positive"
 ```
 
----
+Several clauses become a `case` on the parameters; every clause must have the same number of
+patterns. Guards must end with `otherwise` (or `True`).
 
-## 5. Traits
+### Classes and instances
 
 ```flow
-trait Describe<a> {
-  fn describe(x: a) -> Str
-}
+class Show a where
+  show :: a -> Str
 
-impl Describe for Int  { fn describe(x: Int) -> Str { "Int(" + str(x) + ")" } }
-impl Describe for Str  { fn describe(x: Str) -> Str { "\"" + x + "\"" } }
-impl Describe<a> for List<a> {
-  fn describe(xs: List<a>) -> Str { "List of " + str(len(xs)) }
-}
+instance Show Int where
+  show n = str n
 
-fn main() -> Html {
-  html { <p>{Describe.describe(42)}{Describe.describe([1,2,3])}</p> }
-}
+class Eq a => Ord a where
+  compare :: a -> a -> Int
 ```
 
-* Dispatch is static: the instance is chosen by matching the first argument's type, and the
-  call compiles to a direct function call.
-* Generic instances (`for List<a>`) match any element type.
-* A missing instance is a compile error: `no instance of Describe for Bool`.
-* Methods are called qualified (`Describe.describe(x)`) or unqualified if the name is unique
-  (`describe(x)` — resolved through the method index).
+A method whose signature mentions no value of `a` (`empty :: () -> a`) dispatches on its result.
+An instance method written without types takes them from the class.
 
-A generic function can require an instance with a trait bound:
+Higher-kinded parameters work too:
 
 ```flow
-fn render<a: Describe>(x: a) -> Str { Describe.describe(x) }
+class Functor f where
+  fmap :: (a -> b) -> f a -> f b
 
-fn describeAll<a: Describe>(xs: List<a>) -> Str {
-  match xs {
-    [] => "",
-    [x, ..rest] => Describe.describe(x) + ";" + describeAll(rest),
-  }
-}
-
-impl Describe<a> for List<a> where a: Describe {
-  fn describe(xs: List<a>) -> Str { describeAll(xs) }
-}
+instance Functor List where
+  fmap f xs = List.map xs f
 ```
 
-Bounded parameters are compiled as hidden dictionary parameters. The call site
-supplies the instance (`render(42)` passes the `Describe<Int>` dictionary), and a
-bounded generic instance closes over the dictionary for its element type. Multiple
-bounds are allowed (`<a: Describe + Monoid>`). Calling a trait method on a type
-variable without the matching bound is an error:
-
-```
-no instance of Describe for type variable t; add a trait bound such as <a: Describe>
-```
-
-A nullary trait method (such as `Monoid.empty()`) uses the unique instance when
-the trait has exactly one; with several instances it is an error unless a value
-or annotation determines the type.
-
-A trait parameter may also range over a **type constructor** (a higher-kinded
-parameter). Apply it to type arguments with `f<a>`, and write instances at the
-constructor:
+## 3. Expressions
 
 ```flow
-trait Functor<f> {
-  fn map<a, b>(value: f<a>, mapper: (a) -> b) -> f<b>
-}
-
-impl Functor for List {
-  fn map<a, b>(value: List<a>, mapper: (a) -> b) -> List<b> {
-    match value {
-      [] => [],
-      [x, ..rest] => concat([mapper(x)], map(rest, mapper)),
-    }
-  }
-}
-
-impl Functor for Option {
-  fn map<a, b>(value: Option<a>, mapper: (a) -> b) -> Option<b> {
-    match value { None => None, Some(x) => Some(mapper(x)) }
-  }
-}
+f x y = x + y          -- application by juxtaposition
+g = f 1                -- partial application
+h = f 1 2              -- fully applied
 ```
 
-Dispatch uses the head constructor of the constructor-typed argument:
-`Functor.map([1, 2], …)` selects the `List` instance, while
-`Functor.map(Some(1), …)` selects `Option`. Type applications are normalized
-after unification, so `f<b>` becomes `List<b>` or `Option<b>`.
+Operators, from loosest to tightest: `$`, `<|`, `|>`, `>>=`, `||`, `&&`, comparisons, `:`,
+`++`, `+ -`, `* / %`, `.`. `x |> f` is `f x` (insert as first argument); `f <| x` and `f $ x`
+are `f x`. `.` composes: `(f . g) x = f (g x)`.
 
-### Monads
-
-`std::monad` declares `Monad<f>` with `bind` and `map`, and instances for `Option`
-and `List`. `>>=` and `do { … }` are sugar over `bind`:
+Sections and operator values:
 
 ```flow
-use std::monad::{Monad}
-
-let chained = Some(2) >>= fn(x: Int) -> Option<Int> { Some(x + 1) };
-
-let option = do {
-  x <- Some(2);
-  y <- Some(3);
-  Some(x + y)                 // Some(5)
-};
-
-let list = do {
-  x <- [1, 2];
-  y <- [10, 20];
-  [x + y]                     // [11, 21, 12, 22]
-};
-
-Some(2).map(fn(x: Int) -> Int { x + 1 })   // Some(3)
+inc = (+ 1)
+double = (* 2)
+sum = foldl (+) 0
 ```
 
-`do { … }` desugars to nested `>>=` applications; `let` bindings inside it stay
-ordinary lets. The instance is chosen from the first bound value's type, so
-mixing `Option` and `List` in one block is a type error. `>>=` requires the
-`Monad` trait to be imported (which also links the instances).
-
----
-
-## 6. Effects are capabilities
-
-Declare:
+Control forms:
 
 ```flow
-effect Server {
-  fn now() -> Int
-  fn secret(name: Str) -> Str
-  fn log(msg: Str) -> Unit
-}
+sign n = if n < 0 then -1 else 1
 
-effect Audit {
-  fn record(msg: Str) -> Unit
-}
+describe o = case o of
+  None -> "nothing"
+  Some x -> "some " + str x
+
+pairs = let a = 1
+            b = 2
+        in (a, b)
 ```
 
-A `provide` block is the **capability handler** for an effect: it supplies the
-implementation that runs when the effect is called. The provider's placement
-determines where the call runs.
+Lambdas: `\x -> e`, `\x y -> e`, and `\case` for a one-argument match.
 
-An effect can pin its own placement, which is what the standard library does for
-the built-in capabilities (`std::prelude` declares `Server @ server`,
-`Client @ client`, `Store @ server`). A provider still wins when there is one:
+`do` notation is monadic (`>>=` on `Monad`):
 
 ```flow
-effect Client @ client {
-  fn state<a>(init: a) -> Cell<a>
-}
+answer = do
+  x <- Option.Some 2
+  y <- Option.Some 3
+  Option.Some (x + y)
 ```
 
-`@ neutral` means the effect has no fixed side: a call follows the placement of
-its arguments and callbacks. `std::net` declares `Net @ neutral`, so the same
-request API can run on the client or the server depending on the callback.
+String append is `++` (also list append). Equality is `==` / `/=`, booleans are `True` /
+`False`, negation is the function `not`.
 
-Provide:
+## 4. Data, records and patterns
 
 ```flow
-provide Audit with {
-  record = fn(msg: Str) -> Unit { Server.log(msg) }
-}
+data Tree a = Leaf | Node (Tree a) a (Tree a)
+
+size :: Tree a -> Int
+size Leaf = 0
+size (Node l _ r) = 1 + size l + size r
 ```
 
-Call:
+Patterns: constructors (`Node l _ r`), literals, wildcards, tuples, records
+(`{ x = a }`), lists (`[1, 2]`) and cons (`x : rest`). A `case` over an ADT must cover every
+constructor.
+
+Records:
 
 ```flow
-Audit.record("hello")      // placed wherever the provider lives
+type User = { name :: Str, age :: Int }
+
+u = { name = "ada", age = 36 }
+shout = u.name ++ "!"
 ```
 
-Rules:
+## 5. Effects and services
 
-1. **A call requires a handler.** It must be supplied by a file-level `provide` or an
-   enclosing `handle` expression (see below).
-2. **The provider's placement decides where the call runs.** `record` uses `Server.log`, so
-   `Audit` is server-placed, so every `Audit.record` call is a server computation — even when
-   written inside a client event handler.
-3. **The provider is type-checked** against the effect signature.
-4. **Rows are inferred.** You only write `! {…}` when you want to pin an upper bound:
-   ```flow
-   fn f() -> Int { Server.now() }          // inferred ! {Server}
-   fn g() -> Int ! {} { Server.now() }     // error: unhandled effect(s) {Server}
-   ```
-
-### Local capability handlers
-
-`provide` is file-level. A `handle Effect with { … } { body }` expression installs
-a **scoped** capability handler for the body, like Koka's `with` handlers:
+Capabilities are effects with a provider:
 
 ```flow
-effect Local @ client {
-  fn ping(msg: Str) -> Str
-}
+effect Server @ server where
+  secret :: Str -> Str
+  log :: Str -> ()
 
-fn main() -> Html {
-  let msg = handle Local with {
-    ping = fn(msg: Str) -> Str { "pong " + msg }
-  } {
-    Local.ping("x")
-  };
-  html { <p>{msg}</p> }
-}
+effect Client @ client where
+  state :: a -> Cell a
+
+provide Server where
+  secret k = host_secret k
+  log msg = host_log msg
 ```
 
-* The handler is active only while `body` runs; nested handlers restore the
-  previous provider when they finish.
-* A local handler overrides the operations it supplies and falls back to a
-  file-level `provide` for the rest. Without a global provider, it must supply
-  every operation.
-* The handled effect is removed from the body's effect row; the handler
-  operations' own effects remain. The body sees the handler's placement.
-* Handler operations are capability implementations, not continuations: there is
-  no `resume`. The handler runs the operation and the call returns normally.
+Calls look like ordinary functions and are placed by their effect:
+
+```flow
+main :: Html
+main = do
+  let token = Server.secret "api"     -- runs on the server
+  let count = Client.state 0          -- runs on the client
+  <p>{token}{str count.value}</p>
+```
+
+### Cells
+
+`cell.value` reads, `cell := e` writes, `cell += n` / `-=` / `*=` update, and
+`cell.update f` maps the current value. `cell.get ()` and `cell.set v` are the method forms.
 
 ### Algebraic effects
 
-An `algebraic effect` is not a capability: its operations **suspend** the caller and
-return control to the nearest `handle`. Handler operations receive a `resume`
-continuation, the way algebraic effect handlers do in Koka.
-
 ```flow
-algebraic effect State {
-  fn get() -> Int
-  fn put(x: Int) -> Unit
-}
+algebraic effect State where
+  get :: () -> Int
+  put :: Int -> ()
 
-fn counter() -> Int ! {State} {
-  State.put(State.get() + 1);
-  State.get()
-}
+compute :: () -> Int ! State
+compute () = do
+  State.put 10
+  State.get () + 1
 
-fn withState<a>(init: Int, action: () -> a ! {State}) -> a {
-  let cell: Ref<Int> = newRef(init);           // std::ref
-  handle State with {
-    get = fn() -> a { resume(cell.get()) },
-    put = fn(x: Int) -> a { cell.set(x); resume(()) }
-  } {
-    action()
-  }
-}
+run :: () -> Int
+run () = handle State with
+    get () = resume 41
+    put x = resume ()
+  in compute ()
 ```
 
-Calling an operation suspends the body; the handler runs **with a `resume`
-continuation**. `resume(v)` continues the body from the operation site, with `v`
-as the operation's result, and returns what the rest of the body returns.
+Operations suspend the body; the handler calls `resume` to continue it. A handler that never
+resumes aborts the handled body.
 
-Rules:
+## 6. Markup
 
-1. **A handler operation returns the handled result.** Every operation handler in
-   an algebraic `handle` must produce the same type as the `handle` expression
-   itself, because its return value is that expression's value.
-2. **Not resuming aborts.** A handler that returns without calling `resume`
-   abandons the rest of the body and supplies the result — this is how errors and
-   defaults are implemented (`std::exn`).
-3. **Handlers are deep.** Operations performed by the continuation are handled by
-   the same handler; nested handlers shadow outer ones and restore afterwards.
-4. **One-shot.** `resume` may be called once; a second call is a runtime error.
-5. **Forwarding.** An operation of a different algebraic effect is forwarded to
-   the enclosing handler.
-6. **Rows.** The handled effect leaves the body's row; operation handlers'
-   effects stay. `! {State}` on a function says it may suspend at `State`.
-7. **No placement.** Algebraic effects are neutral: they run wherever the handler
-   runs. They cannot cross a tier cut, and cannot be performed in lazy slots
-   (HTML holes and attributes, event listeners, reactive blocks, providers,
-   components). Wrap that work in `handle … with … { … }` inside an eager
-   expression, or move it out of the lazy slot.
-8. **No `provide`.** A file-level provider supplies a capability implementation;
-   an algebraic effect has to be handled (`provide Exn with …` is a type error).
-9. **Effectful callbacks need a row.** A function that may suspend can only be
-   passed to a parameter whose declared type admits the effect, e.g.
-   `action: () -> a ! {State}`. Passing it to `List.map` (whose parameter has no
-   row) is a type error rather than a runtime surprise.
-
-The standard library ships two of them: `std::state` (`State` with
-`withState`/`runState`/`execState`) and `std::exn` (`Exn` with
-`attempt`/`recoverWith`/`recover`).
-
----
-
-## 7. HTML and events
+Markup is an expression. A lower-case tag is an element, an upper-case tag is a component (a
+function taking a record), `{expr}` interpolates, and `<> … </>` is a fragment.
 
 ```flow
-html {
-  <div class="card">
-    <h1>{"Title"}</h1>
-    <p>{"count: "}{n.get()}</p>
-    <button onClick={fn(e: Event) { n.set(n.get() + 1) }}>{"+1"}</button>
+Label :: { title :: Str } -> Html
+Label props = <span class="label">{props.title}</span>
+
+main :: Html
+main = <div class="card">
+    <h1>{"Hello"}</h1>
+    <Label title={"hi"} />
+    <button onClick={\e -> Client.log "clicked"}>{"+1"}</button>
   </div>
-}
 ```
 
-* `{ … }` is a **hole**: an arbitrary expression rendered in place. `Html` nests; primitives
-  render as text; anything else renders structurally (`Circle(2.0)` → `Circle(2)`).
-* Attributes: `class="card"` (static) or `class={expr}` (reactive).
-* `on<Event>` binds a listener. The handler receives an `Event`:
-  `onClick`, `onInput`, `onSubmit`, `onChange`, …
-* Boolean attributes: `disabled={flag}` sets/removes the attribute.
+An empty list interpolates as nothing; a list of markup renders its elements.
 
-**Components** are functions taking one record and returning `Html`. Tags beginning with an
-upper-case letter are component calls; children become the `children` field:
+## 7. Modules and namespacing
+
+See [`modules.md`](modules.md). In short:
 
 ```flow
-fn Card(props: { title: Str, children: Html }) -> Html {
-  html { <section><h2>{props.title}</h2>{props.children}</section> }
-}
+import Option (withDefault)
+import List as L
 
-html { <Card title={"Hi"}><p>{"body"}</p></Card> }
+best = withDefault (Option.map (Option.Some 3) (\x -> x * 2)) 0
+sorted = L.sortBy [3, 1, 2] (\a b -> a - b)
 ```
 
-A bare element is also an expression, which is what makes conditional markup possible:
+Any public name can be reached by its module qualifier without an import: `Option.map`,
+`List.sortBy`, `Http.textResponse`. `module M (a, b) where` controls what is public.
+
+## 8. FFI
 
 ```flow
-{if (cond) { <p>{"yes"}</p> } else { <p>{"no"}</p> }}
+foreign import js unsafe "Math.sqrt" sqrt :: Float -> Float
+foreign import js unsafe "@toUpperCase" upper :: Str -> Str
+foreign import js unsafe "#length" length :: List a -> Int
 ```
 
-A component call in a static position is built once. Put it in a hole to make it
-re-render when its inputs change:
+`"Path"` calls a global (keeping its receiver), `"@name"` is a method on the first argument,
+`"#name"` a property, `"#index"` an element access. FFI is unsafe by construction and only the
+`js` target exists.
 
-```flow
-{<Counter n={n.get()} />}
-```
+## 9. Diagnostics
 
----
-
-## 8. The boundary, worked through
-
-### 8.1 Client code reads a server value
-
-```flow
-fn main() -> Html {
-  let t = Server.now();
-  html { <p>{t}</p> }
-}
-```
-
-`Server.now` is server-placed; the hole is client-placed; the value crosses down as a reactive
-cut.
-
-### 8.2 Server code reads a client value
-
-```flow
-{"skew: "}{Server.now() - Client.now()}
-```
-
-The subtraction belongs to the server (its left operand is authoritative there), so the client
-clock crosses *up*:
+Errors carry a code, a span and a caret snippet:
 
 ```
-cut cut2: reactive server-side block @28 deps=[]   type=Int
-cut cut3: reactive client-side block @28 deps=[]   type=Int
-```
-
-### 8.3 An `if` in client code runs a server block
-
-```flow
-{if (reveal.get()) {
-  <p>{"server says: "}{Server.secret("flag")}</p>
-} else {
-  <p>{"nothing to see here"}</p>
-}}
-```
-
-The `if` stays on the client because both branches produce `Html`, which cannot exist on the
-server. The secret is cut out as its own server node, and — because the branch is only built
-when taken — the server is not called at all until you toggle.
-
-### 8.4 Effects inside handlers become round trips
-
-```flow
-onClick={fn(e: Event) {
-  clicks.set(clicks.get() + 1);
-  Audit.record("clicked " + str(clicks.get()));
-}}
-```
-
-`Audit.record` is server-placed but sits in an event handler, so the compiler emits
-`await R.call("cut1", { clicks })`. If the argument itself needs a client computation, the
-server calls *back*:
-
-```
-client  →  await R.call("cut1", {clicks: 1})
-server  →  await R.call("cut2", {clicks: 1})     // needs the client to format the message
-client  →  "clicked 1"
-server  →  Server.log("clicked 1")
-```
-
-One expression, two crossings, no annotations.
-
-Placement is inferred, but a type may carry an explicit `@client` / `@server`
-intent:
-
-```flow
-fn view(x: Str) -> Html@client { html { <p>{x}</p> } }
-fn save(x: Str@server) -> Unit { Server.log(x) }
-fn main() -> Html {
-  let secret: Str@server = Server.secret("k");
-  html { <p>{str(save(secret))}</p> }
-}
-```
-
-These annotations are checked, not inferred: a return must agree with its body,
-a direct call argument must agree with its parameter, and a `let` value must
-agree with its binding. A neutral value is compatible with either side; a
-`cross` expression contains a cut and is also allowed. The compiler still
-decides every cut; an annotation only rejects a mismatch.
-
----
-
-## 9. What gets emitted
-
-```
-dist/
-  app.js                    client program (ES module)
-  server.js                 server program (ES module)
-  runtime/
-    client.js dom.js        shipped to the browser
-    core.js server.js       shared reactive core + server transport
-    server-runtime.js
-```
-
-* `R.serve(id, fn)` registers a cut that this side owns.
-* `R.remote(id, deps)` returns a signal backed by a cut on the other side.
-* `R.call(id, args)` awaits a request/response cut.
-* Transport: Server-Sent Events down, `POST /__flow/msg` up. Both sides implement both halves.
-
-`flow build` output is plain ES modules; you can serve it from anything.
-
----
-
-## 10. Diagnostics
-
-Flow renders errors like rustc: an error code, the source location, the offending
-line with a caret underline, and a one-line summary. Every error in the package is
-reported, not just the first.
-
-```
-$ flow check bad.flow
-    Checking bad.flow
-error[E_TYPE]: unknown type 'str'
- --> bad.flow:1:11
+error[E_TYPE]: return type mismatch in fn g: expected Str, got Int
+ --> src/main.flow:5:8
   |
-1 | fn f() -> str { "hello" }
-  |           ^^^
-  |
-  = help: 'str' is a value, not a type; did you mean 'Str'?
-error: could not check `bad.flow` due to 1 previous error
+5 | g = 42
+  |     ^^
 ```
 
-```
-$ flow check bad.flow
-    Checking bad.flow
-error[E_TYPE]: right operand of '+' (left is Int): expected Int, got Str
- --> bad.flow:4:40
-  |
-4 | fn main() -> Html { html { <p>{1 + "x"}</p> } }
-  |                                        ^^^
-  |
-  = note: in argument 1
-  = note: in fn main
-error: could not check `bad.flow` due to 1 previous error
-```
+A wrong literal is underlined where it is written; `if` branches report the offending branch,
+`case` arms the offending arm, call arguments the argument, and annotations the value. Type
+names get "did you mean" hints. `flow check` fails on the first error; the editor shows all of
+them.
 
-The process exits 1 on failure and 0 on success. Colour is enabled on a TTY and
-can be forced or disabled with `--color always` / `--color never` (or `NO_COLOR`).
-`--quiet` suppresses the progress lines.
-
-Diagnostics point at the expression that is wrong, not at the enclosing function:
-
-* a returned value is checked against the declared return type at the **tail
-  expression** (`return type mismatch …`);
-* `if` branches report the offending `else`, match arms the offending arm, call
-  arguments the argument (with `in argument N`), and `let` annotations the value;
-* an undeclared lowercase type name is an error (`unknown type 'str'` with a
-  suggested fix) instead of silently becoming a fresh type variable — type
-  parameters must be declared (`fn f<a>(x: a)`);
-* unknown effect labels and trait bounds, effect row variables, duplicate
-  declarations/parameters/fields/impls, wrong builtin type arity, and impl methods
-  that do not exist or do not match the trait signature are rejected;
-* errors raised inside a function keep their original line/column (the
-  `in fn …` wrapper only adds context).
-
-`flow explain` reports, for every function, its inferred placement and effect row, plus every
-cut with its mode, line, dependencies and type.
-
----
-
-## 11. Modules, packages and the standard library
-
-A module is a file; a package is a directory with `flow.json`. `pub` marks what a
-module exports.
-
-```flow
-use app::util::{Priority, describe}
-use std::list::{map, range}
-use flow-charts::bar::Chart
-```
-
-A name can also be used through its full path, without a `use`:
-
-```flow
-let n = std::list::length(xs);
-let o = std::option::Some(1);
-let req: std::http::RequestObject = Request.current();
-handle std::state::State with { … } { … }
-```
-
-Paths work for functions, constructors, effects, traits and types; the linker
-loads the module on demand and still enforces `pub`. Completion offers modules
-after `std::`, members after `std::list::`, and unimported names with an import
-insertion.
+## 10. Tooling
 
 ```bash
-flow install          # resolve + vendor deps into flow_modules/, write flow.lock
-flow add flow-time    # add the best matching version from the registry
+flow check src/main.flow    # type-check
+flow build src/main.flow    # emit app.js, server.js and the runtime
+flow run src/main.flow      # build and serve
+flow fmt src/main.flow      # format with the pretty printer (--check to verify)
+flow migrate old.flow --write  # rewrite the old Rust-style syntax
+flow explain src/main.flow  # print placements and cuts
 ```
-
-The standard library ships as modules: `std::list`, `std::option`, `std::math`,
-`std::random`, `std::string`, `std::html`, `std::log`, `std::time`, `std::http`, `std::net`, `std::fs`, `std::state`, `std::exn`, `std::ref`, `std::monad`, `std::fn`.
-Full reference: [`docs/modules.md`](modules.md).
-
----
-
-## 12. Native access (unsafe FFI)
-
-Anything that must touch the host — the console, the clock, `Math` — is declared
-explicitly and marked `unsafe`. This is how the standard library is built: the
-compiler no longer emits primitives for logging, timing or arithmetic.
-
-```flow
-unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
-unsafe extern js fn sqrt(x: Float) -> Float = "Math.sqrt"
-unsafe extern js fn upper(s: Str) -> Str = "@toUpperCase"
-unsafe extern js fn size(s: Str) -> Int = "#length"
-```
-
-Targets:
-
-| form | meaning | example |
-|---|---|---|
-| `"Path.to.fn"` | global function, called with its receiver; a non-function reads as a constant when the binding is nullary | `"Math.floor"`, `"Math.PI"` |
-| `"@method"` | method on the first argument | `"@concat"` → `xs.concat(ys)` |
-| `"#property"` | property of the first argument | `"#length"` → `xs.length` |
-| `"#index"` | element of the first argument | `xs[i]` |
-
-Rules:
-
-* The declaration **must** say `unsafe`; `extern` alone is a parse error.
-* Only the `js` target exists in 0.1.
-* An FFI function is **placement-neutral**: it runs wherever it is called, so
-  `Date.now` is the client clock on the client and the server clock on the
-  server. If you want authority, call it behind a capability:
-  ```flow
-  provide Server with { now = fn() -> Int { date_now() } }
-  ```
-* FFI calls are **not sandboxed** and bypass the serializer. Nothing stops you
-  from mutating host state; that is what `unsafe` is admitting.
-
-`std::log`, `std::time` and `std::math` are thin wrappers over exactly these
-bindings:
-
-```flow
-use std::log::{info, value}
-use std::time::{nowMs, duration}
-use std::math::{sqrt, floor, pow}
-```
-
-The compiler registers no callable primitives. `std::prelude` declares `Option`,
-`Server` / `Client` / `Store`, `CellOps`, and the list, string, conversion and
-equality helpers as ordinary Flow over these bindings; the runtime only exposes
-raw host primitives (`__flow.show`, `__flow.eq`, `__flow.get`, `__flow.set`, and
-`__flow.host.*`).
-
----
-
-## 13. Limits of 0.1
-
-Honest list, so you do not discover them by surprise:
-
-* FFI targets are JavaScript only; FFI is unsafe and unchecked at the boundary.
-* Traits dispatch on one parameter; supertraits and associated types are not supported.
-  Trait bounds, bounded generic instances and higher-kinded type parameters are supported
-  (`fn f<a: Show>`, `impl Show<a> for List<a> where a: Show`, `trait Functor<f>`).
-* Local capability handlers are scoped providers. Algebraic effects have real
-  `resume` continuations, but handlers are **one-shot**: `resume` may be called
-  once (multi-shot/nondeterminism handlers are not supported).
-* No `String` interpolation — use `+`.
-* Reactive cuts re-run their body when inputs change: keep side effects in handler cuts.
-* One logical session per server; no auth model.
-
-Placement annotations are enforced: `τ@client` / `τ@server` on a function
-return, parameter or `let` binding is checked against inference, and direct call
-arguments are checked against annotated parameters. Effect rows are
-per-instantiation, so a polymorphic function used with a server callback at one
-call site is not forced server-side at another. See
-[`docs/type-system.md`](type-system.md) §8.

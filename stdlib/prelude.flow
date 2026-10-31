@@ -1,162 +1,207 @@
-// std::prelude — the language surface that used to be compiler-injected.
-//
-// Every module gets these names automatically (a unit's own declarations and
-// imports win). The primitives are ordinary `unsafe extern js` bindings to the
-// host, so the compiler no longer emits special code for them.
-//
-// FFI targets:
-//   "Path"    call a global, preserving its receiver  (Math.floor, Date.now)
-//   "@name"   method on the first argument            (xs.concat(ys))
-//   "#name"   property of the first argument          (xs.length)
-//   "#index"  element of the first argument           (xs[i])
+module Prelude (not, cons, Option(..), Server, Client, Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps) where
 
-// ---------------------------------------------------------------- types
-// Option is a plain ADT declared here, not a compiler builtin.
+-- std::prelude — the language surface that used to be compiler-injected.
+--
+-- Every module gets these names automatically (a unit's own declarations and
+-- imports win). The primitives are ordinary `unsafe extern js` bindings to the
+-- host, so the compiler no longer emits special code for them.
+--
+-- FFI targets:
+--   "Path"    call a global, preserving its receiver  (Math.floor, Date.now)
+--   "@name"   method on the first argument            (xs.concat(ys))
+--   "#name"   property of the first argument          (xs.length)
+--   "#index"  element of the first argument           (xs[i])
+-- ---------------------------------------------------------------- types
+-- Option is a plain ADT declared here, not a compiler builtin.
+data Option a = None | Some a
 
-pub type Option<a> = None | Some(a)
+-- ---------------------------------------------------------------- effects
+-- Client/server authority is declared here, not injected by the compiler.
+effect Server @ server where
+  now :: () -> Int
+  secret :: Str -> Str
+  log :: Str -> ()
+  random :: () -> Float
 
-// ---------------------------------------------------------------- effects
-// Client/server authority is declared here, not injected by the compiler.
+effect Client @ client where
+  now :: () -> Int
+  state :: a -> Cell a
+  log :: Str -> ()
 
-pub effect Server @ server {
-  fn now() -> Int
-  fn secret(name: Str) -> Str
-  fn log(msg: Str) -> Unit
-  fn random() -> Float
-}
+effect Store @ server where
+  get :: Str -> Option Str
+  set :: Str -> Str -> ()
 
-pub effect Client @ client {
-  fn now() -> Int
-  fn state<a>(init: a) -> Cell<a>
-  fn log(msg: Str) -> Unit
-}
+-- ---------------------------------------------------------------- host access
+foreign import js unsafe "__flow.show" host_show :: a -> Str
 
-pub effect Store @ server {
-  fn get(key: Str) -> Option<Str>
-  fn set(key: Str, value: Str) -> Unit
-}
+foreign import js unsafe "__flow.eq" host_eq :: a -> a -> Bool
 
-// ---------------------------------------------------------------- host access
+foreign import js unsafe "__flow.host.now" host_now :: () -> Int
 
-unsafe extern js fn host_show<a>(x: a) -> Str = "__flow.show"
-unsafe extern js fn host_eq<a>(x: a, y: a) -> Bool = "__flow.eq"
-unsafe extern js fn host_now() -> Int = "__flow.host.now"
-unsafe extern js fn host_secret(name: Str) -> Str = "__flow.host.secret"
-unsafe extern js fn host_cell<a>(init: a) -> Cell<a> = "__flow.host.cell"
-unsafe extern js fn host_get<a>(c: Cell<a>) -> a = "__flow.get"
-unsafe extern js fn host_set<a>(c: Cell<a>, value: a) -> Unit = "__flow.set"
-unsafe extern js fn host_store_get(key: Str) -> Option<Str> = "__flow.host.storeGet"
-unsafe extern js fn host_store_set(key: Str, value: Str) -> Unit = "__flow.host.storeSet"
-unsafe extern js fn host_log(msg: Str) -> Unit = "__flow.host.log"
-unsafe extern js fn console_log(msg: Str) -> Unit = "console.log"
-unsafe extern js fn math_random() -> Float = "Math.random"
-unsafe extern js fn host_parse_int(s: Str) -> Int = "parseInt"
-unsafe extern js fn host_parse_float(s: Str) -> Float = "parseFloat"
+foreign import js unsafe "__flow.host.secret" host_secret :: Str -> Str
 
-// ---------------------------------------------------------------- lists
+foreign import js unsafe "__flow.host.cell" host_cell :: a -> Cell a
 
-unsafe extern js fn length<a>(xs: List<a>) -> Int = "#length"
-unsafe extern js fn at<a>(xs: List<a>, i: Int) -> a = "#index"
-unsafe extern js fn concat_arrays<a>(xs: List<a>, ys: List<a>) -> List<a> = "@concat"
-unsafe extern js fn slice<a>(xs: List<a>, from: Int) -> List<a> = "@slice"
-unsafe extern js fn slice_to<a>(xs: List<a>, from: Int, to: Int) -> List<a> = "@slice"
-unsafe extern js fn reverse_in_place<a>(xs: List<a>) -> Unit = "@reverse"
+foreign import js unsafe "__flow.get" host_get :: Cell a -> a
 
-pub fn len<a>(xs: List<a>) -> Int { length(xs) }
+foreign import js unsafe "__flow.set" host_set :: Cell a -> a -> ()
 
-pub fn isEmpty<a>(xs: List<a>) -> Bool { len(xs) == 0 }
+foreign import js unsafe "__flow.host.storeGet" host_store_get :: Str -> Option Str
 
-pub fn push<a>(xs: List<a>, x: a) -> List<a> { concat_arrays(xs, [x]) }
+foreign import js unsafe "__flow.host.storeSet" host_store_set :: Str -> Str -> ()
 
-pub fn concat<a>(xs: List<a>, ys: List<a>) -> List<a> { concat_arrays(xs, ys) }
+foreign import js unsafe "__flow.host.log" host_log :: Str -> ()
 
-pub fn head<a>(xs: List<a>) -> Option<a> {
-  if (isEmpty(xs)) { None } else { Some(at(xs, 0)) }
-}
+foreign import js unsafe "console.log" console_log :: Str -> ()
 
-pub fn tail<a>(xs: List<a>) -> List<a> {
-  if (isEmpty(xs)) { [] } else { slice(xs, 1) }
-}
+foreign import js unsafe "Math.random" math_random :: () -> Float
 
-pub fn reverse<a>(xs: List<a>) -> List<a> {
-  let out = slice_to(xs, 0, len(xs));
-  reverse_in_place(out);
+foreign import js unsafe "parseInt" host_parse_int :: Str -> Int
+
+foreign import js unsafe "parseFloat" host_parse_float :: Str -> Float
+
+-- ---------------------------------------------------------------- lists
+foreign import js unsafe "#length" length :: List a -> Int
+
+foreign import js unsafe "#index" at :: List a -> Int -> a
+
+foreign import js unsafe "@concat" concat_arrays :: List a -> List a -> List a
+
+foreign import js unsafe "@slice" slice :: List a -> Int -> List a
+
+foreign import js unsafe "@slice" slice_to :: List a -> Int -> Int -> List a
+
+foreign import js unsafe "@reverse" reverse_in_place :: List a -> ()
+
+len :: List a -> Int
+len xs = length xs
+
+isEmpty :: List a -> Bool
+isEmpty xs = len xs == 0
+
+push :: List a -> a -> List a
+push xs x = concat_arrays xs [x]
+
+concat :: List a -> List a -> List a
+concat xs ys = concat_arrays xs ys
+
+head :: List a -> Option a
+head xs = if isEmpty xs then None else Some (at xs 0)
+
+tail :: List a -> List a
+tail xs = if isEmpty xs then [] else slice xs 1
+
+reverse :: List a -> List a
+reverse xs = do
+  let out = slice_to xs 0 (len xs)
+  reverse_in_place out
   out
-}
 
-// ---------------------------------------------------------------- strings
+-- ---------------------------------------------------------------- strings
+foreign import js unsafe "@trim" s_trim :: Str -> Str
 
-unsafe extern js fn s_trim(s: Str) -> Str = "@trim"
-unsafe extern js fn s_upper(s: Str) -> Str = "@toUpperCase"
-unsafe extern js fn s_lower(s: Str) -> Str = "@toLowerCase"
-unsafe extern js fn s_split(s: Str, sep: Str) -> List<Str> = "@split"
-unsafe extern js fn s_replace(s: Str, from: Str, to: Str) -> Str = "@replaceAll"
-unsafe extern js fn s_contains(s: Str, sub: Str) -> Bool = "@includes"
-unsafe extern js fn s_join(xs: List<Str>, sep: Str) -> Str = "@join"
-unsafe extern js fn s_char_at(s: Str, i: Int) -> Str = "@charAt"
-unsafe extern js fn s_length(s: Str) -> Int = "#length"
+foreign import js unsafe "@toUpperCase" s_upper :: Str -> Str
 
-pub fn trim(s: Str) -> Str { s_trim(s) }
-pub fn upper(s: Str) -> Str { s_upper(s) }
-pub fn lower(s: Str) -> Str { s_lower(s) }
-pub fn split(s: Str, sep: Str) -> List<Str> { s_split(s, sep) }
-pub fn replace(s: Str, from: Str, to: Str) -> Str { s_replace(s, from, to) }
-pub fn contains(s: Str, sub: Str) -> Bool { s_contains(s, sub) }
-pub fn join(xs: List<Str>, sep: Str) -> Str { s_join(xs, sep) }
+foreign import js unsafe "@toLowerCase" s_lower :: Str -> Str
 
-pub fn chars(s: Str) -> List<Str> { charsFrom(s, 0, s_length(s), []) }
+foreign import js unsafe "@split" s_split :: Str -> Str -> List Str
 
-/// Host `#length` for strings (O(1) instead of walking the characters).
-pub fn strLen(s: Str) -> Int { s_length(s) }
+foreign import js unsafe "@replaceAll" s_replace :: Str -> Str -> Str -> Str
 
-fn charsFrom(s: Str, i: Int, n: Int, acc: List<Str>) -> List<Str> {
-  if (i >= n) { acc } else { charsFrom(s, i + 1, n, push(acc, s_char_at(s, i))) }
-}
+foreign import js unsafe "@includes" s_contains :: Str -> Str -> Bool
 
-// ---------------------------------------------------------------- conversions
+foreign import js unsafe "@join" s_join :: List Str -> Str -> Str
 
-pub fn str<a>(x: a) -> Str { host_show(x) }
-pub fn eq<a>(x: a, y: a) -> Bool { host_eq(x, y) }
-pub fn neq<a>(x: a, y: a) -> Bool { not host_eq(x, y) }
-pub fn int(s: Str) -> Int { host_parse_int(s) }
-pub fn float(s: Str) -> Float { host_parse_float(s) }
+foreign import js unsafe "@charAt" s_char_at :: Str -> Int -> Str
 
-// ---------------------------------------------------------------- capabilities
-// The runtime exposes only raw primitives; the capabilities are std code.
+foreign import js unsafe "#length" s_length :: Str -> Int
 
-fn makeCell<a>(init: a) -> Cell<a> { host_cell(init) }
+trim :: Str -> Str
+trim s = s_trim s
 
-// ---------------------------------------------------------------- cells
-// Cell.get / Cell.set are std trait methods over the host's reactive
-// primitives. The `Client` effect declares that they need client authority,
-// so placement follows the capability instead of a compiler special case.
+upper :: Str -> Str
+upper s = s_upper s
 
-pub trait CellOps<a> {
-  fn get(c: Cell<a>) -> a ! Client
-  fn set(c: Cell<a>, value: a) -> Unit ! Client
-  fn update(c: Cell<a>, f: (a) -> a) -> Unit ! Client
-}
+lower :: Str -> Str
+lower s = s_lower s
 
-impl CellOps<a> for Cell<a> {
-  fn get(c: Cell<a>) -> a ! Client { host_get(c) }
-  fn set(c: Cell<a>, value: a) -> Unit ! Client { host_set(c, value) }
-  fn update(c: Cell<a>, f: (a) -> a) -> Unit ! Client { host_set(c, f(host_get(c))) }
-}
+split :: Str -> Str -> List Str
+split s sep = s_split s sep
 
-provide Server with {
-  now = fn() -> Int { host_now() },
-  secret = fn(name: Str) -> Str { host_secret(name) },
-  log = fn(msg: Str) -> Unit { host_log(msg) },
-  random = fn() -> Float { math_random() },
-}
+replace :: Str -> Str -> Str -> Str
+replace s from to = s_replace s from to
 
-provide Client with {
-  now = fn() -> Int { host_now() },
-  state = makeCell,
-  log = fn(msg: Str) -> Unit { console_log(msg); () },
-}
+contains :: Str -> Str -> Bool
+contains s sub = s_contains s sub
 
-provide Store with {
-  get = fn(key: Str) -> Option<Str> { host_store_get(key) },
-  set = fn(key: Str, value: Str) -> Unit { host_store_set(key, value) },
-}
+join :: List Str -> Str -> Str
+join xs sep = s_join xs sep
+
+chars :: Str -> List Str
+chars s = charsFrom s 0 (s_length s) []
+
+-- / Host `#length` for strings (O(1) instead of walking the characters).
+strLen :: Str -> Int
+strLen s = s_length s
+
+charsFrom :: Str -> Int -> Int -> List Str -> List Str
+charsFrom s i n acc = if i >= n then acc else charsFrom s (i + 1) n (push acc (s_char_at s i))
+
+-- ---------------------------------------------------------------- conversions
+str :: a -> Str
+str x = host_show x
+
+eq :: a -> a -> Bool
+eq x y = host_eq x y
+
+not :: Bool -> Bool
+not b = if b then False else True
+
+cons :: a -> List a -> List a
+cons x xs = concat_arrays [x] xs
+
+neq :: a -> a -> Bool
+neq x y = not (host_eq x y)
+
+int :: Str -> Int
+int s = host_parse_int s
+
+float :: Str -> Float
+float s = host_parse_float s
+
+-- ---------------------------------------------------------------- capabilities
+-- The runtime exposes only raw primitives; the capabilities are std code.
+makeCell :: a -> Cell a
+makeCell init = host_cell init
+
+-- ---------------------------------------------------------------- cells
+-- Cell.get / Cell.set are std trait methods over the host's reactive
+-- primitives. The `Client` effect declares that they need client authority,
+-- so placement follows the capability instead of a compiler special case.
+class CellOps a where
+  get :: Cell a -> a ! Client
+  set :: Cell a -> a -> () ! Client
+  update :: Cell a -> (a -> a) -> () ! Client
+
+instance CellOps (Cell a) a where
+  get c = host_get c
+  set c value = host_set c value
+  update c f = host_set c (f (host_get c))
+
+provide Server where
+  now () = host_now ()
+  secret name = host_secret name
+  log msg = host_log msg
+  random () = math_random ()
+
+provide Client where
+  now () = host_now ()
+  state = makeCell
+  log msg = do
+    console_log msg
+    ()
+
+provide Store where
+  get key = host_store_get key
+  set key value = host_store_set key value

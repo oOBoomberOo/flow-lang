@@ -207,7 +207,14 @@ export function unify(a: Type, b: Type): void {
   }
   if (x.k === "fun" && y.k === "fun") {
     if (x.params.length !== y.params.length) {
-      tErr(`function arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+      // a -> b -> c and a -> (b -> c) are the same curried function type
+      const [short, long] = x.params.length < y.params.length ? [x, y] : [y, x];
+      if (short.params.length === 0) tErr(`function arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+      const n = short.params.length;
+      for (let i = 0; i < n; i++) unify(short.params[i]!, long.params[i]!);
+      unify(short.ret, { k: "fun", params: long.params.slice(n), ret: long.ret, eff: long.eff });
+      unifyEff(short.eff, long.eff);
+      return;
     }
     for (let i = 0; i < x.params.length; i++) unify(x.params[i]!, y.params[i]!);
     unify(x.ret, y.ret);
@@ -335,17 +342,24 @@ export function freeVars(t: Type, acc = new Set<number>()): Set<number> {
 /* printing                                                           */
 /* ------------------------------------------------------------------ */
 
+/** A type argument needs parentheses when it is itself a function or a tuple. */
+function typeArg(t: Type): string {
+  const p = prune(t);
+  const s = typeStr(p);
+  return p.k === "fun" || p.k === "rec" ? `(${s})` : s;
+}
+
 export function typeStr(t: Type): string {
   const p = prune(t);
   switch (p.k) {
     case "var": return `t${p.id}`;
-    case "con": return p.args.length ? `${p.name}<${p.args.map(typeStr).join(", ")}>` : p.name;
-    case "app": return `${typeStr(p.fn)}<${p.args.map(typeStr).join(", ")}>`;
+    case "con": return p.args.length ? `${p.name} ${p.args.map(typeArg).join(" ")}` : p.name;
+    case "app": return `${typeStr(p.fn)} ${p.args.map(typeArg).join(" ")}`;
     case "fun": {
       const eff = p.eff.labels.size ? ` ! {${[...p.eff.labels].join(", ")}}` : "";
-      return `(${p.params.map(typeStr).join(", ")}) -> ${typeStr(p.ret)}${eff}`;
+      return `${p.params.map(typeArg).join(" -> ")} -> ${typeStr(p.ret)}${eff}`;
     }
-    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k}: ${typeStr(v)}`).join(", ")} }`;
+    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k} :: ${typeStr(v)}`).join(", ")} }`;
     case "tuple": return `(${p.items.map(typeStr).join(", ")})`;
   }
 }

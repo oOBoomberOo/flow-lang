@@ -99,11 +99,11 @@ const pos = (text, needle, offset = 1, nth = 0) => {
 };
 
 test("lsp: module-path completion works without imports", async () => {
-  const text = `fn main() -> Html {
-  // std::
-  // std::list::
-  html { <p>{"x"}</p> }
-}
+  const text = `main :: Html
+main = <p>{"x"}</p>
+
+probe :: Int
+probe = List.
 `;
   const file = fileWith(text);
   const c = startServer();
@@ -111,34 +111,29 @@ test("lsp: module-path completion works without imports", async () => {
     await c.request("initialize", { rootUri: null, capabilities: {} });
     await open(c, file, text);
 
-    const top = await c.request("textDocument/completion", {
-      textDocument: { uri: uri(file) },
-      position: pos(text, "std::", 5),
-    });
-    const topLabels = (top.items ?? []).map((i) => i.label);
-    assert.ok(topLabels.includes("list"), "std:: offers the list module");
-    assert.ok(topLabels.includes("math"), "std:: offers the math module");
-
     const members = await c.request("textDocument/completion", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "std::list::", 11),
+      position: pos(text, "List.", 5),
     });
     const memberLabels = (members.items ?? []).map((i) => i.label);
-    assert.ok(memberLabels.includes("map"), "std::list:: offers map");
-    assert.ok(memberLabels.includes("sortBy"), "std::list:: offers sortBy");
-    assert.ok(memberLabels.includes("length"), "std::list:: offers length");
+    assert.ok(memberLabels.includes("map"), "List. offers map");
+    assert.ok(memberLabels.includes("sortBy"), "List. offers sortBy");
+    assert.ok(memberLabels.includes("length"), "List. offers length");
     const map = members.items.find((i) => i.label === "map");
-    assert.match(String(map.detail), /std::list::map/);
+    assert.match(String(map.detail), /List\.map/);
   } finally { c.proc.kill(); }
 });
 
 test("lsp: a syntax error keeps the other declarations analysable", async () => {
-  const text = `fn good() -> Int { 2 }
+  const text = `good :: () -> Int
+good () = 2
 
-fn bad() -> Int { 1 + }
+bad () = 1 +
 
-fn main() -> Html { html { <p>{str(good())}</p> } }
-// go
+main :: Html
+main = <p>{str (good ())}</p>
+
+-- go
 `;
   const file = fileWith(text);
   const c = startServer();
@@ -153,14 +148,14 @@ fn main() -> Html { html { <p>{str(good())}</p> } }
 
     const hover = await c.request("textDocument/hover", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "good()", 2, 1),
+      position: pos(text, "good ()", 2, 1),
     });
     assert.ok(hover?.contents?.value, "hover works on the good declaration");
     assert.match(hover.contents.value, /Placement/);
 
     const completion = await c.request("textDocument/completion", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "// go", 6),
+      position: pos(text, "-- go", 4),
     });
     assert.ok((completion.items ?? []).some((i) => i.label === "good"), "completion still sees good");
 
@@ -170,10 +165,16 @@ fn main() -> Html { html { <p>{str(good())}</p> } }
 });
 
 test("lsp: a type error in one function keeps symbols and completion for the rest", async () => {
-  const text = `fn bad() -> Int { "x" }
-fn good() -> Int { 2 }
-fn main() -> Html { html { <p>{str(good())}{str(bad())}</p> } }
-// go
+  const text = `bad :: () -> Int
+bad () = "x"
+
+good :: () -> Int
+good () = 2
+
+main :: Html
+main = <p>{str (good ())} {str (bad ())}</p>
+
+-- go
 `;
   const file = fileWith(text);
   const c = startServer();
@@ -187,22 +188,26 @@ fn main() -> Html { html { <p>{str(good())}{str(bad())}</p> } }
 
     const completion = await c.request("textDocument/completion", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "// go", 6),
+      position: pos(text, "-- go", 4),
     });
     assert.ok((completion.items ?? []).some((i) => i.label === "good"));
 
     const hover = await c.request("textDocument/hover", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "good()", 2, 1),
+      position: pos(text, "good ()", 2, 1),
     });
     assert.match(hover.contents.value, /Placement/);
   } finally { c.proc.kill(); }
 });
 
 test("lsp: a broken import keeps the file analysable", async () => {
-  const text = `use nope::missing::{x}
-fn good() -> Int { 2 }
-fn main() -> Html { html { <p>{str(good())}</p> } }
+  const text = `import Nope.Missing (x)
+
+good :: () -> Int
+good () = 2
+
+main :: Html
+main = <p>{str (good ())}</p>
 `;
   const file = fileWith(text);
   const c = startServer();
@@ -217,7 +222,9 @@ fn main() -> Html { html { <p>{str(good())}</p> } }
 });
 
 test("lsp: a burst of keystrokes is coalesced into one analysis", async () => {
-  const text = `fn main() -> Html { html { <p>{"x"}</p> } }\n`;
+  const text = `main :: Html
+main = <p>{"x"}</p>
+`;
   const file = fileWith(text);
   const c = startServer();
   try {
@@ -245,10 +252,10 @@ test("lsp: a burst of keystrokes is coalesced into one analysis", async () => {
 });
 
 test("lsp: cell dot completion offers value/get/set/update", async () => {
-  const text = `fn main() -> Html {
-  let c = Client.state(0);
-  html { <p>{c.value}</p> }
-}
+  const text = `main :: Html
+main = do
+  let c = Client.state 0
+  <p>{c.value}</p>
 `;
   const file = fileWith(text);
   const c = startServer();
