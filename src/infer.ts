@@ -300,7 +300,10 @@ export class Infer {
       const tr = this.mod.traits.get(tname)!;
       return instantiate(tr.methods.get(name)!.ty, 0);
     }
-    this.fail(`unbound name '${name}'`, span);
+    const hint = name === "serve"
+      ? " - add `import Http (serve)` or write `Http.serve`"
+      : "";
+    this.fail(`unbound name '${name}'${hint}`, span);
   }
 
   private findEffectOp(name: string): { ty: Type; effect: string } | null {
