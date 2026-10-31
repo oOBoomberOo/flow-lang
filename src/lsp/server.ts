@@ -11,7 +11,7 @@
  */
 
 import path from "node:path";
-import { analyze, findNodeAt, readSource, offsetToPosition, spanRange } from "../analysis.ts";
+import { analyze, findNodeAt, readSource, offsetToPosition, spanRange, stdModules } from "../analysis.ts";
 import { moduleDisplayName } from "../modules.ts";
 
 /** `std::list` -> `List` for the cheap std index, which carries only ids. */
@@ -566,22 +566,26 @@ function completion(file: string, pos: Position) {
   const off = offsetAt(text, pos);
   const before = text.slice(0, off);
 
-  // a module qualifier is capitalised (`Option.`, `FlowCharts.Bar.`); `props.r.` is a field
-  const qualifier = /((?:[A-Z][A-Za-z0-9_]*\.)+)$/.exec(before);
+  // a module qualifier is capitalised (`Option.`, `FlowCharts.Bar.`) and may
+  // already have a partial member (`Time.no`); `props.r.` is a field
+  const qualifier = /((?:[A-Z][A-Za-z0-9_]*\.)+)([A-Za-z0-9_']*)\s*$/.exec(before);
   const dot = /([A-Za-z0-9_.()]+)\.\s*$/.exec(before);
   const prefixMatch = /[A-Za-z0-9_']*$/.exec(before);
   const prefix = prefixMatch ? prefixMatch[0] : "";
 
-  // Module members: `Option.map`, `List.`
+  // Module members: `Option.map`, `List.`, `Time.no`
   if (qualifier) {
     const q = qualifier[1]!;
+    const memberPrefix = qualifier[2] ?? "";
     const a = lastAnalysis;
-    const prefixLower = prefix.toLowerCase();
+    const modules = a?.modules ?? stdModules();
+    const curUnit = (a?.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
+    const prefixLower = memberPrefix.toLowerCase();
     const seen = new Set<string>();
     const items: Record<string, unknown>[] = [];
 
     const add = (name: string, kind: number, detail: string, sort: string) => {
-      if (prefix && !name.toLowerCase().startsWith(prefixLower)) return;
+      if (memberPrefix && !name.toLowerCase().startsWith(prefixLower)) return;
       if (seen.has(name)) return;
       seen.add(name);
       items.push({
@@ -592,15 +596,17 @@ function completion(file: string, pos: Position) {
         sortText: sort + name,
       });
     };
-    // loaded modules carry real declaration sites
+    // loaded modules carry real declaration sites; only exported names belong
+    // to `Module.` (private helpers stay inside their module)
     for (const s of a?.symbols ?? []) {
+      if (!s.public && s.unit !== curUnit?.id) continue;
       if (!s.display.startsWith(q)) continue;
       const rest = s.display.slice(q.length);
       if (!rest || rest.includes(".")) continue;
       add(s.name, symbolKind(s.kind), s.display, "0");
     }
     // std modules the program has not imported yet come from the cheap index
-    for (const m of a?.modules ?? []) {
+    for (const m of modules) {
       const disp = moduleNameOf(m);
       if (`${disp}.` !== q) continue;
       for (const mem of m.members) add(mem.name, symbolKind(mem.kind), `${disp}.${mem.name}`, "0");
@@ -682,6 +688,8 @@ function completion(file: string, pos: Position) {
   const seenSymbols = new Set<string>();
 
   for (const s of lastAnalysis?.symbols ?? []) {
+    const currentUnit = s.unit === curUnit?.id;
+    if (!s.public && !currentUnit) continue;
     if (prefix) {
       const name = s.name.toLowerCase();
       if (!name.startsWith(prefixLower) && !name.includes(prefixLower)) continue;
@@ -689,7 +697,7 @@ function completion(file: string, pos: Position) {
     const key = `${s.name}|${s.display}`;
     if (seenSymbols.has(key)) continue;
     seenSymbols.add(key);
-    const inScope = s.unit === curUnit?.id || imported.has(s.finalName);
+    const inScope = currentUnit || imported.has(s.finalName);
     const prefixRank = s.name.toLowerCase().startsWith(prefixLower) ? "0" : "1";
     const item: Record<string, unknown> = {
       label: s.name,

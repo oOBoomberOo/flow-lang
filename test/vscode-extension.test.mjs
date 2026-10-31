@@ -345,3 +345,42 @@ test("vscode: extension.js parses as CommonJS", async () => {
   const extPath = path.join(REPO, "vscode-extension", "extension.js");
   assert.doesNotThrow(() => execFileSync(process.execPath, ["--check", extPath], { stdio: "pipe" }));
 });
+
+test("vscode: completion syncs the current document text before asking", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-sync-"));
+  fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  const file = path.join(dir, "src", "main.flow");
+  const oldText = `main :: Html
+main = <p>{"old"}</p>
+`;
+  fs.writeFileSync(file, oldText);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const uri = env.mock.Uri.file(file);
+    const opened = { languageId: "flow", uri, version: 1, getText: () => oldText };
+    env.handlers.open(opened);
+    await waitUntil(() => env.registered.length >= 15, 5000, "providers");
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The user has typed a new line, but no didChange event has fired yet in
+    // this test: the provider itself must send the current text to the server.
+    const changedText = `main :: Html
+main = 
+  Time.
+`;
+    const changed = { languageId: "flow", uri, version: 2, getText: () => changedText };
+    const provider = env.registered.find((r) => r[0] === "completion")[1];
+    const res = await provider.provideCompletionItems(changed, new env.mock.Position(2, 7));
+    const labels = res.items.map((i) => i.label);
+    assert.ok(labels.includes("now"), "Time members are offered");
+    assert.ok(!labels.includes("Ok") && !labels.includes("padLeft"), "only Time members are offered");
+    assert.ok(!labels.includes("host_now"), "private Time helpers are not offered");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});

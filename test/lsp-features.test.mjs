@@ -586,3 +586,63 @@ main = do
     assert.equal(movedCut.direction, "client→server", "direction survives the edit");
   } finally { c.proc.kill(); }
 });
+
+test("lsp: a module qualifier only completes that module's members", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = <p>{str (Time.now ())} {str (Client.now ())} {str (Server.now ())}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "Time.", 5);
+    const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: at });
+    const timeMembers = new Set([
+      "now", "nowMillis", "nowMs", "nowPrecise", "elapsedSince", "since", "pad2", "hms",
+      "duration", "addSeconds", "addDays", "diffSeconds", "formatIso", "formatDate",
+      "formatClock", "weekday", "month", "fromMillis",
+    ]);
+    const unexpected = res.items.filter((i) => !timeMembers.has(i.label)).map((i) => `${i.label} (${i.detail})`);
+    assert.deepEqual(unexpected, []);
+    assert.ok(res.items.some((i) => i.label === "now"));
+    assert.ok(!res.items.some((i) => i.label === "host_now"), "private Time helpers are not offered");
+
+    // a partial member after the qualifier stays inside that module
+    const atMember = pos(text, "Time.now", 6);
+    const partial = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: atMember });
+    assert.deepEqual(
+      partial.items.map((i) => i.label).sort(),
+      ["now", "nowMillis", "nowMs", "nowPrecise"],
+    );
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: completion after a full-text didChange still respects the qualifier", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = <p>{"x"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const changed = `main :: Html
+main =
+  Time.
+`;
+    c.notify("textDocument/didChange", {
+      textDocument: { uri: uri(entry), version: 2 },
+      contentChanges: [{ text: changed }],
+    });
+    const res = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(entry) },
+      position: { line: 2, character: 7 },
+    });
+    const labels = res.items.map((i) => i.label);
+    assert.ok(labels.includes("now"), "Time members are offered");
+    assert.ok(!labels.includes("Ok"), `unexpected symbols: ${labels.join(", ")}`);
+  } finally { c.proc.kill(); }
+});

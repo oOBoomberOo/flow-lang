@@ -25,7 +25,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
-| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **modules after `Module.`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
+| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **a module's public members after `Module.` or `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
@@ -51,6 +51,9 @@ Typing must never wait for a full compile:
   analysis first, so they still see the text just typed. Semantic tokens and
   inlay hints never flush — they answer immediately from the current text and the
   last analysis.
+* **Text before requests.** The VS Code client sends the current document text
+  immediately before a completion request, so a `.`-trigger cannot be answered
+  against the previous line (which used to fall back to the global symbol list).
 * **No std preload.** Analysis compiles only the modules the program imports.
   Completion's view of `List.`, `Option.` and the other std namespaces comes from a cached
   index that parses the std

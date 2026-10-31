@@ -75,6 +75,10 @@ export interface SymbolInfo {
   kind: SymKind;
   file: string;
   range: Range;
+  /** exported from its module (private members are not offered under `Module.`) */
+  public: boolean;
+  /** the unit that declares it, for "is this the current module" checks */
+  unit: string;
 }
 
 /** One public declaration of a module, for completion without compiling it. */
@@ -196,6 +200,21 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       return s;
     };
 
+    // Which final names are exported? `Module.` completion must not offer
+    // private helpers (Time.host_now, Time.yearOf, …).
+    const publicDecls = new Set<string>();
+    for (const d of result.program.decls) {
+      if (!(d as { pub?: boolean }).pub) continue;
+      if (d.k === "Fn") publicDecls.add(d.name);
+      else if (d.k === "Extern") publicDecls.add(d.sig.name);
+      else if (d.k === "Adt") {
+        publicDecls.add(d.name);
+        for (const variant of d.variants) publicDecls.add(variant.name);
+      } else if (d.k === "RecordType" || d.k === "Alias" || d.k === "Trait" || d.k === "Effect") {
+        publicDecls.add(d.name);
+      }
+    }
+
     const nodes: NodeInfo[] = [];
     const signatures = new Map<string, SignatureInfo>();
     for (const [name, fn] of result.mod.fns) {
@@ -247,6 +266,8 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         kind: sym.kind,
         file: sym.file,
         range: spanRange(src, sym.span),
+        public: publicDecls.has(finalName),
+        unit: sym.unit,
       });
     }
 
@@ -263,6 +284,8 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
           kind: "function",
           file: span.file,
           range: spanRange(src, span),
+          public: publicDecls.has(eff.name),
+          unit: "",
         });
       }
     }
@@ -284,6 +307,8 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
           kind: "type",
           file: builtinsFile,
           range: { start, end: { line: start.line, character: start.character + name.length } },
+          public: true,
+          unit: "",
         });
       }
     }

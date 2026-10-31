@@ -94,6 +94,18 @@ const R = (r) => new vscode.Range(P(r.start), P(r.end));
 const back = (r) => ({ start: { line: r.start.line, character: r.start.character }, end: { line: r.end.line, character: r.end.character } });
 const backPos = (p) => ({ line: p.line, character: p.character });
 
+/** Make sure the server has the document text *before* a provider request.
+ *  Completion can fire in the same tick as the keystroke that changed the
+ *  buffer, so the didChange event may still be in flight; without this a
+ *  `Time.` request can be answered against the previous line. */
+function syncDocument(document) {
+  if (!client) return;
+  client.notify("textDocument/didChange", {
+    textDocument: { uri: document.uri.toString(), version: document.version },
+    contentChanges: [{ text: document.getText() }],
+  });
+}
+
 const KINDS = {
   function: vscode.SymbolKind.Function,
   type: vscode.SymbolKind.Class,
@@ -271,6 +283,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerCompletionItemProvider("flow", {
     async provideCompletionItems(document, position) {
+      syncDocument(document);
       const res = await ask("textDocument/completion", { textDocument: doc(document), position: backPos(position) }, { items: [] });
       const list = new vscode.CompletionList([], false);
       for (const it of res.items || []) {
