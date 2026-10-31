@@ -149,6 +149,46 @@ export const dictParamName = (trait: string, typeParam: string) =>
 /** Key for the trait dictionaries carried by one type variable. */
 export const dictKey = (trait: string, varId: number) => `${varId}:${trait}`;
 
+/** Fields of the built-in browser DOM values (`Event`, `Dom`). */
+const DOM_FIELDS: Record<string, Record<string, Type>> = {
+  Event: {
+    target: con("Dom"),
+    currentTarget: con("Dom"),
+    key: STR,
+    type: STR,
+  },
+  Dom: {
+    value: STR,
+    checked: BOOL,
+    id: STR,
+    className: STR,
+    tagName: STR,
+    textContent: STR,
+    innerHTML: STR,
+  },
+};
+
+export function domFieldType(typeName: string, field: string): Type | null {
+  return DOM_FIELDS[typeName]?.[field] ?? null;
+}
+
+export function domFieldNames(typeName: string): string[] | null {
+  const fields = DOM_FIELDS[typeName];
+  return fields ? Object.keys(fields) : null;
+}
+
+/** HTML boolean attributes accept `Bool`; `setAttr` adds/removes them. */
+const BOOL_ATTRIBUTES = new Set([
+  "checked", "disabled", "selected", "readonly", "readOnly", "required",
+  "autofocus", "multiple", "hidden", "open", "novalidate", "formnovalidate",
+]);
+
+/** Numeric HTML attributes. */
+const INT_ATTRIBUTES = new Set([
+  "cols", "rows", "size", "maxlength", "maxLength", "minlength", "minLength",
+  "tabindex", "tabIndex", "width", "height", "span", "start", "step",
+]);
+
 /** A type parameter's declared bounds, or an empty list. */
 const boundsOf = (paramBounds: Record<string, string[]> | undefined, name: string): string[] =>
   paramBounds?.[name] ?? [];
@@ -1375,6 +1415,11 @@ export class Infer {
           }
           this.fail(`Cell has no field '${e.name}' (use .value, .get(), .set(value) or .update(fn))`, e.span);
         }
+        if (tt.k === "con" && (tt.name === "Event" || tt.name === "Dom")) {
+          const field = domFieldType(tt.name, e.name);
+          if (!field) this.fail(`${tt.name} has no field '${e.name}'`, e.span);
+          return { ty: field, place: joinPlace(target.place, typePlace(field)), eff: target.eff };
+        }
         const t = prune(target.ty);
         let ty: Type;
         if (t.k === "var") {
@@ -2364,11 +2409,9 @@ export class Infer {
             const r = this.infer(a.value.e);
             if (a.name.startsWith("on")) {
               this.unifyArg(r.ty, fnT([con("Event")], UNIT), a.value.e.span, `event handler '${a.name}'`);
-            } else if (a.name === "class" || a.name === "style" || a.name === "id" || a.name === "type" ||
-                       a.name === "placeholder" || a.name === "href" || a.name === "value" || a.name === "title") {
-              this.unifyArg(r.ty, STR, a.value.e.span, `attribute '${a.name}'`);
             } else {
-              this.unifyArg(r.ty, STR, a.value.e.span, `attribute '${a.name}'`);
+              const want = BOOL_ATTRIBUTES.has(a.name) ? BOOL : INT_ATTRIBUTES.has(a.name) ? INT : STR;
+              this.unifyArg(r.ty, want, a.value.e.span, `attribute '${a.name}'`);
             }
             place = joinPlace(place, r.place);
             eff = mergeEff(eff, r.eff);

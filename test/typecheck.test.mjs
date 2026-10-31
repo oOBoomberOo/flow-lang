@@ -347,6 +347,27 @@ main =
   </Card>`);
 });
 
+test("boolean HTML attributes take Bool", () => {
+  ok(`main :: Html
+main = <div><input type="checkbox" checked={True} disabled={False} /></div>`);
+  bad(`main :: Html
+main = <input checked={"yes"} />`, /attribute 'checked'/);
+});
+
+test("event handlers project DOM fields", () => {
+  const r = ok(`main :: Html
+main = <input onSubmit={\\(e :: Event) ->
+  let title = e.target.value in
+  let done = e.target.checked in
+  let key = e.key in
+  let _ = title + key in
+  ()} />`);
+  assert.match(r.client, /target\)\.value/, "target.value is read from the event");
+  assert.match(r.client, /target\)\.checked/, "target.checked is read from the event");
+  bad(`main :: Html
+main = <input onSubmit={\\(e :: Event) -> let x = e.nope in ()} />`, /Event has no field 'nope'/);
+});
+
 test("event handlers must take an Event", () => {
   bad(`main :: Html
 main = <button onClick={\\(x :: Int) -> 1}>{"x"}</button>`, /event handler 'onClick': expected Event -> Unit, got Int -> Int/);

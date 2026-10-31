@@ -204,6 +204,28 @@ main = <p>{"x"}</p>
   } finally { c.proc.kill(); }
 });
 
+test("lsp: completion after an Event offers DOM fields", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = <input onSubmit={\\(e :: Event) -> let x = e.key in ()} />
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    await new Promise((r) => setTimeout(r, 300));
+    const res = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, "e.key", 2),
+    });
+    const labels = res.items.map((i) => i.label);
+    for (const field of ["target", "key", "type"]) {
+      assert.ok(labels.includes(field), `offers '${field}': ${labels.join(", ")}`);
+    }
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: definition, references, highlights and rename", async () => {
   const { entry, root } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
   const c = startServer();

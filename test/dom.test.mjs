@@ -11,9 +11,11 @@ function fakeDocument() {
     style: {},
     textContent: "",
     childNodes: [],
+    attrs: {},
     appendChild(n) { this.childNodes.push(n); return n; },
     replaceChildren(...n) { this.childNodes = n; },
-    setAttribute() {},
+    setAttribute(n, v) { this.attrs[n] = String(v); },
+    removeAttribute(n) { delete this.attrs[n]; },
     addEventListener() {},
   });
   globalThis.document = {
@@ -33,6 +35,14 @@ test("dom: an empty list renders no elements", () => {
   assert.deepEqual(R._toNodes([]), []);
   assert.equal(R.el("ul", {}, [[]]).childNodes.length, 0, "empty list child adds nothing");
   assert.equal(R.el("ul", {}, [[], []]).childNodes.length, 0, "nested empty lists add nothing");
+});
+
+test("dom: boolean attributes set and clear their attribute", () => {
+  const R = runtime();
+  const checked = R.el("input", { type: "checkbox", checked: true });
+  assert.equal(checked.attrs.checked, "", "true sets the attribute");
+  const unchecked = R.el("input", { type: "checkbox", checked: false });
+  assert.equal(unchecked.attrs.checked, undefined, "false removes the attribute");
 });
 
 test("dom: a list of markup renders its elements, empty lists included", () => {

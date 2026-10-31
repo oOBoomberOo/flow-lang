@@ -60,7 +60,7 @@ export function installDom(R) {
           reactive(() => R.v(v.fn()), (val) => setAttr(e, k, val));
           continue;
         }
-        e.setAttribute(k, String(v));
+        setAttr(e, k, v);
       }
       for (const c of children ?? []) {
         for (const n of toNodes(c)) e.appendChild(n);

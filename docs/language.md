@@ -376,6 +376,27 @@ main = <div class="card">
 
 An empty list interpolates as nothing; a list of markup renders its elements.
 
+Event attributes (`onClick`, `onSubmit`, `onChange`, …) receive a client
+`Event`. `e.target` is the DOM node that fired it and exposes `value`, `checked`,
+`id`, `className`, `tagName`, `textContent` and `innerHTML`; `e.currentTarget`
+is the node the handler is attached to, and `e.key`/`e.type` describe the event.
+A handler must return `()`.
+
+```flow
+main :: Html
+main = <input type="text" onSubmit={\e ->
+  let title = e.target.value in
+  set titleCell title
+} />
+```
+
+`Event` and `Dom` are client-only and cannot cross the boundary (they cannot be
+serialized or sent to the server).
+
+Boolean attributes (`checked`, `disabled`, `selected`, `required`, …) take `Bool`;
+numeric ones (`rows`, `cols`, `size`, `tabIndex`, …) take `Int`; every other
+attribute takes `Str`.
+
 ## 7. Modules and namespacing
 
 See [`modules.md`](modules.md). In short:

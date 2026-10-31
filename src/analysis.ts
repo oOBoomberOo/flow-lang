@@ -18,7 +18,7 @@ import type { Param, Program, Span } from "./ast.ts";
 import type { Place } from "./types.ts";
 import type { SymKind } from "./modules.ts";
 import { printType } from "./printer.ts";
-import { adtRecordFieldNames } from "./infer.ts";
+import { adtRecordFieldNames, domFieldNames } from "./infer.ts";
 
 export interface Position { line: number; character: number }
 export interface Range { start: Position; end: Position }
@@ -264,7 +264,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       }
       if (ty.k === "rec") entry.fields = Object.keys(ty.fields);
       else if (ty.k === "con") {
-        const fields = adtRecordFieldNames(ty, result.mod.typeDefs);
+        const fields = adtRecordFieldNames(ty, result.mod.typeDefs) ?? domFieldNames(ty.name);
         if (fields) entry.fields = fields;
       }
       if (ty.k === "con" && ty.name === "Cell") entry.cellElem = typeStr(ty.args[0]!);
