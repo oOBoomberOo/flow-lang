@@ -188,7 +188,7 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` - **281 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` - **283 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 

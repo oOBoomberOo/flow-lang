@@ -54,6 +54,10 @@ Typing must never wait for a full compile:
 * **Text before requests.** The VS Code client sends the current document text
   immediately before a completion request, so a `.`-trigger cannot be answered
   against the previous line (which used to fall back to the global symbol list).
+* **Active-file focus.** Switching editors sends `flow/activate`; the server
+  reanalyses the file you switched to and its imports, so a module the package
+  entry does not import (or a file in another package) still gets diagnostics,
+  symbols, completion and boundary colouring.
 * **No std preload.** Analysis compiles only the modules the program imports.
   Completion's view of `List.`, `Option.` and the other std namespaces comes from a cached
   index that parses the std

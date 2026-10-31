@@ -19,7 +19,6 @@ const moduleNameOf = (m: { id: string }) => m.id.split("::").slice(1).map((s) =>
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
-import { loadPackage } from "../modules.ts";
 import type { Decl, Expr, Program } from "../ast.ts";
 
 /* ------------------------------------------------------------------ */
@@ -76,6 +75,8 @@ const openDocs = new Map<string, string>();
 let workspaceRoot: string | null = null;
 let lastAnalysis: Analysis | null = null;
 let lastEntry: string | null = null;
+/** the file the editor is focused on; analysis follows it across files/packages */
+let activeFile: string | null = null;
 
 const uriToPath = (uri: string): string => {
   let p = decodeURIComponent(uri.replace(/^file:\/\//, ""));
@@ -96,13 +97,6 @@ function textOf(fileOrUri: string): string {
   return text !== undefined ? text : readSource(uriToPath(uri));
 }
 
-function entryFor(file: string): string {
-  try {
-    const pkg = loadPackage(file);
-    return pkg.singleFile ? pkg.singleFile : path.join(pkg.srcDir, "main.flow");
-  } catch { return file; }
-}
-
 function overlayKey(o: Map<string, string>): string {
   const parts: string[] = [];
   for (const k of [...o.keys()].sort()) parts.push(`${k}\u0000${o.get(k)}`);
@@ -120,9 +114,12 @@ function invalidateAnalysis(): void {
 
 function reanalyze(): Analysis | null {
   const first = [...openDocs.keys()][0];
-  if (!first && !lastEntry) return null;
-  const file = lastEntry ?? uriToPath(first!);
-  const entry = entryFor(file);
+  const focus = activeFile ?? lastEntry ?? (first ? uriToPath(first) : null);
+  if (!focus) return null;
+  // Analyse the focused file itself. It may be a module that the package entry
+  // does not import, or a file in another package; mapping back to main.flow
+  // would leave the editor without diagnostics, symbols or boundary colouring.
+  const entry = focus;
   lastEntry = entry;
   const ov = overlay();
   // The same text is analysed once: didSave after didChange is free, and a
@@ -1224,6 +1221,7 @@ reader.onMessage((msg) => {
     case "textDocument/didOpen": {
       const doc = p.textDocument as Json;
       openDocs.set(doc.uri as string, doc.text as string);
+      if (!activeFile) activeFile = uriToPath(doc.uri as string);
       lastEntry = null;
       reanalyze();
       return;
@@ -1251,7 +1249,30 @@ reader.onMessage((msg) => {
       return;
     }
 
-    case "textDocument/didClose": openDocs.delete((p.textDocument as Json).uri as string); return;
+    case "textDocument/didClose": {
+      const uri = (p.textDocument as Json).uri as string;
+      openDocs.delete(uri);
+      if (activeFile === uriToPath(uri)) {
+        activeFile = null;
+        lastEntry = null;
+        reanalyze();
+      }
+      return;
+    }
+
+    case "flow/activate": {
+      const uri = (p.uri as string | undefined) ?? docUri;
+      if (!uri) return;
+      activeFile = uriToPath(uri);
+      lastEntry = null;
+      analysisStale = false;
+      if (reanalyzeTimer) {
+        clearTimeout(reanalyzeTimer);
+        reanalyzeTimer = null;
+      }
+      reanalyze();
+      return;
+    }
 
     case "textDocument/semanticTokens/full":
       reply(id, semanticTokens(docUri!));

@@ -384,3 +384,43 @@ main =
     restore();
   }
 });
+
+test("vscode: switching editors reanalyses the newly active file", async () => {
+  const mkPkg = (name, source) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `flow-vsc-${name}-`));
+    fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name, version: "0.1.0", dependencies: {} }));
+    fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+    const file = path.join(dir, "src", "main.flow");
+    fs.writeFileSync(file, source);
+    return { dir, file };
+  };
+  const a = mkPkg("appa", `main :: Html
+main = <p>{str (Server.now ())}</p>
+`);
+  const b = mkPkg("appb", `main :: Html
+main = <p>{str (Server.now ())} {str (Server.now ())} {str (Server.now ())}</p>
+`);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const docA = { languageId: "flow", uri: env.mock.Uri.file(a.file), version: 1, getText: () => fs.readFileSync(a.file, "utf8") };
+    env.handlers.open(docA);
+    await waitUntil(() => /cuts 1/.test(env.statusBar.text), 8000, "package A boundary");
+
+    const docB = { languageId: "flow", uri: env.mock.Uri.file(b.file), version: 1, getText: () => fs.readFileSync(b.file, "utf8") };
+    env.handlers.open(docB);
+    const editorB = { document: docB, setDecorations() {} };
+    env.handlers.active(editorB);
+    await waitUntil(() => /cuts 3/.test(env.statusBar.text), 8000, "package B boundary");
+
+    // Switching back must reanalyse A again.
+    const editorA = { document: docA, setDecorations() {} };
+    env.handlers.active(editorA);
+    await waitUntil(() => /cuts 1/.test(env.statusBar.text), 8000, "package A boundary again");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});

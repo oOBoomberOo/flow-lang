@@ -646,3 +646,38 @@ main =
     assert.ok(!labels.includes("Ok"), `unexpected symbols: ${labels.join(", ")}`);
   } finally { c.proc.kill(); }
 });
+
+test("lsp: switching to another file reanalyses that file", async () => {
+  const { entry, root } = packageWith({
+    "main.flow": `main :: Html
+main = <p>{"main"}</p>
+`,
+    "other.flow": `thing :: Int
+thing = 1
+`,
+  });
+  const other = path.join(root, "src", "other.flow");
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const otherText = await open(c, other);
+
+    // The active-editor notification is what makes the server analyse the file
+    // the user just switched to, including modules main.flow does not import.
+    c.notify("flow/activate", { uri: uri(other) });
+    const symbols = await c.request("textDocument/documentSymbol", {
+      textDocument: { uri: uri(other) },
+    });
+    assert.ok(symbols.some((s) => s.name === "thing"), "other.flow is analysed");
+
+    const status = await c.request("flow/status", {});
+    assert.equal(path.resolve(status.analysis.entry), path.resolve(other), "analysis follows the active file");
+
+    c.notify("flow/activate", { uri: uri(entry) });
+    const mainSymbols = await c.request("textDocument/documentSymbol", {
+      textDocument: { uri: uri(entry) },
+    });
+    assert.ok(mainSymbols.some((s) => s.name === "main"), "switching back reanalyses main.flow");
+  } finally { c.proc.kill(); }
+});

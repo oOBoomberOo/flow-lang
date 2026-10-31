@@ -517,7 +517,15 @@ async function start(context) {
   }
   for (const doc of vscode.workspace.textDocuments) if (doc.languageId === "flow") openDoc(doc);
   const active = vscode.window.activeTextEditor;
-  if (active && active.document.languageId === "flow") await refresh(active.document.uri.toString());
+  if (active && active.document.languageId === "flow") {
+    activateDoc(active.document);
+    await refresh(active.document.uri.toString());
+  }
+}
+
+function activateDoc(doc) {
+  if (!client || doc.languageId !== "flow") return;
+  client.notify("flow/activate", { uri: doc.uri.toString() });
 }
 
 function openDoc(doc) {
@@ -562,7 +570,11 @@ function activate(context) {
     }),
     vscode.window.onDidChangeVisibleTextEditors(() => paintAll()),
     vscode.window.onDidChangeActiveTextEditor((ed) => {
-      if (ed && ed.document.languageId === "flow") { paint(ed); refresh(ed.document.uri.toString()); }
+      if (ed && ed.document.languageId === "flow") {
+        activateDoc(ed.document);
+        paint(ed);
+        refresh(ed.document.uri.toString());
+      }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("flow")) return;
