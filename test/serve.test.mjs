@@ -288,6 +288,8 @@ main = serve
 `,
   });
   await withHost(entry, async (host, result) => {
+    assert.equal(result.codegen?.hasClient, true, "the app has a browser page");
+    assert.equal(result.codegen?.hasRoutes, true, "the app has server routes");
     assert.ok(result.server.includes("__flow.host.routes"), "routes are registered from main");
     assert.ok(!result.server.includes("as routes"), "no routes() export is needed");
     assert.ok(result.client.includes("const $serve ="), "the page field is mounted in the browser");
@@ -314,6 +316,8 @@ main = serve { page = \\_ -> <h1>{"just a page"}</h1> }
 `,
   });
   await withHost(entry, async (host, result) => {
+    assert.equal(result.codegen?.hasClient, true);
+    assert.equal(result.codegen?.hasRoutes, false);
     assert.ok(result.server.includes("export const __flow_serve = true"));
     assert.ok(result.client.includes("const $serve ="));
     assert.equal((await fetch(host.url + "/any/thing")).status, 200);
@@ -329,6 +333,8 @@ main = serve { routes = [ get "/api" (\\_ -> textResponse "ok") ] }
 `,
   });
   await withHost(entry, async (host, result) => {
+    assert.equal(result.codegen?.hasClient, false, "no browser page");
+    assert.equal(result.codegen?.hasRoutes, true, "server routes exist");
     assert.ok(!result.server.includes("__flow_serve"), "no page router is announced");
     assert.equal(await (await fetch(host.url + "/api")).text(), "ok");
     assert.equal((await fetch(host.url + "/page")).status, 404);

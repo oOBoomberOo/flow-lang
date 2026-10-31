@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { install, verifyLock, add } from "../src/pkg.ts";
 import {
-  parseDependency, resolveRegistry, readUserConfig, userConfigPath, cacheDir,
+  parseDependency, resolveRegistry, readUserConfig, userConfigPath, cacheDir, fetchGit,
 } from "../src/registry.ts";
 import { FlowError } from "../src/lexer.ts";
 
@@ -238,6 +238,41 @@ test("registry: the cache path is overridable and the user config is read", () =
     assert.deepEqual(readUserConfig(), {});
     fs.writeFileSync(userConfigPath(), JSON.stringify({ registry: "github:me/reg#main" }));
     assert.equal(readUserConfig().registry, "github:me/reg#main");
+  } finally {
+    restore();
+  }
+});
+
+test("registry: a stale git registry cache refreshes automatically", () => {
+  const restore = isolate({ FLOW_REGISTRY_TTL: "0" });
+  try {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), "flow-regttl-"));
+    const index = (version) => JSON.stringify({
+      packages: { pkg: { versions: { [version]: { path: `packages/pkg/${version}` } } } },
+    }, null, 2);
+    gitRepo(work, {
+      "index.json": index("1.0.0"),
+      "packages/pkg/1.0.0/flow.json": JSON.stringify({ name: "pkg", version: "1.0.0", dependencies: {} }),
+    });
+    const bare = bareRepo(work, path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-regttlbare-")), "registry.git"));
+
+    const first = fetchGit(bare, undefined, { maxAgeMs: 5 * 60 * 1000 });
+    assert.ok(JSON.parse(fs.readFileSync(path.join(first, "index.json"), "utf8")).packages.pkg.versions["1.0.0"]);
+
+    // Publish a new version to the same registry.
+    fs.writeFileSync(path.join(work, "index.json"), index("1.1.0"));
+    fs.mkdirSync(path.join(work, "packages/pkg/1.1.0"), { recursive: true });
+    fs.writeFileSync(path.join(work, "packages/pkg/1.1.0/flow.json"), JSON.stringify({ name: "pkg", version: "1.1.0", dependencies: {} }));
+    git(work, "add", "-A");
+    git(work, "commit", "-q", "-m", "1.1.0");
+    const branch = git(work, "rev-parse", "--abbrev-ref", "HEAD");
+    git(work, "push", bare, `HEAD:refs/heads/${branch}`);
+
+    const second = fetchGit(bare, undefined, { maxAgeMs: 0 });
+    assert.ok(
+      JSON.parse(fs.readFileSync(path.join(second, "index.json"), "utf8")).packages.pkg.versions["1.1.0"],
+      "the cache was refreshed after the TTL",
+    );
   } finally {
     restore();
   }

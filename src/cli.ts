@@ -5,7 +5,7 @@ import { parse } from "./parser.ts";
 import { printProgram } from "./printer.ts";
 import { migrateSource } from "./migrate.ts";
 import { readManifest } from "./modules.ts";
-import { createHost } from "./host.ts";
+import { createHost, runServerEntry } from "./host.ts";
 import { FlowError } from "./lexer.ts";
 import { install, add, verifyLock, readRegistry, registryFor } from "./pkg.ts";
 import { describeRegistryChain, readUserConfig } from "./registry.ts";
@@ -16,7 +16,14 @@ import {
 import type { ColorMode, Style } from "./cli-output.ts";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
-const VERSION = "0.1.0";
+const VERSION = (() => {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 const stderr = (s: string) => process.stderr.write(s);
 const stdout = (s: string) => process.stdout.write(s);
@@ -498,6 +505,18 @@ async function run(argv: string[], style: Style, quiet: boolean): Promise<void> 
 
   const outDir = path.join(process.cwd(), ".flow-build");
   emit(result, outDir);
+
+  const hasClient = result.codegen?.hasClient ?? true;
+  const hasRoutes = result.codegen?.hasRoutes ?? true;
+  if (!hasClient && !hasRoutes) {
+    await runServerEntry(outDir, secrets);
+    if (!quiet) {
+      stderr(`${status(style, "Finished", `build in ${formatDuration(Date.now() - t0)}`)}\n`);
+      stderr("  ran server main once (no client page or routes)\n");
+    }
+    return;
+  }
+
   const host = await startHost({ outDir, port, secrets }, port);
 
   if (!quiet) {
@@ -577,12 +596,24 @@ async function watch(argv: string[], style: Style, quiet: boolean): Promise<void
     const time = formatDuration(Date.now() - t0);
     if (runMode) {
       await host?.close();
-      host = await startHost({ outDir, port, secrets, cacheBust: String(Date.now()) }, port);
-      if (!quiet) {
-        stderr(`${status(style, "Finished", `build in ${time}`)}\n`);
-        stderr(`${status(style, "Running", host.url)}\n`);
-        stderr(`  ${cutText(result.diagnostics.length)} across the boundary\n`);
-        stderr("  ctrl-c to stop\n");
+      host = null;
+      const hasClient = result.codegen?.hasClient ?? true;
+      const hasRoutes = result.codegen?.hasRoutes ?? true;
+      if (!hasClient && !hasRoutes) {
+        await runServerEntry(outDir, secrets, String(Date.now()));
+        if (!quiet) {
+          stderr(`${status(style, "Finished", `build in ${time}`)}\n`);
+          stderr("  ran server main once (no client page or routes)\n");
+          stderr("  waiting for changes...\n");
+        }
+      } else {
+        host = await startHost({ outDir, port, secrets, cacheBust: String(Date.now()) }, port);
+        if (!quiet) {
+          stderr(`${status(style, "Finished", `build in ${time}`)}\n`);
+          stderr(`${status(style, "Running", host.url)}\n`);
+          stderr(`  ${cutText(result.diagnostics.length)} across the boundary\n`);
+          stderr("  ctrl-c to stop\n");
+        }
       }
     } else if (!quiet) {
       stderr(`${status(style, "Finished", `check in ${time} (${cutText(result.diagnostics.length)})`)}\n`);

@@ -502,7 +502,7 @@ them.
 ```bash
 flow check src/main.flow    # type-check
 flow build src/main.flow    # emit app.js, server.js and the runtime
-flow run src/main.flow      # build and serve
+flow run src/main.flow      # build + serve (or run a server-only main once)
 flow fmt src/main.flow      # format with the pretty printer (--check to verify)
 flow migrate old.flow --write  # rewrite the old Rust-style syntax
 flow explain src/main.flow  # print placements and cuts

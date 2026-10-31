@@ -44,7 +44,11 @@ fs.writeFileSync(
   fs.readFileSync(path.join(ROOT, "docs", "editor.md"), "utf8"),
 );
 // keep Node's ESM detection quiet when the bundled compiler is imported
-fs.writeFileSync(path.join(vendor, "package.json"), JSON.stringify({ type: "module" }, null, 2) + "\n");
+const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+fs.writeFileSync(
+  path.join(vendor, "package.json"),
+  JSON.stringify({ type: "module", version: rootPkg.version }, null, 2) + "\n",
+);
 
 const pkg = JSON.parse(fs.readFileSync(path.join(EXT, "package.json"), "utf8"));
 

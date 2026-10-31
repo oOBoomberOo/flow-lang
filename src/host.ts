@@ -19,6 +19,26 @@ export interface Host {
   server: http.Server;
 }
 
+/** Run a server-only program's `main` once, without binding an HTTP port. */
+export async function runServerEntry(
+  outDir: string,
+  secrets: Record<string, string> = {},
+  cacheBust?: string,
+): Promise<void> {
+  process.env.FLOW_OPTS = JSON.stringify({ secrets });
+  const url = pathToFileUrl(path.join(outDir, "server.js")) +
+    (cacheBust ? `?v=${encodeURIComponent(cacheBust)}` : "");
+  const serverModule = await import(url);
+  const entry = serverModule.__flow_entry;
+  if (typeof entry !== "function") return;
+  const started = (entry as () => unknown)();
+  if (started && typeof (started as { next?: unknown }).next === "function") {
+    (serverModule.R as { run: (value: unknown) => unknown }).run(started);
+  } else {
+    await started;
+  }
+}
+
 export async function createHost(opts: HostOptions): Promise<Host> {
   process.env.FLOW_OPTS = JSON.stringify({ secrets: opts.secrets ?? {} });
 

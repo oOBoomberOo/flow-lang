@@ -125,8 +125,9 @@ wrapper around an existing library and a server-only TypeScript module.
 
 The default registry is **[flow-registry](https://github.com/oOBoomberOo/flow-registry.git)**.
 It is a git repository containing `index.json` and `packages/<name>/<version>/`; Flow clones it
-into a cache (`~/.flow/cache/registries`, overridable with `FLOW_CACHE`) and refreshes on
-`--refresh`.
+into a cache (`~/.flow/cache/registries`, overridable with `FLOW_CACHE`). Git registries are
+refreshed automatically when the cache is older than five minutes; `--refresh` forces a fetch,
+and `FLOW_REGISTRY_TTL=<seconds>` changes the interval (`0` refreshes every command).
 
 A registry can also be a **directory on disk**. You can choose one at three levels, with the
 strongest winning:

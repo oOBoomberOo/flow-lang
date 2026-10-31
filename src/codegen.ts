@@ -40,6 +40,10 @@ export interface Compiled {
   client: string;
   server: string;
   cuts: CutInfo[];
+  /** the program has a browser entry (main :: Html or serve.page) */
+  hasClient: boolean;
+  /** the program registers server routes (serve.routes, routes(), or Router) */
+  hasRoutes: boolean;
   /** shim modules imported by the program: source file and bundled name */
   modules: { file: string; name: string }[];
   /** shim modules imported by the program: source file and bundled name */
@@ -82,6 +86,9 @@ export class Codegen {
   private serveConfigName: string | null = null;
   /** the declaration containing the serve call, for app-constant use checks */
   private serveOwner: Decl | null = null;
+  /** entry facts for the CLI: does this program need a client/server host? */
+  hasClient = false;
+  hasRoutes = false;
   /** the `serve` call site, used for capture diagnostics */
   private serveSpan: { line?: number; col?: number } | null = null;
 
@@ -324,10 +331,19 @@ export class Codegen {
     this.findServe();
     this.collect();
     this.checkEntryEffects();
+    const main = this.mod.fns.get("main");
+    const mainUsesRouter = Boolean(
+      main && main.scheme.k === "fun" && main.scheme.eff.labels.has("Router"),
+    );
+    const legacyRoutes = this.prog.decls.some((d) => d.k === "Fn" && d.name === "routes");
+    this.hasClient = this.mainKind() === "page" || Boolean(this.servePage);
+    this.hasRoutes = Boolean(this.serveRoutes) || legacyRoutes || mainUsesRouter;
     return {
       client: this.emitModule("client"),
       server: this.emitModule("server"),
       cuts: this.cutList,
+      hasClient: this.hasClient,
+      hasRoutes: this.hasRoutes,
       diagnostics: this.diagnostics,
       modules: [...this.shims].map(([file, s]) => ({ file, name: s.name })),
     };

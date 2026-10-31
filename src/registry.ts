@@ -166,6 +166,18 @@ export interface FetchOptions {
   refresh?: boolean;
   /** quiet: do not print progress */
   quiet?: boolean;
+  /** auto-fetch when the cached copy is older than this (milliseconds) */
+  maxAgeMs?: number;
+}
+
+/** How old a cached git registry may be before it is refreshed automatically. */
+export function registryTtlMs(): number {
+  const raw = process.env.FLOW_REGISTRY_TTL;
+  if (raw !== undefined && raw !== "") {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  }
+  return 5 * 60 * 1000;
 }
 
 /**
@@ -192,9 +204,21 @@ export function fetchGit(url: string, ref: string | undefined, opts: FetchOption
     }
     return dir;
   }
-  if (!opts.refresh) return dir;
+  if (!opts.refresh) {
+    const maxAge = opts.maxAgeMs;
+    if (maxAge === undefined) return dir;
+    let age = Infinity;
+    try {
+      age = Date.now() - fs.statSync(path.join(dir, ".git", "FETCH_HEAD")).mtimeMs;
+    } catch {
+      try { age = Date.now() - fs.statSync(path.join(dir, ".git")).mtimeMs; } catch { /* no marker */ }
+    }
+    if (age <= maxAge) return dir;
+  }
   try {
-    git(["fetch", "--depth", "1", "origin", ref ?? "HEAD"], dir);
+    const args = ["fetch", "--depth", "1", "origin"];
+    if (ref) args.push(ref);
+    git(args, dir);
     git(["reset", "--hard", "FETCH_HEAD"], dir);
   } catch (e) {
     if (!opts.quiet) {
@@ -242,7 +266,7 @@ export function resolveRegistry(opts: {
   refresh?: boolean;
   quiet?: boolean;
 }): ResolvedRegistry {
-  const fetchOpts = { refresh: opts.refresh, quiet: opts.quiet };
+  const fetchOpts = { refresh: opts.refresh, quiet: opts.quiet, maxAgeMs: registryTtlMs() };
   if (opts.override) {
     const r = registryDirFor(opts.override, opts.root, fetchOpts);
     return { ...r, origin: "dependency" };

@@ -170,6 +170,10 @@ node bin/flow.mjs fmt     src/main.flow          # format in place
 node bin/flow.mjs migrate old-syntax.flow --write # rewrite the old Rust-style syntax
 ```
 
+`run` starts a host only when the program has a browser page (`main :: Html` or
+`serve.page`) or server routes. A server-only `main :: ()` is executed once and
+the command exits without binding a port.
+
 ```
 examples/hello.flow      the smallest app
 examples/counter.flow    client state and events
@@ -192,7 +196,7 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` - **294 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` - **296 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 

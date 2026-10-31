@@ -64,7 +64,8 @@ test("cli: help lists the commands and options", async () => {
 test("cli: version and unknown subcommands", async () => {
   const v = await run(["--version"]);
   assert.equal(v.code, 0);
-  assert.match(v.stdout, /^flow \d+\.\d+\.\d+\n$/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, "package.json"), "utf8"));
+  assert.equal(v.stdout, `flow ${pkg.version}\n`);
 
   const bad = await run(["frobnicate"]);
   assert.equal(bad.code, 1);
@@ -255,4 +256,17 @@ main = <p>{"beta"}</p>`);
   } finally {
     await stopWatch(w);
   }
+});
+
+test("cli: run executes a server-only main without binding a port", async () => {
+  const dir = tmp("flow-runonce-");
+  const file = write(dir, "main.flow", `import Server (log)
+
+main :: ()
+main = log "server-only"
+`);
+  const r = await run(["run", file, "--quiet"], { cwd: dir, timeout: 10000 });
+  assert.equal(r.code, 0, "run should exit after main");
+  assert.match(r.stdout, /server-only/);
+  assert.doesNotMatch(r.stderr, /Running http/);
 });
