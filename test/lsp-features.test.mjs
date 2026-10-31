@@ -654,6 +654,11 @@ main = <p>{"main"}</p>
 `,
     "other.flow": `thing :: Int
 thing = 1
+
+twice :: Int -> Int
+twice n = n * 2
+
+broken =
 `,
   });
   const other = path.join(root, "src", "other.flow");
@@ -665,11 +670,24 @@ thing = 1
 
     // The active-editor notification is what makes the server analyse the file
     // the user just switched to, including modules main.flow does not import.
+    c.inbox.length = 0;
     c.notify("flow/activate", { uri: uri(other) });
+    const published = await c.waitFor((m) =>
+      m.method === "textDocument/publishDiagnostics" &&
+      m.params.uri === uri(other) &&
+      m.params.diagnostics.length > 0
+    );
+    assert.ok(published.params.diagnostics.length > 0, "diagnostics follow the active file");
     const symbols = await c.request("textDocument/documentSymbol", {
       textDocument: { uri: uri(other) },
     });
     assert.ok(symbols.some((s) => s.name === "thing"), "other.flow is analysed");
+
+    const hover = await c.request("textDocument/hover", {
+      textDocument: { uri: uri(other) },
+      position: pos(otherText, "n * 2", 1),
+    });
+    assert.ok(hover && hover.contents, "the active file is inferred, not just parsed");
 
     const status = await c.request("flow/status", {});
     assert.equal(path.resolve(status.analysis.entry), path.resolve(other), "analysis follows the active file");
@@ -725,5 +743,59 @@ main = <p>{str count} {if True then "y" else "n"}</p>
     const imported = await hoverAt("map", 1);
     assert.ok(imported?.contents, "imported name hover");
     assert.match(imported.contents.value, /List\.map/);
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: hover covers variables, calls, parameters and declarations", async () => {
+  const { entry } = packageWith({
+    "main.flow": `double :: Int -> Int
+double n = n * 2
+
+id :: a -> a
+id x = x
+
+data Color = Red | Blue
+
+useColor :: Color -> Str
+useColor c = case c of
+  Red -> "r"
+  Blue -> "b"
+
+main :: Html
+main = do
+  let x = 1
+  let y = x + double 2
+  <p>{str y} {useColor Red}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = (needle, extra = 1, nth = 0) => c.request("textDocument/hover", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, needle, extra, nth),
+    });
+    const cases = [
+      ["local x", await at("x +", 1)],
+      ["local x declaration", await at("let x", 4)],
+      ["call double", await at("double 2", 1)],
+      ["param n", await at("n * 2", 1)],
+      ["param n declaration", await at("double n", 7)],
+      ["ctor Red", await at("Red}", 1)],
+      ["decl double", await at("double ::", 1)],
+      ["decl id", await at("id ::", 1)],
+      ["decl useColor", await at("useColor ::", 1)],
+      ["decl main", await at("main ::", 1)],
+    ];
+    for (const [label, res] of cases) {
+      assert.ok(res && res.contents, `${label} should hover`);
+    }
+    const declDouble = cases.find(([label]) => label === "decl double")[1];
+    assert.match(declDouble.contents.value, /double :: Int -> Int/);
+    const declMain = cases.find(([label]) => label === "decl main")[1];
+    assert.match(declMain.contents.value, /main :: Html/);
+    const declId = cases.find(([label]) => label === "decl id")[1];
+    assert.match(declId.contents.value, /id :: a -> a/);
   } finally { c.proc.kill(); }
 });

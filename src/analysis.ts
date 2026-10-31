@@ -93,6 +93,8 @@ export interface Analysis {
   regions: Region[];
   nodes: NodeInfo[];
   symbols: SymbolInfo[];
+  /** inferred signatures for functions, by final name */
+  signatures: Map<string, SignatureInfo>;
   units: { id: string; file: string }[];
   /** Every std module and its public members, indexed once without type-checking. */
   modules: ModuleIndex[];
@@ -446,6 +448,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       regions,
       nodes,
       symbols,
+      signatures,
       units: result.units,
       modules: stdModules(),
       program: result.program,
@@ -472,6 +475,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       regions: [],
       nodes: [],
       symbols: [],
+      signatures: new Map(),
       units: [],
       modules: stdModules(),
     };

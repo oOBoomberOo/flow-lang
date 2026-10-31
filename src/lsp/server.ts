@@ -19,7 +19,7 @@ const moduleNameOf = (m: { id: string }) => m.id.split("::").slice(1).map((s) =>
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
-import type { Decl, Expr, FnSig, Program } from "../ast.ts";
+import type { Decl, Expr, FnSig, Pattern, Program } from "../ast.ts";
 import { printType } from "../printer.ts";
 
 /* ------------------------------------------------------------------ */
@@ -333,6 +333,68 @@ function typeHoverAt(file: string, pos: Position) {
   };
 }
 
+/** Hover on a declaration name (not an expression node). */
+function declarationHoverAt(file: string, pos: Position) {
+  const a = lastAnalysis;
+  if (!a) return null;
+  const text = textOf(file);
+  const word = wordAt(text, offsetAt(text, pos));
+  if (!word.word) return null;
+  const f = path.resolve(file);
+  const sym = (a.symbols ?? []).find((s) =>
+    path.resolve(s.file) === f && s.name === word.word && contains(s.range, pos)
+  );
+  if (!sym) return null;
+  const decl = (a.program?.decls ?? []).find((d) =>
+    (d.k === "Fn" && d.name === sym.finalName) ||
+    (d.k === "Extern" && d.sig.name === sym.finalName)
+  );
+  const sig = a.signatures.get(sym.finalName);
+  let typeLine: string | null = null;
+  if (decl?.k === "Fn" && decl.ret) {
+    const wild = decl.params.some((p) => p.type.k === "TVar" && p.type.name === "_");
+    if (!wild) {
+      const params = decl.params.map((p) => printType(p.type));
+      const effects = decl.eff?.effects ?? [];
+      typeLine = `${sym.name} :: ${params.join(" -> ")}${params.length ? " -> " : ""}${printType(decl.ret)}` +
+        (effects.length ? ` ! {${effects.join(", ")}}` : "");
+    }
+  } else if (decl?.k === "Extern" && decl.sig.ret) {
+    const params = decl.sig.params.map((p) => printType(p.type));
+    const effects = decl.sig.eff?.effects ?? [];
+    typeLine = `${sym.name} :: ${params.join(" -> ")}${params.length ? " -> " : ""}${printType(decl.sig.ret)}` +
+      (effects.length ? ` ! {${effects.join(", ")}}` : "");
+  }
+  if (!typeLine && sig) {
+    typeLine = `${sig.name} :: ${sig.params.map((p) => p.type).join(" -> ")}` +
+      `${sig.params.length ? " -> " : ""}${sig.ret}` +
+      (sig.effects.length ? ` ! {${sig.effects.join(", ")}}` : "");
+  }
+  const block = typeLine ? `\`\`\`flow\n${typeLine}\n\`\`\`\n\n` : "";
+  return {
+    contents: {
+      kind: "markdown",
+      value: `**${sym.kind}** \`${sym.name}\`\n\n${block}Declared in \`${sym.display}\` (${sym.kind}).`,
+    },
+    range: { start: offsetToPosition(text, word.start), end: offsetToPosition(text, word.end) },
+  };
+}
+
+/** Hover on a local binding/parameter declaration name. */
+function localHoverAt(file: string, pos: Position) {
+  const locals = localsAt(file, pos).filter((l) => contains(l.range, pos));
+  const local = locals[locals.length - 1];
+  if (!local) return null;
+  const type = local.type && local.type !== "_" ? local.type : "inferred";
+  return {
+    contents: {
+      kind: "markdown",
+      value: `**local** \`${local.name}\`\n\nType: \`${type}\`\n\nPlacement: \`${local.place}\``,
+    },
+    range: local.range,
+  };
+}
+
 function definition(file: string, pos: Position) {
   const node = nodeAt(file, pos);
   const text = textOf(file);
@@ -439,7 +501,7 @@ function typeText(t: unknown): string {
   const ty = t as { k: string; name?: string; args?: unknown[]; items?: unknown[] };
   if (!ty) return "";
   if (ty.k === "TCon") return ty.args?.length ? `${ty.name}<${ty.args.map(typeText).join(", ")}>` : String(ty.name);
-  if (ty.k === "TVar") return "a";
+  if (ty.k === "TVar") return ty.name && ty.name !== "_" ? String(ty.name) : "";
   return "?";
 }
 
@@ -460,8 +522,27 @@ function localsAt(file: string, pos: Position): Local[] {
   const decl = declContaining(a.program, file, off);
   if (!decl) return [];
   const locals: Local[] = [];
-  if (decl.k === "Fn") collectLocal(decl.body, locals, file, text);
-  else if (decl.k === "Impl") for (const m of decl.methods) collectLocal(m.body, locals, file, text);
+  const params = (fn: { params: { name: string; type: unknown; span: { start: number; end: number; file?: string } }[] }) => {
+    for (const p of fn.params) {
+      if (/^_[a-z]\d+$/.test(p.name) || /^_u\d+$/.test(p.name)) continue;
+      locals.push({
+        name: p.name,
+        type: typeText(p.type),
+        place: "neutral",
+        declSpan: p.span.start,
+        range: spanRange(text, p.span as never),
+      });
+    }
+  };
+  if (decl.k === "Fn") {
+    params(decl);
+    collectLocal(decl.body, locals, file, text);
+  } else if (decl.k === "Impl") {
+    for (const m of decl.methods) {
+      params(m);
+      collectLocal(m.body, locals, file, text);
+    }
+  }
   return locals.filter((l) => l.declSpan <= off);
 }
 
@@ -1378,6 +1459,10 @@ reader.onMessage((msg) => {
       if (!node) {
         const typeInfo = typeHoverAt(file, p.position as Position);
         if (typeInfo) { reply(id, typeInfo); return; }
+        const declInfo = declarationHoverAt(file, p.position as Position);
+        if (declInfo) { reply(id, declInfo); return; }
+        const localInfo = localHoverAt(file, p.position as Position);
+        if (localInfo) { reply(id, localInfo); return; }
         const imp = importTargetAt(file, p.position as Position);
         if (!imp) { reply(id, null); return; }
         const mod = imp.display.split("::").slice(0, -1).join("::");
