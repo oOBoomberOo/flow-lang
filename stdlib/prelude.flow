@@ -90,7 +90,7 @@ foreign import js unsafe "#length" {
 }
 
 foreign import js unsafe "#index" {
-  at :: List a -> Int -> a
+  raw_at :: List a -> Int -> a
 }
 
 foreign import js unsafe "@concat" {
@@ -115,14 +115,17 @@ len xs = length xs
 isEmpty :: List a -> Bool
 isEmpty xs = len xs == 0
 
-push :: List a -> a -> List a
-push xs x = concat_arrays xs [x]
+push :: a -> List a -> List a
+push x xs = concat_arrays xs [x]
 
 concat :: List a -> List a -> List a
 concat xs ys = concat_arrays xs ys
 
+at :: Int -> List a -> a
+at i xs = raw_at xs i
+
 head :: List a -> Option a
-head xs = if isEmpty xs then None else Some (at xs 0)
+head xs = if isEmpty xs then None else Some (at 0 xs)
 
 tail :: List a -> List a
 tail xs = if isEmpty xs then [] else slice xs 1
@@ -180,16 +183,16 @@ lower :: Str -> Str
 lower s = s_lower s
 
 split :: Str -> Str -> List Str
-split s sep = s_split s sep
+split sep s = s_split s sep
 
 replace :: Str -> Str -> Str -> Str
-replace s from to = s_replace s from to
+replace from to s = s_replace s from to
 
 contains :: Str -> Str -> Bool
-contains s sub = s_contains s sub
+contains sub s = s_contains s sub
 
-join :: List Str -> Str -> Str
-join xs sep = s_join xs sep
+join :: Str -> List Str -> Str
+join sep xs = s_join xs sep
 
 chars :: Str -> List Str
 chars s = charsFrom s 0 (s_length s) []
@@ -199,7 +202,7 @@ strLen :: Str -> Int
 strLen s = s_length s
 
 charsFrom :: Str -> Int -> Int -> List Str -> List Str
-charsFrom s i n acc = if i >= n then acc else charsFrom s (i + 1) n (push acc (s_char_at s i))
+charsFrom s i n acc = if i >= n then acc else charsFrom s (i + 1) n (push (s_char_at s i) acc)
 
 -- ---------------------------------------------------------------- conversions
 str :: a -> Str

@@ -1,48 +1,49 @@
 module List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
 
--- std::list — list transforms, written in Flow itself.
+-- std::list — list transforms, written in Flow itself. Operations take their
+-- function/index first and the list last, so `xs |> map f` works.
 length :: List a -> Int
 length xs = len xs
 
 isEmptyList :: List a -> Bool
 isEmptyList xs = isEmpty xs
 
-filter :: List a -> (a -> Bool) -> List a
-filter xs keep = case xs of
+filter :: (a -> Bool) -> List a -> List a
+filter keep xs = case xs of
   [] -> []
-  x : rest -> if keep x then concat [x] (filter rest keep) else filter rest keep
+  x : rest -> if keep x then concat [x] (filter keep rest) else filter keep rest
 
-fold :: List a -> b -> (b -> a -> b) -> b
-fold xs init step = case xs of
+fold :: (b -> a -> b) -> b -> List a -> b
+fold step init xs = case xs of
   [] -> init
-  x : rest -> fold rest (step init x) step
+  x : rest -> fold step (step init x) rest
 
-forEach :: List a -> (a -> b) -> ()
-forEach xs f = case xs of
+forEach :: (a -> b) -> List a -> ()
+forEach f xs = case xs of
   [] -> ()
   x : rest ->
     do
       f x
-      forEach rest f
+      forEach f rest
 
 headOf :: List a -> Option a
 headOf xs = head xs
 
-take :: List a -> Int -> List a
-take xs n =
+take :: Int -> List a -> List a
+take n xs =
   if n <= 0
     then []
     else case xs of
       [] -> []
-      x : rest -> concat [x] (take rest (n - 1))
+      x : rest -> concat [x] (take (n - 1) rest)
 
-drop :: List a -> Int -> List a
-drop xs n =
+drop :: Int -> List a -> List a
+drop n xs =
   if n <= 0
     then xs
     else case xs of
       [] -> []
-      _ : rest -> drop rest (n - 1)
+      _ : rest -> drop (n - 1) rest
 
 range :: Int -> List Int
 range n = if n <= 0 then [] else concat (range (n - 1)) [n - 1]
@@ -55,15 +56,15 @@ zip xs ys = case xs of
       [] -> []
       y : yr -> concat [(x, y)] (zip xr yr)
 
-any :: List a -> (a -> Bool) -> Bool
-any xs p = case xs of
+any :: (a -> Bool) -> List a -> Bool
+any p xs = case xs of
   [] -> False
-  x : rest -> if p x then True else any rest p
+  x : rest -> if p x then True else any p rest
 
-all :: List a -> (a -> Bool) -> Bool
-all xs p = case xs of
+all :: (a -> Bool) -> List a -> Bool
+all p xs = case xs of
   [] -> True
-  x : rest -> if p x then all rest p else False
+  x : rest -> if p x then all p rest else False
 
 -- ---------------------------------------------------------------- sorting
 -- JS sort, reached through the FFI; the input list is copied first.
@@ -71,22 +72,22 @@ foreign import js unsafe "@sort" {
   sort_in_place :: List a -> (a -> a -> Int) -> List a
 }
 
-sortBy :: List a -> (a -> a -> Int) -> List a
-sortBy xs cmp = sort_in_place (slice_to xs 0 (len xs)) cmp
+sortBy :: (a -> a -> Int) -> List a -> List a
+sortBy cmp xs = sort_in_place (slice_to xs 0 (len xs)) cmp
 
 sortInts :: List Int -> List Int
-sortInts xs = sortBy xs (\(a :: Int) (b :: Int) -> a - b)
+sortInts xs = sortBy (\(a :: Int) (b :: Int) -> a - b) xs
 
 sortStrings :: List Str -> List Str
-sortStrings xs = sortBy xs (\(a :: Str) (b :: Str) -> if a < b then -1 else if a > b then 1 else 0)
+sortStrings xs = sortBy (\(a :: Str) (b :: Str) -> if a < b then -1 else if a > b then 1 else 0) xs
 
-contains :: List a -> a -> Bool
-contains xs x = any xs (\(y :: a) -> y == x)
+contains :: a -> List a -> Bool
+contains x xs = any (\(y :: a) -> y == x) xs
 
-indexOfItem :: List a -> a -> Int
-indexOfItem xs x = indexFrom xs x 0
+indexOfItem :: a -> List a -> Int
+indexOfItem x xs = indexFrom x xs 0
 
-indexFrom :: List a -> a -> Int -> Int
-indexFrom xs x i = case xs of
+indexFrom :: a -> List a -> Int -> Int
+indexFrom x xs i = case xs of
   [] -> -1
-  y : rest -> if y == x then i else indexFrom rest x (i + 1)
+  y : rest -> if y == x then i else indexFrom x rest (i + 1)

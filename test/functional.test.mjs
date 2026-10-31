@@ -68,12 +68,12 @@ routes () =
       let local = \\(a :: Int) (b :: Int) -> a * b
       let double = local 2
       let xs = range 5
-      let odds = filter (map xs inc) (\\x -> x % 2 == 1)
+      let odds = filter (\\x -> x % 2 == 1) (map inc xs)
       let piped = mul (add 3 1) 2
       let composed = compose (\\x -> x + 1) (\\x -> x * 2)
       let dollar = add (1 + 2)
       let applied = add 5
-      let opt = ((Some 2).map) (\\x -> x + 1)
+      let opt = map (\\x -> x + 1) (Some 2)
       textResponse (str (inc 9) + "|" + str (double 4) + "|" + str odds + "|" + str piped + "|" + str (composed 3) + "|" + str (dollar 4) + "|" + str (applied 1) + "|" + str opt))
     ]
 
@@ -160,8 +160,8 @@ test("functional: inferred lambda parameters work in every position", () => {
 main :: Html
 main = do
   let xs = range 5
-  let a = map xs (\\x -> x + 1)
-  let b = filter xs (\\x -> x % 2 == 0)
+  let a = map (\\x -> x + 1) xs
+  let b = filter (\\x -> x % 2 == 0) xs
   let f = \\x -> x * 3
   let g = \\a b -> a + b
   <p>{str a} {str b} {str (f 2)} {str (g 1 2)}</p>`;

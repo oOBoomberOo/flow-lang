@@ -11,17 +11,17 @@ length s = strLen s
 isEmptyStr :: Str -> Bool
 isEmptyStr s = strLen s == 0
 
-joinWith :: List Str -> Str -> Str
-joinWith xs sep = join xs sep
+joinWith :: Str -> List Str -> Str
+joinWith sep xs = join sep xs
 
-repeat :: Str -> Int -> Str
-repeat s n = if n <= 0 then "" else s + repeat s (n - 1)
+repeat :: Int -> Str -> Str
+repeat n s = if n <= 0 then "" else s + repeat (n - 1) s
 
-padLeft :: Str -> Int -> Str -> Str
-padLeft s width fill = if length s >= width then s else repeat fill (width - length s) + s
+padLeft :: Int -> Str -> Str -> Str
+padLeft width fill s = if length s >= width then s else repeat (width - length s) fill + s
 
 words :: Str -> List Str
-words s = filterBlank (split (trim s) " ")
+words s = filterBlank (split " " (trim s))
 
 filterBlank :: List Str -> List Str
 filterBlank xs = case xs of
@@ -29,40 +29,40 @@ filterBlank xs = case xs of
   x : rest -> if isEmptyStr x then filterBlank rest else concat [x] (filterBlank rest)
 
 startsWith :: Str -> Str -> Bool
-startsWith s prefix = if length prefix > length s then False else takeStr s (length prefix) == prefix
+startsWith prefix s = if length prefix > length s then False else takeStr (length prefix) s == prefix
 
-takeStr :: Str -> Int -> Str
-takeStr s n = join (take (chars s) n) ""
+takeStr :: Int -> Str -> Str
+takeStr n s = join "" (take n (chars s))
 
 capitalize :: Str -> Str
 capitalize s =
   if isEmptyStr s
     then s
-    else upper (join (take (chars s) 1) "") + join (drop (chars s) 1) ""
+    else upper (join "" (take 1 (chars s))) + join "" (drop 1 (chars s))
 
-take :: List a -> Int -> List a
-take xs n =
+take :: Int -> List a -> List a
+take n xs =
   if n <= 0
     then []
     else case xs of
       [] -> []
-      x : rest -> concat [x] (take rest (n - 1))
+      x : rest -> concat [x] (take (n - 1) rest)
 
-drop :: List a -> Int -> List a
-drop xs n =
+drop :: Int -> List a -> List a
+drop n xs =
   if n <= 0
     then xs
     else case xs of
       [] -> []
-      _ : rest -> drop rest (n - 1)
+      _ : rest -> drop (n - 1) rest
 
 -- ---------------------------------------------------------------- padding
 foreign import js unsafe "__flow.host.strPadEnd" {
   host_pad_end :: Str -> Int -> Str -> Str
 }
 
-padRight :: Str -> Int -> Str -> Str
-padRight s n fill = host_pad_end s n fill
+padRight :: Int -> Str -> Str -> Str
+padRight width fill s = host_pad_end s width fill
 
 -- ---------------------------------------------------------------- searching
 foreign import js unsafe "__flow.host.strEndsWith" {
@@ -74,22 +74,22 @@ foreign import js unsafe "__flow.host.strIndexOf" {
 }
 
 endsWith :: Str -> Str -> Bool
-endsWith s suffix = host_ends_with s suffix
+endsWith suffix s = host_ends_with s suffix
 
 -- `-1` when the substring is absent.
 indexOf :: Str -> Str -> Int
-indexOf s needle = host_index_of s needle
+indexOf needle s = host_index_of s needle
 
 -- Split at the first occurrence of the separator.
 splitOnce :: Str -> Str -> Option (Str, Str)
-splitOnce s sep =
-  let at = indexOf s sep
-  in if at < 0
+splitOnce sep s =
+  let pos = indexOf sep s
+  in if pos < 0
      then None
-     else Some (sliceStr s 0 at, sliceStr s (at + length sep) (length s))
+     else Some (sliceStr 0 pos s, sliceStr (pos + length sep) (length s) s)
 
-sliceStr :: Str -> Int -> Int -> Str
-sliceStr s from to = joinWith (List.take (List.drop (chars s) from) (to - from)) ""
+sliceStr :: Int -> Int -> Str -> Str
+sliceStr from to s = joinWith "" (List.take (to - from) (List.drop from (chars s)))
 
 -- ---------------------------------------------------------------- characters
 foreign import js unsafe "__flow.host.isDigit" {

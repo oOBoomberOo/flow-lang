@@ -62,7 +62,7 @@ getPath path j = case path of
 
 at :: Int -> Json -> Option Json
 at index j = case j of
-  JList xs -> if index < 0 || index >= len xs then None else Some (Prelude.at xs index)
+  JList xs -> if index < 0 || index >= len xs then None else Some (Prelude.at index xs)
   _ -> None
 
 -- ---------------------------------------------------------------- encoding
@@ -72,8 +72,8 @@ encode j = case j of
   JBool b -> if b then "true" else "false"
   JNum n -> str n
   JStr s -> encodeString s
-  JList xs -> "[" + String.joinWith (map xs encode) "," + "]"
-  JObject pairs -> "{" + String.joinWith (map pairs encodePair) "," + "}"
+  JList xs -> "[" + String.joinWith "," (map encode xs) + "]"
+  JObject pairs -> "{" + String.joinWith "," (map encodePair pairs) + "}"
 
 encodePair :: (Str, Json) -> Str
 encodePair pair = case pair of

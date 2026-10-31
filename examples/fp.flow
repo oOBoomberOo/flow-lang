@@ -17,9 +17,9 @@ main = do
   let ten = inc 9
   let chained = (add 1) 2
   let xs = range 6
-  let evens = filter xs (\x -> x % 2 == 0)
-  let doubled = map xs (\x -> x * 2)
-  let sum = map (map xs inc) (\x -> x * 1)
+  let evens = filter (\x -> x % 2 == 0) xs
+  let doubled = map (\x -> x * 2) xs
+  let sum = map (\x -> x * 1) (map inc xs)
   let piped = mul (add 3 1) 2
   let composed = compose (\x -> x + 1) (\x -> x * 2)
   let flipped = flip sub

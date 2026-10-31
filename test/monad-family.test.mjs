@@ -51,10 +51,10 @@ import Dict
 data Todo = Todo { id :: Int }
 
 twice :: (Monad f) => f Int -> f Int
-twice value = bind value (\\n -> pure (n * 2))
+twice value = bind (\\n -> pure (n * 2)) value
 
 render :: Option (Todo, Int) -> Option Int
-render value = map value \\(todo, n) -> todo.id + n
+render value = map (\\(todo, n) -> todo.id + n) value
 
 optionDo :: Option Int
 optionDo = do
@@ -64,6 +64,9 @@ optionDo = do
 
 applied :: Option Int
 applied = ap (Some (\\x -> x + 1)) (Some 4)
+
+methodMap :: Option Int
+methodMap = (Some 2).map (\\x -> x + 1)
 
 emptyList :: List Int
 emptyList = empty
@@ -78,7 +81,7 @@ routes () =
       str (render (Some (Todo { id = 10 }, 5))) + "|" +
       str ([1, 2] |> map (\\x -> x * 10)) + "|" +
       str (orElse None (Some 9)) + "|" + str optionDo + "|" +
-      str applied + "|" + str emptyList + "|" + str emptyDict)) ]
+      str applied + "|" + str methodMap + "|" + str emptyList + "|" + str emptyDict)) ]
 
 main :: Html
 main = <p>{"monad"}</p>
@@ -91,7 +94,7 @@ test("monad family: map, pure, return, bind, empty and the instances", async () 
     assert.equal(res.status, 200);
     assert.equal(
       await res.text(),
-      "Some(6)|[2, 4]|Some(15)|[10, 20]|Some(9)|Some(3)|Some(5)|[]|[]",
+      "Some(6)|[2, 4]|Some(15)|[10, 20]|Some(9)|Some(3)|Some(5)|Some(3)|[]|[]",
     );
   });
 });
@@ -100,7 +103,7 @@ test("monad family: a bound function passes superclass dictionaries", async () =
   await withHost(`import Http (get, Router, RequestObject, textResponse)
 
 use :: (Monad f) => f Int -> f Int
-use value = bind value (\\n -> pure (n + 1))
+use value = bind (\\n -> pure (n + 1)) value
 
 main :: Html
 main = <p>{"d"}</p>

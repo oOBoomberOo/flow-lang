@@ -2,7 +2,7 @@ module Html (classNames, text, Card, Badge, Page, Button, Items) where
 
 -- std::html — markup helpers and ready-made components.
 classNames :: List Str -> Str
-classNames xs = join xs " "
+classNames xs = join " " xs
 
 text :: Str -> Html
 text s = <span class="text">{s}</span>
@@ -30,9 +30,9 @@ Button :: { label :: Str, onClick :: Event -> () } -> Html
 Button props = <button class="btn" onClick={props.onClick}>{props.label}</button>
 
 Items :: { items :: List a, render :: a -> Html } -> Html
-Items props = <ul class="list">{mapItems props.items props.render}</ul>
+Items props = <ul class="list">{mapItems props.render props.items}</ul>
 
-mapItems :: List a -> (a -> Html) -> Html
-mapItems items render = case items of
+mapItems :: (a -> Html) -> List a -> Html
+mapItems render items = case items of
   [] -> <i class="empty" />
-  x : rest -> <li class="list-item">{render x} {mapItems rest render}</li>
+  x : rest -> <li class="list-item">{render x} {mapItems render rest}</li>

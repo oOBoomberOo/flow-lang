@@ -1371,19 +1371,24 @@ export class Codegen {
     if (bound) {
       const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
       const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
-      const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
-      if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      let parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) {
+        parts = this.withReceiver(parts, bound.trait, bound.method, this.emitExpr(e.fn.target, side, ctxHome, env));
+      }
       return genCall(`${bound.dictName}.${bound.method}(${parts.join(", ")})`);
     }
 
     const choice = this.mod.implChoices.get(e);
     if (choice) {
       // A method call carries its receiver outside `e.args`; a qualified trait
-      // call (`Trait.method(x, …)`) already has it in the argument list.
+      // call (`Trait.method(x, …)`) already has it in the argument list. Put the
+      // receiver in its dispatch slot, whatever the method's parameter order is.
       const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
       const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
-      const parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
-      if (e.fn.k === "Field" && !qualified) parts.unshift(this.emitExpr(e.fn.target, side, ctxHome, env));
+      let parts = e.args.map((a) => this.emitExpr(a, side, ctxHome, env));
+      if (e.fn.k === "Field" && !qualified) {
+        parts = this.withReceiver(parts, choice.impl.trait, choice.method, this.emitExpr(e.fn.target, side, ctxHome, env));
+      }
       for (const d of choice.dicts ?? []) parts.push(this.emitDict(d.trait, d.type));
       return genCall(`${choice.mangled}(${parts.join(", ")})`);
     }
@@ -1419,6 +1424,15 @@ export class Codegen {
       .filter((x) => x.length > 0)
       .join(", ");
     return genCall(`${this.calleeJs(e.fn, side, ctxHome, env)}(${callArgs})`);
+  }
+
+  /** Place a method receiver in its trait dispatch slot. */
+  private withReceiver(parts: string[], traitName: string, method: string, receiver: string): string[] {
+    const tr = this.mod.traits.get(traitName);
+    const m = tr?.methods.get(method);
+    const di = tr && m ? this.inf.dispatchIndex(tr, m.ty) : 0;
+    parts.splice(Math.max(0, di), 0, receiver);
+    return parts;
   }
 
   /** A local function value lives in a reactive Node; dereference before calling. */
@@ -1523,9 +1537,13 @@ export class Codegen {
 
   private emitBinary(e: Expr & { k: "Binary" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     if (e.op === ">>=") {
+      const bound = this.mod.boundChoices.get(e);
+      if (bound) {
+        return `${bound.dictName}.bind(${this.emitExpr(e.r, side, ctxHome, env)}, ${this.val(e.l, side, ctxHome, env)})`;
+      }
       const choice = this.mod.implChoices.get(e);
       if (!choice) this.fail("internal: '>>=' was not resolved to a Monad instance", e.span);
-      return `${choice.mangled}(${this.val(e.l, side, ctxHome, env)}, ${this.emitExpr(e.r, side, ctxHome, env)})`;
+      return `${choice.mangled}(${this.emitExpr(e.r, side, ctxHome, env)}, ${this.val(e.l, side, ctxHome, env)})`;
     }
     const l = this.val(e.l, side, ctxHome, env);
     const r = this.val(e.r, side, ctxHome, env);

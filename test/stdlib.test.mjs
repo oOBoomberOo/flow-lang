@@ -123,10 +123,10 @@ test("iter: enumerate, partition, chunks, groupBy, average and scanl", async () 
 
 test("string: padRight, endsWith, indexOf, splitOnce and character tests", async () => {
   await withRoute(`do
-  str (padRight "a" 4 ".") + "|" +
-    str (String.endsWith "hello" "lo") + "|" +
-    str (String.indexOf "abc" "c") + "|" +
-    str (splitOnce "a=b" "=") + "|" +
+  str (padRight 4 "." "a") + "|" +
+    str (String.endsWith "lo" "hello") + "|" +
+    str (String.indexOf "c" "abc") + "|" +
+    str (splitOnce "=" "a=b") + "|" +
     str (isDigit "7") + "|" +
     str (String.isDigit "x") + "|" +
     str (String.toUpper "hi")`, (text) => {

@@ -11,7 +11,7 @@ enumerate xs = go 0 xs
       x : more -> (i, x) : go (i + 1) more
 
 zipWith :: (a -> b -> c) -> List a -> List b -> List c
-zipWith f xs ys = map (List.zip xs ys) (\(a, b) -> f a b)
+zipWith f xs ys = map (\(a, b) -> f a b) (List.zip xs ys)
 
 takeWhile :: (a -> Bool) -> List a -> List a
 takeWhile keep xs = case xs of
@@ -24,9 +24,9 @@ dropWhile skip xs = case xs of
   x : rest -> if skip x then dropWhile skip rest else xs
 
 partition :: (a -> Bool) -> List a -> (List a, List a)
-partition keep xs = List.fold xs ([], []) (\acc x ->
+partition keep xs = List.fold (\acc x ->
   case acc of
-    (yes, no) -> if keep x then (x : yes, no) else (yes, x : no))
+    (yes, no) -> if keep x then (x : yes, no) else (yes, x : no)) ([], []) xs
 
 -- Group consecutive elements that share a key, keeping their order.
 groupBy :: (a -> a -> Bool) -> List a -> List (List a)
@@ -51,7 +51,7 @@ chunks n xs = if n <= 0 then [] else case xs of
   _ -> let (head, rest) = splitAt n xs in head : chunks n rest
 
 splitAt :: Int -> List a -> (List a, List a)
-splitAt n xs = (List.take xs n, List.drop xs n)
+splitAt n xs = (List.take n xs, List.drop n xs)
 
 -- Interleave two lists, stopping at the shorter one.
 interleave :: List a -> List a -> List a
@@ -63,7 +63,7 @@ interleave xs ys = case xs of
 
 -- Every element paired with every other element (cartesian product).
 product2 :: List a -> List b -> List (a, b)
-product2 xs ys = List.fold xs [] (\acc x -> concat acc (map ys (\y -> (x, y))))
+product2 xs ys = List.fold (\acc x -> concat acc (map (\y -> (x, y)) ys)) [] xs
 
 find :: (a -> Bool) -> List a -> Option a
 find match xs = case xs of
@@ -71,23 +71,23 @@ find match xs = case xs of
   x : rest -> if match x then Some x else find match rest
 
 count :: (a -> Bool) -> List a -> Int
-count match xs = len (List.filter xs match)
+count match xs = len (List.filter match xs)
 
 sumInts :: List Int -> Int
-sumInts xs = List.fold xs 0 (\acc x -> acc + x)
+sumInts xs = List.fold (\acc x -> acc + x) 0 xs
 
 productInts :: List Int -> Int
-productInts xs = List.fold xs 1 (\acc x -> acc * x)
+productInts xs = List.fold (\acc x -> acc * x) 1 xs
 
 minimum :: List Int -> Option Int
 minimum xs = case xs of
   [] -> None
-  x : rest -> Some (List.fold rest x (\best y -> if y < best then y else best))
+  x : rest -> Some (List.fold (\best y -> if y < best then y else best) x rest)
 
 maximum :: List Int -> Option Int
 maximum xs = case xs of
   [] -> None
-  x : rest -> Some (List.fold rest x (\best y -> if y > best then y else best))
+  x : rest -> Some (List.fold (\best y -> if y > best then y else best) x rest)
 
 average :: List Int -> Option Float
 average xs =

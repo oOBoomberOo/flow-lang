@@ -29,7 +29,7 @@ report () = do
         Some n -> str n
         None -> "none"
   let doc = Json.JObject
-        [ ("scores", Json.JList (map (Dict.toList scores) (\(k, v) -> Json.JObject [("name", Json.JStr k), ("score", Json.JNum (Math.toFloat v))])))
+        [ ("scores", Json.JList (map (\(k, v) -> Json.JObject [("name", Json.JStr k), ("score", Json.JNum (Math.toFloat v))]) (Dict.toList scores)))
         , ("best", Json.JNum 85.0)
         ]
   let text = encode doc

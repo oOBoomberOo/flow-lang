@@ -1,6 +1,6 @@
 -- std::option
-withDefault :: Option a -> a -> a
-withDefault o fallback = case o of
+withDefault :: a -> Option a -> a
+withDefault fallback o = case o of
   None -> fallback
   Some x -> x
 

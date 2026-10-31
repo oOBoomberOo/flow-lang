@@ -47,7 +47,7 @@ main = <p>{if ready then "yes" else "no"}</p>
 ```flow
 module Shapes (Shape(..), area) where   -- exports; everything else is private
 
-import List (map, filter)               -- bring names into scope
+import List (filter)                    -- bring a name into scope
 import Option as O                      -- qualified access as O.map
 import Http (get as httpGet)            -- rename on import
 
@@ -65,12 +65,12 @@ A file without a `module` header exports everything. `pub` does not exist.
 ### Signatures are optional
 
 ```flow
-double xs = map xs (\x -> x + x)   -- inferred
+double xs = map (\x -> x + x) xs   -- inferred
 ```
 
 An unannotated function is inferred when its callees have been, and generalized afterwards, so
 callers can use it at several types. Lambda parameters take their types from the caller:
-`map xs (\x -> x + 1)` needs no annotation when `xs :: List Int`.
+`map (\x -> x + 1) xs` needs no annotation when `xs :: List Int`.
 
 A definition with no parameters is a constant:
 
@@ -118,17 +118,17 @@ and re-exports it from the prelude, so `map`, `pure`, `return`, `bind` and
 
 ```flow
 class Functor f where
-  map :: f a -> (a -> b) -> f b
+  map :: (a -> b) -> f a -> f b
 
 class Functor f => Applicative f where
   pure :: a -> f a
 
 class Applicative f => Monad f where
-  bind :: f a -> (a -> f b) -> f b
+  bind :: (a -> f b) -> f a -> f b
   return :: a -> f a
 ```
 
-`map xs f` and `map (Some 1) f` both work; a `Monad f` bound also carries the
+`map f xs` and `map f (Some 1)` both work; a `Monad f` bound also carries the
 Applicative and Functor dictionaries, so generic code can call `pure` and `map`.
 Instances are declared per class, exactly like the `Show`/`Ord` examples above.
 
@@ -145,13 +145,14 @@ two-parameter `Result e` cannot be a Functor instance in this system.
 f x y = x + y          -- application by juxtaposition
 g = f 1                -- partial application (fills from the left)
 h = f 1 2              -- fully applied
-byOption = map f -- right section (fills the trailing parameter)
+byOption = map f       -- `map f` is waiting for the option
 ```
 
-A call may fill the **trailing** parameters instead of the leading ones; that is
-a right section, mirroring `(+ 1)`. `map f` is a function waiting for the
-option, and `xs |> map f` is `map f xs`. The compiler prefers the
-normal left-filled partial when both readings type-check.
+Functions take their operation or index first and the data last, so
+`xs |> map f` is `map f xs`, `xs |> filter p` is `filter p xs`, and
+`fold step init xs` folds. A call may also fill the **trailing** parameters
+when needed (a right section, mirroring `(+ 1)`), but the compiler prefers the
+normal left-filled partial.
 
 Operators, from loosest to tightest: `$`, `<|`, `|>`, `>>=`, `||`, `&&`, comparisons, `:`,
 `++`, `+ -`, `* / %`, `.`. `x |> f a` is `f a x` (insert as the next argument); `f <| x` and
@@ -405,8 +406,8 @@ See [`modules.md`](modules.md). In short:
 import Option (withDefault)
 import List as L
 
-best = withDefault (map (Option.Some 3) (\x -> x * 2)) 0
-sorted = L.sortBy [3, 1, 2] (\a b -> a - b)
+best = withDefault 0 (map (\x -> x * 2) (Option.Some 3))
+sorted = L.sortBy (\a b -> a - b) [3, 1, 2]
 ```
 
 Any public name can be reached by its module qualifier without an import: `Option.withDefault`,
@@ -420,13 +421,13 @@ The standard library is meant to be a one-stop toolkit: reach for it before the 
 | Module | What it gives you |
 |---|---|
 | `Prelude` | injected everywhere: `str`, `len`, `head`, `tail`, `push`, `concat`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `cons`, `makeCell`, `Cell`, `Option` |
-| `List` | `map`, `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` |
+| `List` | `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
 | `Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
-| `Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `map`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
-| `Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `map`, `filter`, `intSet`, `stringSet` |
+| `Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `mapWithKey`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
+| `Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `mapWith`, `filter`, `intSet`, `stringSet` |
 | `Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
-| `Option` | `map`, `withDefault`, `isSome`, `isNone`, `toList` |
-| `Result` | `Ok`/`Err` with `map`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
+| `Option` | `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
+| `Result` | `Ok`/`Err` with `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
 | `String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
 | `Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
 | `Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |
@@ -435,7 +436,7 @@ The standard library is meant to be a one-stop toolkit: reach for it before the 
 | `Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
 | `Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
 | `Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
-| `Monad` | the `Monad` class with `bind`/`map` for `Option`, `List` and `Cell`, plus `>>=`/`do` |
+| `Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List` and `Cell`, plus `>>=`/`do` |
 | `Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
 | `Client` / `Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
 | `State`, `Exn`, `Ref` | algebraic `State`, exceptions with `resume`, and mutable references |

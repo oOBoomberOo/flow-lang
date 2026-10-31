@@ -1,12 +1,11 @@
 -- std::monad — the Functor / Applicative / Monad / Alternative family.
 --
--- Methods dispatch on the type of their receiver, so the same `map` works for
--- `List`, `Option` and `Cell`:
+-- Functions take their operation first and the value last, so the same `map`
+-- works for `List`, `Option` and `Cell` and pipes read left to right:
 --
---   map xs f          -- List
---   xs |> map f       -- left to right
---   map (Some 1) f    -- Option
---   pure 1            -- the instance follows from the expected type
+--   map f xs
+--   xs |> map f
+--   bind k (Some 1)
 --
 -- `>>=` and `do` notation desugar to `Monad.bind`; `pure` and `return` lift a
 -- value. The prelude re-exports these classes, so they are in scope everywhere
@@ -14,14 +13,14 @@
 
 -- ---------------------------------------------------------------- classes
 class Functor f where
-  map :: f a -> (a -> b) -> f b
+  map :: (a -> b) -> f a -> f b
 
 class Functor f => Applicative f where
   pure :: a -> f a
   ap :: f (a -> b) -> f a -> f b
 
 class Applicative f => Monad f where
-  bind :: f a -> (a -> f b) -> f b
+  bind :: (a -> f b) -> f a -> f b
   return :: a -> f a
 
 -- `empty` and `orElse` are the choice side of the family: `None`/`[]` and the
@@ -32,7 +31,7 @@ class Applicative f => Alternative f where
 
 -- ---------------------------------------------------------------- Option
 instance Functor Option where
-  map value mapper = case value of
+  map mapper value = case value of
     None -> None
     Some x -> Some (mapper x)
 
@@ -40,10 +39,10 @@ instance Applicative Option where
   pure x = Some x
   ap ff fx = case ff of
     None -> None
-    Some f -> map fx f
+    Some f -> map f fx
 
 instance Monad Option where
-  bind value k = case value of
+  bind k value = case value of
     None -> None
     Some x -> k x
   return x = Some x
@@ -56,20 +55,20 @@ instance Alternative Option where
 
 -- ---------------------------------------------------------------- List
 instance Functor List where
-  map xs f = case xs of
+  map f xs = case xs of
     [] -> []
-    x : rest -> concat [f x] (map rest f)
+    x : rest -> concat [f x] (map f rest)
 
 instance Applicative List where
   pure x = [x]
   ap fs xs = case fs of
     [] -> []
-    f : rest -> concat (map xs f) (ap rest xs)
+    f : rest -> concat (map f xs) (ap rest xs)
 
 instance Monad List where
-  bind xs k = case xs of
+  bind k xs = case xs of
     [] -> []
-    x : rest -> concat (k x) (bind rest k)
+    x : rest -> concat (k x) (bind k rest)
   return x = [x]
 
 instance Alternative List where
@@ -78,14 +77,14 @@ instance Alternative List where
 
 -- ---------------------------------------------------------------- Cell
 instance Functor Cell where
-  map cell f = makeCell (f (get cell))
+  map f cell = makeCell (f (get cell))
 
 instance Applicative Cell where
   pure x = makeCell x
   ap cf cx = makeCell ((get cf) (get cx))
 
 instance Monad Cell where
-  bind cell k = k (get cell)
+  bind k cell = k (get cell)
   return x = makeCell x
 
 -- `some(value)` is `pure` for an Option; `one(value)` for a List.

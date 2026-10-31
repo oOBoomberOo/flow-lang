@@ -22,7 +22,7 @@ member cmp x s = case s of
     in if c == 0 then True else if c < 0 then False else member cmp x rest
 
 fromList :: (a -> a -> Int) -> List a -> Set a
-fromList cmp xs = List.fold xs [] (\acc x -> insert cmp x acc)
+fromList cmp xs = List.fold (\acc x -> insert cmp x acc) [] xs
 
 insert :: (a -> a -> Int) -> a -> Set a -> Set a
 insert cmp x s = case s of
@@ -41,19 +41,19 @@ remove cmp x s = case s of
     in if c == 0 then rest else if c < 0 then s else y : remove cmp x rest
 
 union :: (a -> a -> Int) -> Set a -> Set a -> Set a
-union cmp left right = List.fold right left (\acc x -> insert cmp x acc)
+union cmp left right = List.fold (\acc x -> insert cmp x acc) left right
 
 intersect :: (a -> a -> Int) -> Set a -> Set a -> Set a
-intersect cmp left right = List.filter left (\x -> member cmp x right)
+intersect cmp left right = List.filter (\x -> member cmp x right) left
 
 difference :: (a -> a -> Int) -> Set a -> Set a -> Set a
-difference cmp left right = List.filter left (\x -> not (member cmp x right))
+difference cmp left right = List.filter (\x -> not (member cmp x right)) left
 
 mapWith :: (a -> b) -> (a -> a -> Int) -> (b -> b -> Int) -> Set a -> Set b
-mapWith f fromCmp toCmp s = fromList toCmp (map s f)
+mapWith f fromCmp toCmp s = fromList toCmp (map f s)
 
 filter :: (a -> Bool) -> Set a -> Set a
-filter keep s = List.filter s keep
+filter keep s = List.filter keep s
 
 -- ---------------------------------------------------------------- Int and Str
 intCompare :: Int -> Int -> Int

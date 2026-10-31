@@ -156,15 +156,15 @@ encodeTuple :: Reflected -> List TypeInfo -> Str -> List a -> Result Json Str
 encodeTuple reflected items path values =
   if len items /= len values
     then Err (atPath path ("expected " + str (len items) + " tuple value(s), got " + str (len values)))
-    else case Result.all (map (List.zip items (Iter.enumerate values)) (\(item, pair) -> case pair of
-      (index, value) -> encodeValue reflected item (indexPath path index) value)) of
+    else case Result.all (map (\(item, pair) -> case pair of
+      (index, value) -> encodeValue reflected item (indexPath path index) value) (List.zip items (Iter.enumerate values))) of
       Err why -> Err why
       Ok jsons -> Ok (JList jsons)
 
 encodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> a -> Result Json Str
-encodeRecord reflected fields path value = case Result.all (map fields (\(name, info) -> encodeValue reflected info (fieldPath path name) (host_field value name))) of
+encodeRecord reflected fields path value = case Result.all (map (\(name, info) -> encodeValue reflected info (fieldPath path name) (host_field value name)) fields) of
   Err why -> Err why
-  Ok values -> Ok (JObject (List.zip (map fields (\(name, _) -> name)) values))
+  Ok values -> Ok (JObject (List.zip (map (\(name, _) -> name) fields) values))
 
 encodeVariant :: Reflected -> TypeDef -> Str -> a -> Result Json Str
 encodeVariant reflected definition path value = case findVariant definition.variants (host_ctor value) of
@@ -173,9 +173,9 @@ encodeVariant reflected definition path value = case findVariant definition.vari
   Some variant ->
     if len variant.args /= len (host_args value)
       then Err (atPath path ("constructor " + host_ctor value + " expects " + str (len variant.args) + " value(s)"))
-      else case Result.all (map (List.zip variant.args (Iter.enumerate (host_args value))) (\(info, pair) -> case pair of
+      else case Result.all (map (\(info, pair) -> case pair of
         (index, arg) ->
-          encodeValue reflected info (variantArgPath path (host_ctor value) index (len variant.args)) arg)) of
+          encodeValue reflected info (variantArgPath path (host_ctor value) index (len variant.args)) arg) (List.zip variant.args (Iter.enumerate (host_args value)))) of
         Err why -> Err why
         Ok jsons -> Ok (JObject [(host_ctor value, variantValue jsons)])
 
@@ -243,8 +243,8 @@ decodeTuple reflected items path json = case json of
   JList values ->
     if len items /= len values
       then Err (atPath path ("expected " + str (len items) + " tuple value(s), got " + str (len values)))
-      else case Result.all (map (List.zip items (Iter.enumerate values)) (\(item, pair) -> case pair of
-        (index, value) -> decodeValue reflected item (indexPath path index) value)) of
+      else case Result.all (map (\(item, pair) -> case pair of
+        (index, value) -> decodeValue reflected item (indexPath path index) value) (List.zip items (Iter.enumerate values))) of
         Err why -> Err why
         Ok values -> Ok (host_cast (host_list values))
   _ -> Err (atPath path "expected an array for a tuple")
@@ -252,12 +252,12 @@ decodeTuple reflected items path json = case json of
 decodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> Json -> Result a Str
 decodeRecord reflected fields path json = case json of
   JObject pairs ->
-    case Result.all (map fields (\(name, info) -> case lookupJson name pairs of
+    case Result.all (map (\(name, info) -> case lookupJson name pairs of
       None -> Err (atPath (fieldPath path name) "missing field")
-      Some value -> decodeValue reflected info (fieldPath path name) value)) of
+      Some value -> decodeValue reflected info (fieldPath path name) value) fields) of
       Err why -> Err why
       Ok values ->
-        Ok (host_make_record (List.zip (map fields (\(name, _) -> name)) values))
+        Ok (host_make_record (List.zip (map (\(name, _) -> name) fields) values))
   _ -> Err (atPath path ("expected an object for " + Reflect.describe (TRecord fields)))
 
 decodeVariant :: Reflected -> TypeDef -> Str -> Json -> Result a Str
@@ -288,9 +288,9 @@ decodeVariantArgs reflected constructor variant path value = case variant.args o
       JList values ->
         if len args /= len values
           then Err (atPath (fieldPath path constructor) ("constructor " + constructor + " expects " + str (len args) + " value(s)"))
-          else case Result.all (map (List.zip args (Iter.enumerate values)) (\(info, pair) -> case pair of
+          else case Result.all (map (\(info, pair) -> case pair of
             (index, item) ->
-              decodeValue reflected info (indexPath (fieldPath path constructor) index) item)) of
+              decodeValue reflected info (indexPath (fieldPath path constructor) index) item) (List.zip args (Iter.enumerate values))) of
             Err why -> Err why
             Ok values -> Ok (host_make_ctor constructor values)
       _ ->

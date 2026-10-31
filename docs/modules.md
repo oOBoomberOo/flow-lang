@@ -16,9 +16,9 @@ src/
 
 ```flow
 import List                          -- every export, unqualified
-import List (map, filter)            -- only these names
-import List (map as transform)       -- renamed
-import List as L                     -- qualified only: L.map
+import List (filter)                 -- only this name
+import List (filter as keep)         -- renamed
+import List as L                     -- qualified only: L.filter
 import Flow.Charts.Bar (Chart)       -- nested module paths
 ```
 
@@ -31,9 +31,9 @@ Every public declaration can also be reached through its module qualifier, **wit
 import**:
 
 ```flow
-let sorted = List.sortBy [3, 1, 2] (\a b -> a - b)
-let o = map (Option.Some 1) (\x -> x + 1)
-let f = Option.withDefault (Option.None) "fallback"
+let sorted = List.sortBy (\a b -> a - b) [3, 1, 2]
+let o = map (\x -> x + 1) (Option.Some 1)
+let f = Option.withDefault "fallback" Option.None
 ```
 
 The linker sees the qualifier, loads the module on demand, checks visibility and rewrites the

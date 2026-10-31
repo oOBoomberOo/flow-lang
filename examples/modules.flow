@@ -1,18 +1,18 @@
 -- Modules are namespaces: qualified names work without an import, and
 -- `import Module (name)` / `import Module as M` bring names into scope.
 --
--- Collection functions take the collection first, so `xs |> map f` reads
--- left to right.
+-- Functions take their operation first and the collection last, so
+-- `xs |> map f` reads left to right.
 
 import Option (withDefault)
 
 score :: Int -> Str
-score n = Option.withDefault (map (Option.Some n) (\x -> "score " + str x)) "none"
+score n = Option.withDefault "none" (map (\x -> "score " + str x) (Option.Some n))
 
 main :: Html
 main = do
-  let xs = List.sortBy [3, 1, 2] (\a b -> a - b)
-  let doubled = map (Option.Some 21) (\x -> x * 2)
+  let xs = List.sortBy (\a b -> a - b) [3, 1, 2]
+  let doubled = map (\x -> x * 2) (Option.Some 21)
   <div class="card">
     <h1>Namespacing</h1>
     <p>{score 7}</p>

@@ -312,7 +312,7 @@ test("diagnostics name unresolved variables a, b instead of compiler ids", () =>
   bad(`import Option
 
 main :: Html
-main = <p>{str (map (\\x -> x) (\\y -> y))}</p>`, /Functor\.map argument 1: expected a b, got a -> a/);
+main = <p>{str (map (\\x -> x) (\\y -> y))}</p>`, /Functor\.map argument 2: expected a b, got a -> a/);
 });
 
 test("a record argument must still supply every field the callee reads", () => {

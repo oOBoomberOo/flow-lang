@@ -17,8 +17,8 @@ compose f g = \(x :: a) -> f (g x)
 pipe :: (a -> b) -> (b -> c) -> a -> c
 pipe f g = \(x :: a) -> g (f x)
 
-apply :: a -> (a -> b) -> b
-apply x f = f x
+apply :: (a -> b) -> a -> b
+apply f x = f x
 
 applyTwice :: (a -> a) -> a -> a
 applyTwice f x = f (f x)

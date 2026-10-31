@@ -1835,7 +1835,12 @@ export class Infer {
   ): { place: Place; argEff: Eff } {
     let place = seed;
     let argEff = emptyEff();
-    e.args.forEach((a, i) => {
+    // Infer values before callbacks: `map f xs` needs the element type from
+    // `xs` before checking `f`'s parameter.
+    const order = e.args.map((_, i) => i)
+      .sort((a, b) => Number(e.args[a]!.k === "Lam") - Number(e.args[b]!.k === "Lam"));
+    for (const i of order) {
+      const a = e.args[i]!;
       const slot = slots[i]!;
       const want = ft.params[slot]!;
       const r = this.inferArg(a, want);
@@ -1866,7 +1871,7 @@ export class Infer {
       }
       place = joinPlace(place, r.place);
       argEff = mergeEff(argEff, r.eff);
-    });
+    }
     return { place, argEff };
   }
 
@@ -1890,6 +1895,15 @@ export class Infer {
             // `cell.get ()`: a method that takes only the receiver ignores the unit argument
             if (e.args.length === 1 && e.args[0]!.k === "Lit" && e.args[0]!.lit.k === "Unit" && m.ty.k === "fun" && m.ty.params.length === 1) {
               e.args = [];
+            }
+            const di = this.dispatchIndex(tr, m.ty);
+            if (m.ty.k === "fun" && di >= 0 && e.args.length + 1 === m.ty.params.length) {
+              const callArgs: Expr[] = [];
+              let ai = 0;
+              for (let i = 0; i < m.ty.params.length; i++) {
+                callArgs.push(i === di ? e.fn.target : e.args[ai++]!);
+              }
+              return this.inferTraitCall(tname, e.fn.name, m.ty, callArgs, e);
             }
             return this.inferTraitCall(tname, e.fn.name, m.ty, [e.fn.target, ...e.args], e);
           }
@@ -2063,6 +2077,15 @@ export class Infer {
     const sv = trait.params.length ? trait.paramVars.get(trait.params[0]!) : undefined;
     const pv = sv ? prune(sv) : undefined;
     if (!pv || pv.k !== "var") return tm.params.length ? 0 : -1;
+    // Prefer the parameter whose head is the constructor itself (`f a`), not a
+    // function that merely mentions it (`a -> f b`, as in `bind`).
+    const headIndex = tm.params.findIndex((p) => {
+      const q = prune(p);
+      if (q.k !== "app") return false;
+      const fn = prune(q.fn);
+      return fn.k === "var" && fn.id === pv.id;
+    });
+    if (headIndex >= 0) return headIndex;
     return tm.params.findIndex((p) => occurs(pv.id, p));
   }
 
@@ -2078,7 +2101,10 @@ export class Infer {
     const inferArgs = (slots: number[]): { place: Place; eff: Eff } => {
       let place = seed;
       let eff: Eff = { labels: new Set(inst.eff.labels) };
-      args.forEach((a, i) => {
+      const order = args.map((_, i) => i)
+        .sort((a, b) => Number(args[a]!.k === "Lam") - Number(args[b]!.k === "Lam"));
+      for (const i of order) {
+        const a = args[i]!;
         const slot = slots[i]!;
         const r = this.inferArg(a, inst.params[slot]!);
         this.unifyArg(r.ty, inst.params[slot]!, a.span, `${traitName}.${method} argument ${i + 1}`);
@@ -2099,7 +2125,7 @@ export class Infer {
         }
         place = joinPlace(place, r.place);
         eff = mergeEff(eff, r.eff);
-      });
+      }
       return { place, eff };
     };
     let slots = args.map((_, i) => i);
@@ -2333,7 +2359,7 @@ export class Infer {
       if (!monad) this.fail("operator '>>=' needs the Monad trait: import std::monad::{Monad}", e.span);
       const bind = monad.methods.get("bind");
       if (!bind) this.fail("trait Monad has no 'bind' method", e.span);
-      return this.inferTraitCall("Monad", "bind", bind.ty, [e.l, e.r], e);
+      return this.inferTraitCall("Monad", "bind", bind.ty, [e.r, e.l], e);
     }
     const l = this.infer(e.l);
     const r = this.infer(e.r);

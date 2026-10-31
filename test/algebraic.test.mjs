@@ -275,7 +275,7 @@ test("algebraic: an effectful callback needs an effect row on the consumer", () 
   fs.writeFileSync(entry, `import State (State)
 
 f :: () -> List Int
-f () = map [1] (\\(x :: Int) -> State.get () + x)
+f () = map (\\(x :: Int) -> State.get () + x) [1]
 
 main :: Html
 main = <p>{str (f ())}</p>

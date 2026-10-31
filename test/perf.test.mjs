@@ -14,7 +14,7 @@ twice :: a -> (a -> a) -> a
 twice x f = f (f x)
 
 total :: List Int -> Int
-total xs = if isEmpty xs then 0 else at xs 0 + total (tail xs)
+total xs = if isEmpty xs then 0 else at 0 xs + total (tail xs)
 
 main :: Html
 main = do

@@ -76,7 +76,7 @@ withStatus status response =
 
 withHeader :: Response -> Str -> Str -> Response
 withHeader response name value =
-  { status = response.status, contentType = response.contentType, headers = push response.headers (name, value), body = response.body }
+  { status = response.status, contentType = response.contentType, headers = push (name, value) response.headers, body = response.body }
 
 redirect :: Str -> Response
 redirect location = withHeader (withStatus 302 (textResponse "")) "location" location
@@ -105,7 +105,7 @@ del path handler = route "DELETE" path handler
 
 -- ---------------------------------------------------------------- request helpers
 queryParam :: RequestObject -> Str -> Option Str
-queryParam request name = findQuery (split request.query "&") name
+queryParam request name = findQuery (split "&" request.query) name
 
 pathParam :: RequestObject -> Str -> Option Str
 pathParam request name = findPair request.params name
@@ -127,7 +127,7 @@ findQuery :: List Str -> Str -> Option Str
 findQuery pairs name = case pairs of
   [] -> None
   pair : rest ->
-    case split pair "=" of
+    case split "=" pair of
       [key, value] -> if key == name then Some value else findQuery rest name
       _ -> findQuery rest name
 
@@ -193,14 +193,14 @@ matchPath pattern path =
     else None
 
 pathSegments :: Str -> List Str
-pathSegments path = filter (split path "/") (\s -> s /= "")
+pathSegments path = filter (\s -> s /= "") (split "/" path)
 
 matchSegments :: List Str -> List Str -> List (Str, Str) -> Option (List (Str, Str))
 matchSegments pats segs acc = case (pats, segs) of
   ([], []) -> Some (reverse acc)
   (p : ps, s : ss) ->
-    if startsWith p ":"
-      then matchSegments ps ss ((replace p ":" "", s) : acc)
+    if startsWith ":" p
+      then matchSegments ps ss ((replace ":" "" p, s) : acc)
       else if p == s then matchSegments ps ss acc else None
   _ -> None
 

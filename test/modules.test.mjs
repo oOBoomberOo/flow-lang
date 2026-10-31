@@ -163,13 +163,13 @@ import String (padLeft, capitalize)
 
 main :: Html
 main = do
-  let xs = map (range 5) (\\(n :: Int) -> n * n)
-  let evens = filter xs (\\(n :: Int) -> n % 2 == 0)
-  let total = fold evens 0 (\\(a :: Int) (b :: Int) -> a + b)
+  let xs = map (\\(n :: Int) -> n * n) (range 5)
+  let evens = filter (\\(n :: Int) -> n % 2 == 0) xs
+  let total = fold (\\(a :: Int) (b :: Int) -> a + b) 0 evens
   <>
     <p>{str total} {str (sum xs)} {str (clamp 9 0 5)}</p>
-    <p>{str (isSome (head xs))} {str (withDefault (head []) 0)}</p>
-    <p>{padLeft (str total) 4 "0"} {capitalize "flow"}</p>
+    <p>{str (isSome (head xs))} {str (withDefault 0 (head []))}</p>
+    <p>{padLeft 4 "0" (str total)} {capitalize "flow"}</p>
   </>`,
   });
   const r = compileFile(entry);
@@ -336,11 +336,11 @@ main :: Html
 main = do
   let ints = sortInts [3, 1, 2]
   let strs = sortStrings ["pear", "apple", "fig"]
-  let idx = indexOfItem ints 2
+  let idx = indexOfItem 2 ints
   <ul>
-    <li>{str ints} {":"} {str (indexOfItem ints 99)} {":"} {str (contains ints 2)}</li>
+    <li>{str ints} {":"} {str (indexOfItem 99 ints)} {":"} {str (contains 2 ints)}</li>
     <li>{str strs} {":"} {str idx}</li>
-    <li>{str (sortBy ints (\\(a :: Int) (b :: Int) -> b - a))}</li>
+    <li>{str (sortBy (\\(a :: Int) (b :: Int) -> b - a) ints)}</li>
   </ul>
 `,
   });

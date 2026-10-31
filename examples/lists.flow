@@ -6,17 +6,17 @@ main :: Html
 main = do
   let ints = sortInts [3, 1, 2]
   let strs = sortStrings ["pear", "apple", "fig"]
-  let desc = sortBy ints (\(a :: Int) (b :: Int) -> b - a)
+  let desc = sortBy (\(a :: Int) (b :: Int) -> b - a) ints
   <div class="card">
     <h1>{"std::list sorting"}</h1>
     <p class="sorted">{"asc: "} {str ints} {", desc: "} {str desc}</p>
     <p class="strings">{"strs: "} {str strs}</p>
     <p class="search">
       {"index of 2: "}
-      {str (indexOfItem ints 2)}
+      {str (indexOfItem 2 ints)}
       {", index of 99: "}
-      {str (indexOfItem ints 99)}
+      {str (indexOfItem 99 ints)}
       {", contains 3: "}
-      {str (contains ints 3)}
+      {str (contains 3 ints)}
     </p>
   </div>

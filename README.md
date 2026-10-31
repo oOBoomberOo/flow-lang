@@ -138,7 +138,7 @@ banner = upper . trim
 main :: Html
 main = do
   let shapes = [Circle 2.0, Rect 3.0 4.0]
-  <ul>{map shapes (\s -> <li>{str (area s)}</li>)}</ul>
+  <ul>{map (\s -> <li>{str (area s)}</li>) shapes}</ul>
 ```
 
 Layout is the block structure: `where`, `let`, `of`, `do` and `with` open a block, and a line
@@ -153,7 +153,7 @@ import List as L
 import Http (get, Router, textResponse)
 
 main :: Html
-main = <p>{str (withDefault (map (Option.Some 3) (\x -> x + 1)) 0)}</p>
+main = <p>{str (withDefault 0 (map (\x -> x + 1) (Option.Some 3)))}</p>
 ```
 
 * `import Module (a, b)` brings names into scope.

@@ -3,8 +3,8 @@
 -- constructor, so the same call works for List and Option.
 main :: Html
 main = do
-  let xs = map [1, 2] (\(n :: Int) -> n + 1)
-  let o = map (Some 10) (\(n :: Int) -> n + 1)
+  let xs = map (\(n :: Int) -> n + 1) [1, 2]
+  let o = map (\(n :: Int) -> n + 1) (Some 10)
   <div class="card">
     <h1>{"Higher-kinded Functor"}</h1>
     <p class="hkt">{"list: "} {str xs} {", option: "} {str o}</p>

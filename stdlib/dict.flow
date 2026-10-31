@@ -21,16 +21,16 @@ size :: Dict k v -> Int
 size d = len d
 
 keys :: Dict k v -> List k
-keys d = map d (\(k, _v) -> k)
+keys d = map (\(k, _v) -> k) d
 
 values :: Dict k v -> List v
-values d = map d (\(_k, v) -> v)
+values d = map (\(_k, v) -> v) d
 
 toList :: Dict k v -> List (k, v)
 toList d = d
 
 fromList :: (k -> k -> Int) -> List (k, v) -> Dict k v
-fromList cmp xs = List.fold xs [] (\acc pair -> insert cmp (fst pair) (snd pair) acc)
+fromList cmp xs = List.fold (\acc pair -> insert cmp (fst pair) (snd pair) acc) [] xs
 lookup :: (k -> k -> Int) -> k -> Dict k v -> Option v
 lookup cmp key d = case d of
   [] -> None
@@ -69,21 +69,21 @@ adjust cmp f key d = case d of
        else (k, v) : adjust cmp f key rest
 
 mapWithKey :: (k -> v -> w) -> Dict k v -> Dict k w
-mapWithKey f d = map d (\(k, v) -> (k, f k v))
+mapWithKey f d = map (\(k, v) -> (k, f k v)) d
 
 filter :: (k -> v -> Bool) -> Dict k v -> Dict k v
-filter keep d = List.filter d (\(k, v) -> keep k v)
+filter keep d = List.filter (\(k, v) -> keep k v) d
 
 union :: (k -> k -> Int) -> Dict k v -> Dict k v -> Dict k v
-union cmp left right = List.fold right left (\acc pair -> insert cmp (fst pair) (snd pair) acc)
+union cmp left right = List.fold (\acc pair -> insert cmp (fst pair) (snd pair) acc) left right
 
 -- Entries of `left` whose key also appears in `right`.
 intersect :: (k -> k -> Int) -> Dict k v -> Dict k w -> Dict k v
-intersect cmp left right = List.filter left (\(k, _v) -> member cmp k right)
+intersect cmp left right = List.filter (\(k, _v) -> member cmp k right) left
 
 -- Entries of `left` whose key does not appear in `right`.
 difference :: (k -> k -> Int) -> Dict k v -> Dict k w -> Dict k v
-difference cmp left right = List.filter left (\(k, _v) -> not (member cmp k right))
+difference cmp left right = List.filter (\(k, _v) -> not (member cmp k right)) left
 
 -- ---------------------------------------------------------------- Str keys
 stringCompare :: Str -> Str -> Int

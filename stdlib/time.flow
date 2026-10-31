@@ -53,14 +53,14 @@ formatIso instant = host_iso instant
 -- "2026-10-31"
 formatDate :: Int -> Str
 formatDate instant =
-  yearOf instant + "-" + padLeft (str (monthOf instant)) 2 "0" + "-" + padLeft (str (dayOf instant)) 2 "0"
+  yearOf instant + "-" + padLeft 2 "0" (str (monthOf instant)) + "-" + padLeft 2 "0" (str (dayOf instant))
 
 -- "09:15:02"
 formatClock :: Int -> Str
 formatClock instant =
-  padLeft (str (hourOf instant)) 2 "0" + ":" +
-    padLeft (str (minuteOf instant)) 2 "0" + ":" +
-    padLeft (str (secondOf instant)) 2 "0"
+  padLeft 2 "0" (str (hourOf instant)) + ":" +
+    padLeft 2 "0" (str (minuteOf instant)) + ":" +
+    padLeft 2 "0" (str (secondOf instant))
 
 -- "Monday" … "Sunday"
 weekday :: Int -> Str
