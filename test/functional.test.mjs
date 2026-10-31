@@ -154,6 +154,38 @@ main = <p>{"adt"}</p>
   });
 });
 
+test("functional: an inferred projection upgrades to the record ADT", async () => {
+  const source = `import Http (get, Router, RequestObject, textResponse)
+
+data Todo = Todo { id :: Int, title :: Str }
+
+getLastId :: List Todo -> Int
+getLastId = List.fold Math.maxInt 0 . map (\\t -> t.id)
+
+ids :: List Todo -> List Int
+ids = map (\\t -> t.id)
+
+idOf :: Todo -> Int
+idOf t = case t of
+  { id = n } -> n
+
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/ids" (\\(_req :: RequestObject) ->
+    textResponse (str (getLastId [Todo { id = 2, title = "a" }, Todo { id = 9, title = "b" }]) + "|" +
+      str (ids [Todo { id = 4, title = "c" }]) + "|" +
+      str (idOf (Todo { id = 7, title = "d" })))) ]
+
+main :: Html
+main = <p>{"ids"}</p>
+`;
+  await withHost(source, async (host) => {
+    const res = await fetch(host.url + "/ids");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "9|[4]|7");
+  });
+});
+
 test("functional: inferred lambda parameters work in every position", () => {
   const src = `import List (filter, range)
 

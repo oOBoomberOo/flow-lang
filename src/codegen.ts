@@ -1599,7 +1599,8 @@ export class Codegen {
       }
       case "PRecord": {
         const t = `$t${++this.tmp}`;
-        const fs = p.fields.map((f) => ({ q: f.pat, r: `${t}[${ev(f.name)}]` }));
+        const target = this.mod.recordAdtPatterns.has(p) ? `${t}.args[0]` : t;
+        const fs = p.fields.map((f) => ({ q: f.pat, r: `${target}[${ev(f.name)}]` }));
         return `{ const ${t} = ${ref}; ${this.armSeq(fs.map((x) => x.q), fs.map((x) => x.r), inner)} }`;
       }
       case "PCtor": {

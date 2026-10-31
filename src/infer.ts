@@ -132,6 +132,12 @@ export interface Module {
    * constructor's first argument instead of the value itself.
    */
   adtProjections: Set<object>;
+  /**
+   * Record patterns that destructure a single-constructor ADT's payload
+   * (`case todo of { id = n } -> n`). Codegen must read `.args[0]` instead of
+   * treating the value as a plain record.
+   */
+  recordAdtPatterns: Set<object>;
   /** references to top-level constants (`pi = 3.14`): evaluated by calling them */
   constRefs: Set<object>;
 }
@@ -218,6 +224,32 @@ export class Infer {
   private uidCtor = 0;
   /** the type a lambda argument is expected to have, so its parameters need no annotation */
   private expectedFor = new Map<Expr, Type>();
+  /**
+   * Field accesses on a value whose type is not known yet. Committing such a
+   * value to `{ field :: t }` would reject a nominal record ADT that arrives
+   * later (`List.fold f 0 . map (\t -> t.id)` annotated `List Todo -> Int`),
+   * so the access is resolved once the value's type is known.
+   */
+  private pendingFields: {
+    target: Type;
+    name: string;
+    ty: Type;
+    span: { line?: number; col?: number; file?: string };
+    node: Expr;
+  }[] = [];
+
+  /** Can `t` be generalized now, or does a field access still constrain it? */
+  private canGeneralize(t: Type): boolean {
+    if (!this.pendingFields.length) return true;
+    const held = new Set<number>();
+    for (const p of this.pendingFields) {
+      const q = prune(p.target);
+      if (q.k === "var") held.add(q.id);
+    }
+    if (!held.size) return true;
+    for (const id of freeVars(t)) if (held.has(id)) return false;
+    return true;
+  }
 
   /**
    * Infer a call argument; a lambda learns its parameter types from the callee,
@@ -241,6 +273,7 @@ export class Infer {
       partialCalls: new Set(),
       rightPartials: new Map(),
       adtProjections: new Set(),
+      recordAdtPatterns: new Set(),
       constRefs: new Set(),
       resumeVars: new Set(),
     };
@@ -831,6 +864,7 @@ export class Infer {
           }
           throw e;
         }
+        this.resolvePendingFields();
         restoreSubst(before);
       }
     }
@@ -1025,6 +1059,8 @@ export class Infer {
   private checkNamedBody(name: string, params: Param[], body: Expr, ret?: TypeExpr, declaredEff?: EffRow) {
     const info = this.mod.fns.get(name);
     if (!info) return; // a declaration error was already reported
+    // Constraints left over from a body that failed to infer must not leak.
+    this.pendingFields = [];
     // Do not report cascades caused by a declaration that already failed.
     let poisoned = false;
     forEachExpr(body, (x) => {
@@ -1092,6 +1128,22 @@ export class Infer {
       this.currentDicts = savedDicts;
       this.typeParams = savedTypeParams;
       this.pendingTraitCalls = savedPending;
+      if (e instanceof FlowError) {
+        this.fail(
+          `${e.message}\n  in fn ${name}`,
+          e.line != null ? { line: e.line, col: e.col ?? 1, file: e.file } : undefined,
+        );
+      }
+      throw e;
+    }
+    try {
+      this.resolvePendingFields();
+    } catch (e) {
+      this.env = saved;
+      this.currentDicts = savedDicts;
+      this.typeParams = savedTypeParams;
+      this.pendingTraitCalls = savedPending;
+      this.pendingFields = [];
       if (e instanceof FlowError) {
         this.fail(
           `${e.message}\n  in fn ${name}`,
@@ -1355,7 +1407,9 @@ export class Infer {
         }
         const envVars = new Set<number>();
         for (const s of this.env.values()) for (const x of freeVars(s.ty)) envVars.add(x);
-        const gen = generalize(v.ty, envVars);
+        // A value whose type still waits on a field access stays monomorphic,
+        // so the use site can bind it to a record ADT.
+        const gen = this.canGeneralize(v.ty) ? generalize(v.ty, envVars) : v.ty;
         const saved = this.env;
         this.env = new Map(saved);
         this.env.set(e.name, { ty: gen, envVars, place: v.place });
@@ -1423,8 +1477,10 @@ export class Infer {
         const t = prune(target.ty);
         let ty: Type;
         if (t.k === "var") {
+          // Defer: the value may turn out to be a record ADT, whose payload
+          // fields are not represented like anonymous record fields.
           ty = fresh(0);
-          unify(t, { k: "rec", fields: { [e.name]: ty }, atLeast: true });
+          this.pendingFields.push({ target: t, name: e.name, ty, span: e.span, node: e });
         } else if (t.k === "rec") {
           let f = t.fields[e.name];
           if (!f && (t.open || t.atLeast)) { f = fresh(0); t.fields[e.name] = f; }
@@ -1535,7 +1591,7 @@ export class Infer {
             }
             // local functions are polymorphic; other values stay monomorphic (value restriction)
             let ty = v.ty;
-            if (s.value.k === "Lam") {
+            if (s.value.k === "Lam" && this.canGeneralize(v.ty)) {
               const envVars = new Set<number>();
               for (const x of this.env.values()) for (const y of freeVars(x.ty)) envVars.add(y);
               ty = generalize(v.ty, envVars);
@@ -1800,6 +1856,44 @@ export class Infer {
       return;
     }
     this.fail(`cell ${op} needs an Int or Float cell, got ${typeStr(elem)}`, span);
+  }
+
+  /** Resolve field accesses that were waiting for their value's type. */
+  private resolvePendingFields() {
+    if (!this.pendingFields.length) return;
+    let pending = this.pendingFields;
+    this.pendingFields = [];
+    // Projecting one field can bind another pending value, so iterate.
+    for (let pass = 0; pass < 8; pass++) {
+      const rest: typeof pending = [];
+      let bound = false;
+      for (const p of pending) {
+        const t = prune(p.target);
+        if (t.k === "var") { rest.push(p); continue; }
+        bound = true;
+        if (t.k === "rec") {
+          let f = t.fields[p.name];
+          if (!f && (t.open || t.atLeast)) { f = fresh(0); t.fields[p.name] = f; }
+          if (!f) this.fail(`record has no field '${p.name}'`, p.span);
+          unify(p.ty, f);
+        } else if (t.k === "con") {
+          const payload = this.recordPayload(t);
+          if (!payload) this.fail(`cannot project '.${p.name}' from ${typeStr(t)}`, p.span);
+          const f = payload.fields[p.name];
+          if (!f) this.fail(`${typeStr(t)} has no field '${p.name}'`, p.span);
+          unify(p.ty, f);
+          this.mod.adtProjections.add(p.node);
+        } else {
+          this.fail(`cannot project '.${p.name}' from ${typeStr(t)}`, p.span);
+        }
+      }
+      pending = rest;
+      if (!bound) break;
+    }
+    // Nothing constrained the value: it is an anonymous record requirement.
+    for (const p of pending) {
+      unify(p.target, { k: "rec", fields: { [p.name]: p.ty }, atLeast: true });
+    }
   }
 
   /**
@@ -2304,7 +2398,9 @@ export class Infer {
   }
 
   private hasWildcard(arms: { pat: Pattern }[]): boolean {
-    return arms.some((a) => a.pat.k === "PWild" || a.pat.k === "PVar");
+    return arms.some((a) => a.pat.k === "PWild" || a.pat.k === "PVar"
+      // `{ id = n }` matches the only constructor of a record ADT.
+      || (a.pat.k === "PRecord" && this.mod.recordAdtPatterns.has(a.pat) && irrefutablePattern(a.pat)));
   }
 
   bindPattern(p: Pattern, ty: Type, seen: Set<string>) {
@@ -2327,7 +2423,19 @@ export class Infer {
       case "PRecord": {
         const fields: Record<string, Type> = {};
         for (const f of p.fields) fields[f.name] = fresh(0);
-        this.unifyArg(ty, { k: "rec", fields, atLeast: true }, p.span, "record pattern does not match the scrutinee");
+        const t = prune(ty);
+        const payload = t.k === "con" ? this.recordPayload(t) : null;
+        if (payload) {
+          // A record pattern destructures the payload of a record ADT.
+          for (const name of Object.keys(fields)) {
+            const f = payload.fields[name];
+            if (!f) this.fail(`${typeStr(t)} has no field '${name}'`, p.span);
+            unify(fields[name]!, f);
+          }
+          this.mod.recordAdtPatterns.add(p);
+        } else {
+          this.unifyArg(ty, { k: "rec", fields, atLeast: true }, p.span, "record pattern does not match the scrutinee");
+        }
         for (const f of p.fields) this.bindPattern(f.pat, fields[f.name]!, seen);
         return;
       }
@@ -2628,6 +2736,16 @@ function forEachHtmlExpr(n: HtmlNode, fn: (e: Expr) => void): void {
       for (const a of n.attrs) if (a.value.k === "expr") forEachExpr(a.value.e, fn);
       for (const c of n.children) forEachHtmlExpr(c, fn);
       return;
+  }
+}
+
+/** A pattern that cannot fail to match a value of its type. */
+function irrefutablePattern(p: Pattern): boolean {
+  switch (p.k) {
+    case "PWild": case "PVar": return true;
+    case "PTuple": return p.items.every(irrefutablePattern);
+    case "PRecord": return p.fields.every((f) => irrefutablePattern(f.pat));
+    default: return false;
   }
 }
 

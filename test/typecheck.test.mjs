@@ -73,6 +73,86 @@ main = <p>{str (idOf (Todo { id = 1, title = "x", completed = False }))}</p>`);
   assert.match(r.client, /\.args\[0\]\.id/, "projection reads the constructor payload");
 });
 
+test("an inferred record projection upgrades to the annotated record ADT", () => {
+  // The lambda parameter starts as an unresolved value; `.id` must not commit
+  // it to an anonymous record before the declared `List Todo` arrives.
+  const r = ok(`data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+getLastId :: List Todo -> Int
+getLastId = List.fold Math.maxInt 0 . map (\\t -> t.id)
+
+ids :: List Todo -> List Int
+ids = map (\\t -> t.id)
+
+main :: Html
+main = <p>{str (getLastId [])}{str (length (ids []))}</p>`);
+  assert.match(r.client, /\.args\[0\]\.id/, "the projection reads the constructor payload");
+
+  bad(`data Todo = Todo { id :: Int }
+
+titles :: List Todo -> List Str
+titles = map (\\t -> t.title)
+
+main :: Html
+main = <p>{str (length (titles []))}</p>`, /Todo has no field 'title'/);
+});
+
+test("a local projection infers from its annotated use site", () => {
+  const r = ok(`data Todo = Todo { id :: Int, title :: Str }
+
+homePage :: List Todo -> Html
+homePage todos = <p>{str (lastId todos)}</p>
+  where
+    lastId = List.fold Math.maxInt 0 . map (\\t -> t.id)
+
+main :: Html
+main = <p>{"x"}</p>`);
+  assert.match(r.client, /\.args\[0\]\.id/, "the local projection reads the payload");
+
+  const r2 = ok(`data Todo = Todo { id :: Int, title :: Str }
+
+homePage :: List Todo -> Html
+homePage todos = <p>{str (lastId todos)}</p>
+  where
+    lastId :: List Todo -> Int
+    lastId = List.fold Math.maxInt 0 . map (\\t -> t.id)
+
+main :: Html
+main = <p>{"x"}</p>`);
+  assert.match(r2.client, /\.args\[0\]\.id/, "the annotated local projection reads the payload");
+});
+
+test("a record pattern destructures a record ADT payload", () => {
+  const r = ok(`data Todo = Todo { id :: Int, title :: Str }
+
+idOf :: Todo -> Int
+idOf t = case t of
+  { id = n } -> n
+
+main :: Html
+main = <p>{str (idOf (Todo { id = 1, title = "x" }))}</p>`);
+  assert.match(r.client, /\.args\[0\]\["id"\]/, "the pattern reads the constructor payload");
+
+  bad(`data Todo = Todo { id :: Int }
+
+titles :: Todo -> Str
+titles t = case t of
+  { title = s } -> s
+
+main :: Html
+main = <p>{"x"}</p>`, /Todo has no field 'title'/);
+
+  // A field literal is refutable, so it does not cover the only constructor.
+  bad(`data Todo = Todo { id :: Int }
+
+first :: Todo -> Int
+first t = case t of
+  { id = 1 } -> 1
+
+main :: Html
+main = <p>{"x"}</p>`, /non-exhaustive match on Todo/);
+});
+
 test("projection rejects a missing field and a multi-constructor ADT", () => {
   bad(`data Todo = Todo { id :: Int }
 

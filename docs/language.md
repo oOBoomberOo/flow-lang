@@ -233,6 +233,22 @@ retitle (Todo t) title = Todo { id = t.id, title = title, completed = t.complete
 Projection is only unambiguous for a single constructor; a multi-constructor
 type must be matched with `case` before reading fields.
 
+A projection or record pattern does not pin the value to an anonymous record.
+When the value's type is only known later (an annotated function, or a local
+helper used with a `List Todo`), the access resolves against that type, so the
+lambda needs no parameter annotation:
+
+```flow
+data Todo = Todo { id :: Int, title :: Str }
+
+lastId :: List Todo -> Int
+lastId = List.fold Math.maxInt 0 . map (\t -> t.id)
+
+idOf :: Todo -> Int
+idOf todo = case todo of
+  { id = n } -> n
+```
+
 ## 5. Client, Server and effects
 
 `Client` and `Server` are **modules**, not capabilities. Each function lives on one
