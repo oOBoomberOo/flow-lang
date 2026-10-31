@@ -310,10 +310,40 @@ they run (see §5.2). The standard library uses it for `Store`.
 
 ### 5.1 Cells
 
-A cell is **neutral**: it lives wherever it is created and its value crosses the
-boundary as an ordinary cut. `cell.value` reads, `cell := e` writes, `cell += n` /
-`-=` / `*=` update, and `cell.update f` maps the current value; `cell.get ()` and
-`cell.set v` are the method forms. `Cell.pure x` (or `Client.state x`) creates one.
+A cell is reactive state, and its type names the side that owns it:
+
+| type | created by | reads and writes |
+|---|---|---|
+| `Cell a @client` | `Client.state x` | client computations; lives in the browser |
+| `Cell a @server` | `Server.state x` | server computations; shared by every client |
+| `Cell a` | `Cell.makeCell x` | neutral: lives where it is created and used |
+
+A server-bound cell must be declared at the top level so that it keeps its
+identity:
+
+```flow
+counter :: Cell Int @server
+counter = Server.state 0
+
+bump :: Int -> ()
+bump n = counter := counter.value + n
+
+main :: Html
+main = <div>
+  <button onClick={\(e :: Event) -> bump 1}>{"+1"}</button>
+  <p>{str counter.value}</p>
+</div>
+```
+
+Client reads of `counter.value` become reactive cuts (the server pushes the
+current value when it changes); writes (`counter := ...`, `+=`, ...) become call
+cuts. The cell itself never crosses the wire, so its element type must be
+serializable when it is read from the other side. Creating a `Cell a @server`
+inside client code is rejected - declare it at the top level instead.
+
+`cell.value` reads, `cell := e` writes, `cell += n` / `-=` / `*=` update, and
+`cell.update f` maps the current value; `cell.get ()` and `cell.set v` are the
+method forms. `Cell.pure x` creates a neutral cell.
 
 Cells are monads, so a sequence of reads is an ordinary `do` block — no special
 syntax:
@@ -502,8 +532,8 @@ module claims them.
 | `Flow.Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
 | `Flow.Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List`, `Cell` and `Result e`, plus `>>=`/`do` |
 | `Flow.Classes` | `Eq` (`equals`/`notEquals`), `Ord` (`compare`/`minOf`/`maxOf`), `Show` (`show`), `Semigroup` (`append`), `Monoid` (`mempty`) and `Foldable` (`foldr`/`toList`/`foldMap`), with primitives and container instances |
-| `Flow.Cell` | `pure`, `make`, `read`, `write`, `makeCell`, `CellOps` - cells are neutral reactive values and monads |
-| `Flow.Client` / `Flow.Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
+| `Flow.Cell` | `pure`, `make`, `read`, `write`, `makeCell`, `CellOps` - neutral reactive values and monads |
+| `Flow.Client` / `Flow.Server` | `log`, `now`, `state :: a -> Cell a @client` / `log`, `now`, `random`, `state :: a -> Cell a @server`, placed by their bodies |
 | `Flow.State`, `Flow.Exn`, `Flow.Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
 | `Flow.Fs`, `Flow.Net`, `Flow.Http`, `Flow.Random`, `Flow.Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
 

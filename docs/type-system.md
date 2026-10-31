@@ -247,9 +247,11 @@ evaluated eagerly (§6.2) because a round trip is a one-shot value, not a stream
 Γ ⊢ html { … e … } : Html ! ε @ client ⊔ p
 ```
 
-`Html`, `Cell<τ>` and `Event` are **client-only types**. `typePlace` propagates: a container of
+`Html`, `Event` and `Dom` are **client-only types**. `typePlace` propagates: a container of
 a client-only type is itself client-only. This is what guarantees that a markup tree can never
 be built on the server — the server has no DOM.
+
+A `Cell a` is neutral by default. It may carry an explicit placement (`Cell a @client` or `Cell a @server`); `Client.state` returns the former and `Server.state` the latter. A server-bound cell lives in the server process, so client reads become reactive cuts and client writes become call cuts. The cell itself is not sent; only its element value crosses, so the element type must be sendable at every cut.
 
 ```
 ──────────────────────────────
@@ -467,6 +469,10 @@ The annotation is checked against inference:
 * a function return annotation must agree with the body's inferred placement;
 * a parameter annotation must agree with each direct call argument;
 * a `let` binding annotation must agree with the value's placement.
+
+On a `Cell`, the annotation names the cell's owner rather than a function's side:
+`cell :: Cell Int @server` makes every read and write a server computation, so a
+client use becomes a cut.
 
 Neutral and `cross` expressions remain compatible with either side; the compiler
 reports `placement mismatch` when a concrete client value is annotated `@server`

@@ -1,4 +1,4 @@
-module Flow.Server (log, now, random) where
+module Flow.Server (log, now, random, state) where
 
 -- Server-side authority. Each body performs a server-only primitive, so the
 -- function is placed on the server and calling it from the client is a cut.
@@ -23,3 +23,18 @@ now () = server_now ()
 
 random :: () -> Float
 random () = server_random ()
+
+-- A server-bound cell: the state lives in the server process and is shared by
+-- its readers. Declare it at the top level with its type:
+--
+--   counter :: Cell Int @server
+--   counter = Server.state 0
+--
+-- Client reads become reactive cuts (the server pushes the current value when
+-- it changes); client writes become call cuts.
+foreign import js unsafe "__flow.host.cell" {
+  server_cell :: a -> Cell a @server
+}
+
+state :: a -> Cell a @server
+state init = server_cell init

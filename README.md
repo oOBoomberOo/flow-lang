@@ -252,7 +252,9 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   `git:`/`github:` repositories
 * **Effects are capabilities** — `effect Server @ server where`, `provide`, `handle`
 * **Algebraic effects** — `algebraic effect State where get :: () -> Int`, resumed with `resume`
-* **Cell sugar** — `cell.value`, `cell := e`, `cell += n`, `cell.update`
+* **Cell sugar** - `cell.value`, `cell := e`, `cell += n`, `cell.update`
+* **Placed cells** - `Cell a @client` / `Cell a @server`; `Client.state` and `Server.state`
+  create them, and a server cell's reads/writes become cuts
 * **Boundary colouring** — client code washed blue, server code amber; every inferred cut is
   underlined, with a gutter marker and an overview ruler
 * **Inlay hints** — `fn render server`, `let total: Int`, `cut1→server`: the boundary is inline

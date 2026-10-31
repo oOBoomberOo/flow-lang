@@ -10,7 +10,13 @@ import { FlowError } from "./lexer.ts";
 export type Place = "neutral" | "client" | "server" | "cross";
 
 export interface TVar { k: "var"; id: number; level: number; generic?: boolean; bounds?: string[]; origin?: number }
-export interface TCon { k: "con"; name: string; args: Type[] }
+export interface TCon {
+  k: "con";
+  name: string;
+  args: Type[];
+  /** An explicit placement written on the type (`Cell Int @server`). */
+  place?: Place;
+}
 /** A higher-kinded application: `f<a>` where `f` is a type constructor. */
 export interface TApp { k: "app"; fn: Type; args: Type[] }
 export interface TFun { k: "fun"; params: Type[]; ret: Type; eff: Eff }
@@ -49,9 +55,17 @@ export function placeName(p: Place): string {
   return p;
 }
 
+/** Attach a source placement annotation to a resolved type. */
+export function withTypePlace(t: Type, place: Place): Type {
+  if (place === "neutral") return t;
+  const p = prune(t);
+  if (p.k === "con") return { ...p, place };
+  return p;
+}
+
 /** Types that can only exist in one place. Anything else is place-neutral. */
-// Html/Event are DOM values; Dom is a handle. A Cell is neutral: it may live on
-// either side and its value crosses the boundary as an ordinary cut.
+// Html/Event are DOM values; Dom is a handle. A Cell is neutral unless its type
+// carries an explicit placement (`Cell Int @client` / `Cell Int @server`).
 const PLACED_TYPES: Record<string, Place> = {
   Html: "client",
   Event: "client",
@@ -60,6 +74,9 @@ const PLACED_TYPES: Record<string, Place> = {
 export function typePlace(t: Type): Place {
   const p = prune(t);
   if (p.k === "con") {
+    // An explicit placement wins: `Cell a @server` is server-bound even when
+    // its element type is neutral.
+    if (p.place && p.place !== "neutral") return p.place;
     const own = PLACED_TYPES[p.name];
     if (own) return own;
     // a container of a placed type is itself placed
@@ -89,7 +106,16 @@ export function sendable(t: Type): { ok: true } | { ok: false; reason: string } 
     case "var": return { ok: true };
     case "fun": return { ok: false, reason: "functions are not serializable across the boundary" };
     case "con": {
-      if (p.name === "Cell") return { ok: false, reason: "Cell<a> is client-local reactive state" };
+      if (p.name === "Cell") {
+        const side = p.place && p.place !== "neutral" ? ` (${p.place}-bound)` : "";
+        return {
+          ok: false,
+          reason:
+            `a Cell${side} cannot cross the boundary as a value; ` +
+            `declare it at the top level with an explicit type such as \`cell :: Cell Int @server\`, ` +
+            `then reads and writes become cuts`,
+        };
+      }
       if (p.name === "Dom") return { ok: false, reason: "Dom handles cannot leave the client" };
       if (p.name === "Event") return { ok: false, reason: "Event handles cannot leave the client" };
       if (p.name === "Html") return { ok: false, reason: "Html can only be produced on the client" };
@@ -99,7 +125,7 @@ export function sendable(t: Type): { ok: true } | { ok: false; reason: string } 
     case "app": {
       const fn = prune(p.fn);
       if (fn.k === "con" && fn.args.length === 0) {
-        return sendable({ k: "con", name: fn.name, args: p.args });
+        return sendable({ k: "con", name: fn.name, args: p.args, ...(fn.place ? { place: fn.place } : {}) });
       }
       return { ok: true };
     }
@@ -131,7 +157,12 @@ export function prune(t: Type): Type {
     // it again completes the type. `List<Int>` therefore normalizes the same
     // way whether the constructor was bare or already carried arguments.
     if (fn.k === "con") {
-      return { k: "con", name: fn.name, args: [...fn.args, ...args] };
+      return {
+        k: "con",
+        name: fn.name,
+        args: [...fn.args, ...args],
+        ...(fn.place ? { place: fn.place } : {}),
+      };
     }
     if (fn === t.fn && args.every((a, i) => a === t.args[i])) return t;
     return { k: "app", fn, args };
@@ -354,7 +385,12 @@ export function mapType(t: Type, f: (t: Type) => Type): Type {
   const p = prune(t);
   switch (p.k) {
     case "var": return f(p);
-    case "con": return { k: "con", name: p.name, args: p.args.map((a) => mapType(a, f)) };
+    case "con": return {
+      k: "con",
+      name: p.name,
+      args: p.args.map((a) => mapType(a, f)),
+      ...(p.place ? { place: p.place } : {}),
+    };
     case "app": return { k: "app", fn: mapType(p.fn, f), args: p.args.map((a) => mapType(a, f)) };
     case "fun": return {
       k: "fun",
@@ -409,9 +445,9 @@ export function freeVars(t: Type, acc = new Set<number>()): Set<number> {
 /* ------------------------------------------------------------------ */
 
 /** A type argument needs parentheses when it is itself a function or a tuple. */
-function typeArg(t: Type, names: Map<number, string>, raw: boolean): string {
+function typeArg(t: Type, names: Map<number, string>, raw: boolean, showPlace: boolean): string {
   const p = prune(t);
-  const s = typeStr(p, names, raw);
+  const s = typeStr(p, names, raw, showPlace);
   return p.k === "fun" || p.k === "rec" ? `(${s})` : s;
 }
 
@@ -430,7 +466,12 @@ function typeVarName(index: number): string {
  *
  * `raw` keeps the `t<id>` form for identity checks that compare printed types.
  */
-export function typeStr(t: Type, names: Map<number, string> = new Map(), raw = false): string {
+export function typeStr(
+  t: Type,
+  names: Map<number, string> = new Map(),
+  raw = false,
+  showPlace = true,
+): string {
   const p = prune(t);
   switch (p.k) {
     case "var": {
@@ -442,14 +483,19 @@ export function typeStr(t: Type, names: Map<number, string> = new Map(), raw = f
       }
       return name;
     }
-    case "con": return p.args.length ? `${p.name} ${p.args.map((a) => typeArg(a, names, raw)).join(" ")}` : p.name;
-    case "app": return `${typeStr(p.fn, names, raw)} ${p.args.map((a) => typeArg(a, names, raw)).join(" ")}`;
+    case "con": {
+      const base = p.args.length
+        ? `${p.name} ${p.args.map((a) => typeArg(a, names, raw, showPlace)).join(" ")}`
+        : p.name;
+      return showPlace && p.place && p.place !== "neutral" ? `${base} @${p.place}` : base;
+    }
+    case "app": return `${typeStr(p.fn, names, raw, showPlace)} ${p.args.map((a) => typeArg(a, names, raw, showPlace)).join(" ")}`;
     case "fun": {
       const eff = p.eff.labels.size ? ` ! {${[...p.eff.labels].join(", ")}}` : "";
-      return `${p.params.map((a) => typeArg(a, names, raw)).join(" -> ")} -> ${typeStr(p.ret, names, raw)}${eff}`;
+      return `${p.params.map((a) => typeArg(a, names, raw, showPlace)).join(" -> ")} -> ${typeStr(p.ret, names, raw, showPlace)}${eff}`;
     }
-    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k} :: ${typeStr(v, names, raw)}`).join(", ")} }`;
-    case "tuple": return `(${p.items.map((i) => typeStr(i, names, raw)).join(", ")})`;
+    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k} :: ${typeStr(v, names, raw, showPlace)}`).join(", ")} }`;
+    case "tuple": return `(${p.items.map((i) => typeStr(i, names, raw, showPlace)).join(", ")})`;
   }
 }
 
@@ -466,7 +512,8 @@ export function typeStrs(types: Type[]): string[] {
 
 /** A stable printed form for comparing two types; variables keep their ids. */
 export function typeKey(t: Type): string {
-  return typeStr(t, new Map(), true);
+  // Placement is metadata, not part of the type's identity.
+  return typeStr(t, new Map(), true, false);
 }
 
 export function effStr(e: Eff): string {
@@ -485,5 +532,6 @@ export const HTML = con("Html");
 export const fnT = (params: Type[], ret: Type, eff: Eff = emptyEff()): TFun => ({ k: "fun", params, ret, eff });
 export const listOf = (t: Type): TCon => con("List", t);
 export const optionOf = (t: Type): TCon => con("Option", t);
-export const cellOf = (t: Type): TCon => con("Cell", t);
+export const cellOf = (t: Type, place?: Place): TCon =>
+  place && place !== "neutral" ? { k: "con", name: "Cell", args: [t], place } : con("Cell", t);
 export const eventOf = (t: Type): TCon => con("Event", t);

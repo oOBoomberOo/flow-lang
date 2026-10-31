@@ -17,7 +17,7 @@ import type {
 import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
-  cellOf, eventOf, typeStr, typeStrs, typeKey, joinPlace, typePlace, hasGeneric,
+  cellOf, eventOf, typeStr, typeStrs, typeKey, joinPlace, typePlace, withTypePlace, hasGeneric,
   snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
 } from "./types.ts";
 
@@ -1332,7 +1332,7 @@ export class Infer {
       case "TTuple":
         return { k: "tuple", items: te.items.map((i) => this.resolveType(i, params)) };
       case "TPlaced":
-        return this.resolveType(te.inner, params);
+        return withTypePlace(this.resolveType(te.inner, params), te.place);
     }
   }
 
@@ -1499,12 +1499,14 @@ export class Infer {
         }
         if (tt.k === "con" && tt.name === "Cell") {
           if (e.name === "value") {
-            // `cell.value` is sugar for CellOps.get: reading a cell needs Client.
+            // `cell.value` is sugar for CellOps.get. Its place is the cell's
+            // placement: a `Cell a @server` read happens on the server and
+            // becomes a reactive cut on the client.
             const elem = tt.args[0] ?? fresh(0);
             return {
               ty: elem,
-              place: joinPlace(target.place, "client"),
-              eff: { labels: new Set(["Client"]) },
+              place: joinPlace(target.place, typePlace(tt)),
+              eff: emptyEff(),
             };
           }
           this.fail(`Cell has no field '${e.name}' (use .value, .get(), .set(value) or .update(fn))`, e.span);
@@ -1664,7 +1666,14 @@ export class Infer {
    * functions (`go acc xs = … go …`) recurse; everything else is inferred as is.
    */
   private inferBinding(name: string, value: Expr): ResInfo {
-    if (value.k !== "Lam") return this.infer(value);
+    // A binding of an explicitly placed value lives on that side even when the
+    // producing expression is neutral: `let c = Server.state 0` binds a server
+    // cell, and every later read/write is a server computation.
+    const placed = (v: ResInfo): ResInfo => ({
+      ...v,
+      place: joinPlace(v.place, typePlace(v.ty)),
+    });
+    if (value.k !== "Lam") return placed(this.infer(value));
     const self = fresh(0);
     const saved = this.env;
     this.env = new Map(saved);
@@ -1677,7 +1686,7 @@ export class Infer {
       if (err instanceof FlowError) this.fail(`recursive use of '${name}' does not fit its definition: ${err.message}`, value.span);
       throw err;
     }
-    return v;
+    return placed(v);
   }
 
   qualName(e: Expr): string | null {
@@ -1856,11 +1865,12 @@ export class Infer {
       );
     }
     const elem = ct.args[0]!;
+    const cellPlace = typePlace(ct);
     // Record the read type so codegen can pick Int division for `/=` and `++`.
     this.mod.info.set(target, {
       ty: isValue ? elem : ct,
-      place: joinPlace(cell.place, "client"),
-      eff: { labels: new Set(["Client"]) },
+      place: joinPlace(cell.place, cellPlace),
+      eff: emptyEff(),
     });
 
     let value: ResInfo | null = null;
@@ -1874,8 +1884,8 @@ export class Infer {
 
     return {
       ty: UNIT,
-      place: joinPlace(value?.place ?? "neutral", "client"),
-      eff: mergeEff(value?.eff ?? emptyEff(), { labels: new Set(["Client"]) }),
+      place: joinPlace(value?.place ?? "neutral", cellPlace),
+      eff: value?.eff ?? emptyEff(),
     };
   }
 
@@ -2202,7 +2212,13 @@ export class Infer {
       this.mod.dictArgs.set(e, dicts);
     }
     if (this.effHasAlgebraic(ft.eff)) this.mod.genCalls.add(e);
-    return { ty: ft.ret, place: joinPlace(place, placeFromEffects(eff, this)), eff };
+    // Producing a placed value places the call: `Server.state 0` returns a
+    // `Cell a @server`, and a component returns `Html`.
+    return {
+      ty: ft.ret,
+      place: joinPlace(joinPlace(place, placeFromEffects(eff, this)), typePlace(ft.ret)),
+      eff,
+    };
   }
 
   private effHasAlgebraic(eff: Eff): boolean {

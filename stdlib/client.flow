@@ -22,6 +22,11 @@ log msg = console_write msg
 now :: () -> Int
 now () = client_now ()
 
--- Cell is neutral: the cell lives wherever it is used.
-state :: a -> Cell a
-state init = makeCell init
+-- A client-bound cell: created in the browser. Reads and writes are client
+-- computations, and server code cannot create or touch it.
+foreign import js unsafe "__flow.host.cell" {
+  client_cell :: a -> Cell a @client
+}
+
+state :: a -> Cell a @client
+state init = client_cell init

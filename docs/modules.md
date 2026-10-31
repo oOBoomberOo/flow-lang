@@ -237,6 +237,10 @@ The standard library ships as modules under the reserved `Flow` namespace: `Flow
 modules when nothing local claims them. The full catalogue is in [`language.md`](language.md)
 section 7.1; reflection and JSON are in [`serialize.md`](serialize.md).
 
+Cells are neutral by default (`Cell.makeCell`). `Client.state` returns a
+`Cell a @client` and `Server.state` a `Cell a @server`; declare a server-bound
+cell at the top level so its reads and writes become cuts.
+
 ## Everything is ordinary Flow
 
 The primitive helpers are ordinary `foreign import js unsafe` bindings in their modules
