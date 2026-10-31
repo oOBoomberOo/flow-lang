@@ -47,6 +47,23 @@ test("an unbound serve points at the Http import", () => {
 main = serve (\\_ -> <p>{"x"}</p>)`, /import Flow\.Http \(serve\)/);
 });
 
+test("superclass bounds resolve when a local class shadows a prelude trait", () => {
+  // The prelude re-exports Functor/Applicative; a local declaration must win
+  // in `class Functor f => Applicative f`, not become an unknown trait.
+  ok(`class Functor f where
+  map :: (a -> b) -> f a -> f b
+
+class Functor f => Applicative f where
+  pure :: a -> f a
+  ap :: f (a -> b) -> f a -> f b
+
+class Applicative f => Monad f where
+  bind :: (a -> f b) -> f a -> f b
+
+main :: Html
+main = <p>{"x"}</p>`);
+});
+
 test("a top-level value is a constant, not a nullary function", () => {
   const r = ok(`pi :: Float
 pi = 3.14

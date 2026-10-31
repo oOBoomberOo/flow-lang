@@ -4,7 +4,7 @@ import { compileFile } from "./compile.ts";
 import { parse } from "./parser.ts";
 import { printProgram } from "./printer.ts";
 import { migrateSource } from "./migrate.ts";
-import { readManifest } from "./modules.ts";
+import { readManifest, STDLIB_DIR } from "./modules.ts";
 import { createHost, runServerEntry } from "./host.ts";
 import { FlowError } from "./lexer.ts";
 import { install, add, verifyLock, readRegistry, registryFor } from "./pkg.ts";
@@ -365,10 +365,10 @@ function parseSecrets(argv: string[]): Record<string, string> {
 }
 
 /** Compile with every error collected; render them Cargo-style on failure. */
-function compile(file: string, style: Style, verb: "check" | "compile") {
+function compile(file: string, style: Style, verb: "check" | "compile", opts: { requireMain?: boolean } = {}) {
   let result;
   try {
-    result = compileFile(file, { collectErrors: true });
+    result = compileFile(file, { collectErrors: true, ...opts });
   } catch (e) {
     if (e instanceof FlowError) {
       stderr(renderErrors([e], file, style, verb));
@@ -446,7 +446,10 @@ function check(argv: string[], style: Style, quiet: boolean): void {
   const file = entryArg(argv, "check");
   const t0 = Date.now();
   if (!quiet) stderr(`${status(style, "Checking", relativePath(file))}\n`);
-  const result = compile(file, style, "check");
+  // A std module is a library, not a program: check it without demanding `main`.
+  const abs = path.resolve(file);
+  const isStd = abs === STDLIB_DIR || abs.startsWith(STDLIB_DIR + path.sep);
+  const result = compile(file, style, "check", { requireMain: !isStd });
   if (!result) return;
   if (!quiet) {
     const time = formatDuration(Date.now() - t0);

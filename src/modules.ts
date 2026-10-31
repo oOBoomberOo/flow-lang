@@ -862,6 +862,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
       return {
         ...d,
         name: values.get(d.name) ?? d.name,
+        paramBounds: rwBounds(d.paramBounds, values, d.span),
         params,
         ret: d.ret ? rwType(d.ret, types) : undefined,
         eff: d.eff ? effLabels(d.eff) : undefined,
@@ -872,6 +873,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
       return {
         ...d,
         name: types.get(d.name) ?? d.name,
+        paramBounds: rwBounds(d.paramBounds, values, d.span),
         variants: d.variants.map((v) => ({
           ...v,
           name: values.get(v.name) ?? v.name,
@@ -879,21 +881,39 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
         })),
       };
     case "RecordType":
-      return { ...d, name: types.get(d.name) ?? d.name, fields: d.fields.map((f) => ({ ...f, type: rwType(f.type, types) })) };
+      return {
+        ...d,
+        name: types.get(d.name) ?? d.name,
+        paramBounds: rwBounds(d.paramBounds, values, d.span),
+        fields: d.fields.map((f) => ({ ...f, type: rwType(f.type, types) })),
+      };
     case "Alias":
-      return { ...d, name: types.get(d.name) ?? d.name, type: rwType(d.type, types) };
+      return {
+        ...d,
+        name: types.get(d.name) ?? d.name,
+        paramBounds: rwBounds(d.paramBounds, values, d.span),
+        type: rwType(d.type, types),
+      };
     case "Trait":
-      return { ...d, name: values.get(d.name) ?? d.name, methods: d.methods.map((m) => rwSig(m, types)) };
+      return {
+        ...d,
+        name: values.get(d.name) ?? d.name,
+        paramBounds: rwBounds(d.paramBounds, values, d.span),
+        methods: d.methods.map((m) => rwSig(m, types, values)),
+      };
     case "Effect":
-      return { ...d, name: values.get(d.name) ?? d.name, ops: d.ops.map((m) => rwSig(m, types)) };
+      return { ...d, name: values.get(d.name) ?? d.name, ops: d.ops.map((m) => rwSig(m, types, values)) };
     case "Impl":
       return {
         ...d,
         trait: values.get(d.trait) ?? qualValue(d.trait, d.span) ?? d.trait,
         traitArgs: d.traitArgs.map((t) => rwType(t, types)),
         target: rwType(d.target, types),
+        ...(d.where
+          ? { where: d.where.map((w) => ({ ...w, bounds: w.bounds.map((b) => values.get(b) ?? qualValue(b, d.span) ?? b) })) }
+          : {}),
         methods: d.methods.map((m) => ({
-          ...rwSig(m, types),
+          ...rwSig(m, types, values),
           body: rwExpr(m.body, new Set(m.params.map((p) => p.name)), values, types),
         })),
       };
@@ -905,17 +925,36 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
         ops: d.ops.map((o) => ({ ...o, fn: rwExpr(o.fn, new Set(), values, types) })),
       };
     case "Extern":
-      return { ...d, sig: { ...rwSig(d.sig, types), name: values.get(d.sig.name) ?? d.sig.name } };
+      return { ...d, sig: { ...rwSig(d.sig, types, values), name: values.get(d.sig.name) ?? d.sig.name } };
   }
   return d;
 }
 
-function rwSig(s: { params: { name: string; type: TypeExpr; span: Span }[]; ret?: TypeExpr; eff?: { effects: string[] } }, types: Map<string, string>) {
+/** Bounds are plain names until here; they must become the same final names as uses. */
+function rwBounds(
+  bounds: Record<string, string[]> | undefined,
+  values: Map<string, string>,
+  span?: Span,
+): Record<string, string[]> | undefined {
+  if (!bounds) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const [param, names] of Object.entries(bounds)) {
+    out[param] = names.map((n) => values.get(n) ?? qualValue(n, span) ?? n);
+  }
+  return out;
+}
+
+function rwSig(
+  s: { params: { name: string; type: TypeExpr; span: Span }[]; ret?: TypeExpr; eff?: { effects: string[] }; paramBounds?: Record<string, string[]>; span?: Span },
+  types: Map<string, string>,
+  values: Map<string, string>,
+) {
   return {
     ...s,
     params: s.params.map((p) => ({ ...p, type: rwType(p.type, types) })),
     ret: s.ret ? rwType(s.ret, types) : undefined,
     eff: s.eff ? effLabels(s.eff) : undefined,
+    ...(s.paramBounds ? { paramBounds: rwBounds(s.paramBounds, values, s.span) } : {}),
   };
 }
 
