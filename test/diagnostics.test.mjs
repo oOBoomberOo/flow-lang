@@ -43,6 +43,37 @@ main = <p>{str (g ())}</p>`;
   assert.deepEqual({ line: e.line, col: e.col }, at(src, "Colur"));
 });
 
+test("diagnostics: a local signature without a binding is an error", () => {
+  const src = `data Todo = Todo { id :: Int, title :: Str }
+
+homePage :: List Todo -> Html
+homePage todos = <p>{str (getLastId todos)}</p>
+  where
+    getLastid :: List Todo -> Int
+    getLastId = List.fold Math.maxInt 0 . map (\\t -> t.id)
+
+main :: Html
+main = <p>{"x"}</p>`;
+  const e = errorOf(src);
+  assert.match(e.message, /the type signature for 'getLastid' lacks an accompanying binding/);
+  assert.deepEqual({ line: e.line, col: e.col }, at(src, "getLastid ::"));
+
+  // Editor mode keeps the rest of the file: the binding still analyses.
+  const r = compileSource(src, "diag.flow", { recover: true, collectErrors: true });
+  assert.ok(r.errors.some((x) => /lacks an accompanying binding/.test(x.message)));
+  assert.ok(r.program.decls.some((d) => d.k === "Fn" && d.name === "main"), "main survives the error");
+
+  // A `let` statement is checked the same way.
+  const doSrc = `main :: Html
+main = do
+  let f :: Int -> Int
+  let g = 1
+  <p>{str g}</p>`;
+  const e2 = errorOf(doSrc);
+  assert.match(e2.message, /the type signature for 'f' lacks an accompanying binding/);
+  assert.deepEqual({ line: e2.line, col: e2.col }, at(doSrc, "f ::"));
+});
+
 test("diagnostics: a returned literal is checked against the declared return type", () => {
   const src = `f :: () -> Str
 f () = 42

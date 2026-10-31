@@ -72,6 +72,8 @@ export class Parser {
   toks: Token[];
   pos = 0;
   recover: boolean;
+  /** errors collected without aborting in editor mode */
+  errors: FlowError[] = [];
   /** indentation stack: > 0 for an implicit block, 0 for a bracketed context */
   layout: number[] = [];
   semiAt = -1;
@@ -267,7 +269,15 @@ export class Parser {
 
     const decls = this.groupItems(items, errors);
     if (exportSpec) this.applyExports(decls, exportSpec);
-    return { decls, file: this.file, ...(errors.length ? { errors } : {}) };
+    // Speculative re-parsing (`let … in`) may record the same error twice.
+    const seen = new Set<string>();
+    const all = [...this.errors, ...errors].filter((e) => {
+      const key = `${e.file}:${e.line}:${e.col}:${e.message}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return { decls, file: this.file, ...(all.length ? { errors: all } : {}) };
   }
 
   /** Skip to the next line that starts at the top-level indentation. */
@@ -970,11 +980,24 @@ export class Parser {
   /** Merge `x :: T` pseudo-bindings into the annotated binding that follows. */
   private attachSigs(bs: Binding[]): Binding[] {
     const out: Binding[] = [];
-    const sigs = new Map<string, TypeExpr>();
+    const sigs = new Map<string, { ann: TypeExpr; tok: Token }>();
     for (const b of bs) {
-      if ((b as Binding & { __sig?: boolean }).__sig) { sigs.set(b.name, b.ann!); continue; }
-      if (sigs.has(b.name) && !b.ann) { b.ann = sigs.get(b.name); sigs.delete(b.name); }
+      if ((b as Binding & { __sig?: boolean }).__sig) {
+        sigs.set(b.name, { ann: b.ann!, tok: b.nameTok });
+        continue;
+      }
+      const sig = sigs.get(b.name);
+      if (sig && !b.ann) { b.ann = sig.ann; sigs.delete(b.name); }
       out.push(b);
+    }
+    // A signature whose name is never bound (`getLastid :: …` next to
+    // `getLastId = …`) must not disappear silently.
+    for (const [name, sig] of sigs) {
+      const error = new FlowError(`the type signature for '${name}' lacks an accompanying binding`, {
+        file: this.file, line: sig.tok.line, col: sig.tok.col, code: "E_PARSE",
+      });
+      if (this.recover) this.errors.push(error);
+      else throw error;
     }
     return out;
   }
