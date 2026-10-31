@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
+import { parse } from "../src/parser.ts";
 import { install, verifyLock, satisfies, bestVersion, add } from "../src/pkg.ts";
 import { FlowError } from "../src/lexer.ts";
 import { withModule, moduleNameFor } from "./helpers.mjs";
@@ -75,6 +76,22 @@ main :: Html
 main = <p>{"x"}</p>`,
   });
   assert.throws(() => compileFile(entry), /not found/);
+});
+
+test("modules: the prelude is a pure re-export surface", () => {
+  const preludeFile = path.join(import.meta.dirname, "..", "stdlib", "prelude.flow");
+  const prelude = parse(fs.readFileSync(preludeFile, "utf8"), preludeFile);
+  assert.ok(prelude.decls.length > 0);
+  assert.ok(prelude.decls.every((d) => d.k === "Use"), "the prelude only imports");
+
+  const { entry } = packageWith({
+    "main.flow": `import Flow.Prelude (at)
+
+main :: Html
+main = <p>{str (at 0 [1, 2])}{str (Prelude.at 0 [3])}</p>`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /function main/);
 });
 
 test("modules: every file must declare the module its path names", () => {

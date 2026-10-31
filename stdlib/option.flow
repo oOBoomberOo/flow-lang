@@ -1,6 +1,9 @@
 module Flow.Option where
 
 -- std::option
+
+data Option a = None | Some a
+
 withDefault :: a -> Option a -> a
 withDefault fallback o = case o of
   None -> fallback

@@ -165,6 +165,9 @@ main = <p>{str (withDefault 0 (map (\x -> x + 1) (Option.Some 3)))}</p>
 * Qualified names work **without any import**: `Flow.Option.withDefault`, `Flow.List.sortBy`,
   `Flow.Http.textResponse`. The linker loads the module on demand and checks its export list.
   The monad family (`map`, `pure`, `return`, `empty`) comes from the prelude.
+* `Flow.Prelude` declares nothing: it re-exports `Flow.Basics`, `Flow.Option`, `Flow.List`,
+  `Flow.String`, `Flow.Cell`, `Flow.Store` and `Flow.Monad`, which is why `str`, `len`, `at`,
+  `Some`, `makeCell` and `Store` are available in every module.
 * Every `.flow` file starts with a `module` header that mirrors its path:
   `src/util.flow` is `module Util where`, `src/shapes/circle.flow` is `module Shapes.Circle where`.
   A standalone script uses its file name (`hello.flow` is `module Hello where`).

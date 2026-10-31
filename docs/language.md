@@ -443,13 +443,14 @@ module claims them.
 
 | Module | What it gives you |
 |---|---|
-| `Flow.Prelude` | injected everywhere: `str`, `len`, `head`, `tail`, `push`, `concat`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `cons`, `makeCell`, `Cell`, `Option` |
-| `Flow.List` | `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
+| `Flow.Prelude` | re-export surface injected everywhere: `str`, `len`, `length`, `head`, `tail`, `push`, `concat`, `cons`, `at`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `makeCell`, `CellOps`, `Store`, `Option`, `Functor`, `Applicative`, `Monad`, `Alternative` |
+| `Flow.Basics` | `str`, `eq`, `neq`, `not` |
+| `Flow.List` | `len`, `length`, `isEmpty`, `push`, `concat`, `cons`, `head`, `tail`, `reverse`, `at`, `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
 | `Flow.Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
 | `Flow.Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `mapWithKey`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
 | `Flow.Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `mapWith`, `filter`, `intSet`, `stringSet` |
 | `Flow.Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
-| `Flow.Option` | `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
+| `Flow.Option` | `Option`, `None`, `Some`, `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
 | `Flow.Result` | `Ok`/`Err` with `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
 | `Flow.String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
 | `Flow.Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
@@ -460,10 +461,10 @@ module claims them.
 | `Flow.Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
 | `Flow.Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
 | `Flow.Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List` and `Cell`, plus `>>=`/`do` |
-| `Flow.Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
+| `Flow.Cell` | `pure`, `make`, `read`, `write`, `makeCell`, `CellOps` - cells are neutral reactive values and monads |
 | `Flow.Client` / `Flow.Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
 | `Flow.State`, `Flow.Exn`, `Flow.Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
-| `Flow.Fs`, `Flow.Net`, `Flow.Http`, `Flow.Random`, `Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
+| `Flow.Fs`, `Flow.Net`, `Flow.Http`, `Flow.Random`, `Flow.Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
 
 Containers are ordinary values, so they work on both sides of the boundary:
 `Dict.stringLookup "k" d` in a render function reads a server-built map through a cut.

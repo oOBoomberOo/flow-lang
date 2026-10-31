@@ -50,10 +50,9 @@ let f = Option.withDefault "fallback" Option.None
 
 The linker sees the qualifier, loads the module on demand, checks visibility and rewrites the
 reference to the declaration. `List`, `Math`, `Http` and the other short std names keep working
-when no local module claims them; `Flow.*` always names the standard library. Members of the
-injected prelude are reachable through their conventional module, so `Option.Some` and
-`Option.None` work even though the `Option` type itself lives in the prelude; the monad family
-(`map`, `pure`, `return`, `bind`, `empty`) is part of the prelude surface as well.
+when no local module claims them; `Flow.*` always names the standard library. `Option.Some` and
+`Option.None` resolve to `Flow.Option`; the monad family (`map`, `pure`, `return`, `bind`,
+`empty`) is re-exported by the prelude from `Flow.Monad`.
 
 Qualified references work for values, constructors, effects, traits and types:
 
@@ -212,24 +211,37 @@ flow add tool git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0
 
 ## The prelude
 
-`stdlib/prelude.flow` (`module Flow.Prelude`) is injected into every module with the lowest
-priority: its declarations are available unqualified (`str`, `len`, `Some`, `None`, `True`,
-`False`, `not`, `concat`, `push`, …) and through the `Option` namespace. A unit's own
-declarations and imports win.
+`stdlib/prelude.flow` (`module Flow.Prelude`) is a **re-export surface**, injected into every
+module with the lowest priority. It declares nothing itself: it imports names from the real
+modules, and every unit sees them unqualified (`str`, `len`, `Some`, `None`, `not`, `concat`,
+`push`, ...) and through their namespaces. A unit's own declarations and imports win.
 
-The standard library ships as modules under the reserved `Flow` namespace: `Flow.List`,
-`Flow.Iter`, `Flow.Dict`, `Flow.Set`, `Flow.Tuple`, `Flow.Option`, `Flow.Result`, `Flow.Math`,
-`Flow.Random`, `Flow.String`, `Flow.Html`, `Flow.Log`, `Flow.Time`, `Flow.Path`, `Flow.Env`,
-`Flow.Http`, `Flow.Net`, `Flow.Fs`, `Flow.State`, `Flow.Exn`, `Flow.Ref`, `Flow.Cell`,
-`Flow.Client`, `Flow.Server`, `Flow.Monad`, `Flow.Fn`, `Flow.Json`, `Flow.Reflect` and
-`Flow.Serialize`. Short names (`List`, `Math`, …) still resolve to these modules when nothing
-local claims them. The full catalogue is in [`language.md`](language.md) § 7.1; reflection and
-JSON are in [`serialize.md`](serialize.md).
+```flow
+at 0 [1, 2]                 -- injected prelude surface
+Prelude.at 0 [1, 2]         -- qualified re-export
+import Flow.Prelude (at)    -- explicit import through the prelude
+```
+
+The sources are `Flow.Basics` (`str`, `eq`, `neq`, `not`), `Flow.Option` (`Option`, `None`,
+`Some`), `Flow.List` (`len`, `length`, `isEmpty`, `push`, `concat`, `cons`, `head`, `tail`,
+`reverse`, `at`), `Flow.String` (`trim`, `upper`, `lower`, `split`, `replace`, `contains`,
+`join`, `chars`, `strLen`, `int`, `float`), `Flow.Cell` (`CellOps`, `makeCell`), `Flow.Store`
+(`Store`) and `Flow.Monad` (`Functor`, `Applicative`, `Monad`, `Alternative`).
+
+The standard library ships as modules under the reserved `Flow` namespace: `Flow.Basics`,
+`Flow.List`, `Flow.Iter`, `Flow.Dict`, `Flow.Set`, `Flow.Tuple`, `Flow.Option`, `Flow.Result`,
+`Flow.Math`, `Flow.Random`, `Flow.String`, `Flow.Html`, `Flow.Log`, `Flow.Time`, `Flow.Path`,
+`Flow.Env`, `Flow.Http`, `Flow.Net`, `Flow.Fs`, `Flow.State`, `Flow.Exn`, `Flow.Ref`,
+`Flow.Cell`, `Flow.Store`, `Flow.Client`, `Flow.Server`, `Flow.Monad`, `Flow.Fn`, `Flow.Json`,
+`Flow.Reflect` and `Flow.Serialize`. Short names (`List`, `Math`, ...) still resolve to these
+modules when nothing local claims them. The full catalogue is in [`language.md`](language.md)
+section 7.1; reflection and JSON are in [`serialize.md`](serialize.md).
 
 ## Everything is ordinary Flow
 
-The prelude's primitives are `foreign import js unsafe` bindings to the host; there are no
-compiler intrinsics for values. `List.sortBy` is written in Flow over an FFI `@sort`; only the
+The primitive helpers are ordinary `foreign import js unsafe` bindings in their modules
+(`Flow.Basics`, `Flow.List`, `Flow.String`, `Flow.Cell`, `Flow.Store`); there are no compiler
+intrinsics for values. `Flow.List.sortBy` is written in Flow over an FFI `@sort`; only the
 primitive operations (`#length`, `@concat`, `#index`, …) reach JavaScript.
 
 ## Web entry points

@@ -142,9 +142,10 @@ export interface Module {
   constRefs: Set<object>;
 }
 
-// The language surface that used to be injected here now lives in
-// std/prelude.flow and reaches the host through `unsafe extern js` bindings.
-// No callable primitive is registered by the compiler.
+// The language surface that used to be injected here now lives in real std
+// modules (Flow.Basics, Flow.List, Flow.String, Flow.Cell, Flow.Store) and
+// reaches the host through `unsafe extern js` bindings. No callable primitive
+// is registered by the compiler.
 
 export const implFnName = (trait: string, index: number, method: string) =>
   `$impl_${trait}_${index}_${method}`;
@@ -318,8 +319,12 @@ export class Infer {
     resetIds();
     this.failedNames.clear();
     this.collect(() => this.checkDuplicateDeclarations(prog));
+    // Register every type first: effects and traits in a later unit may name a
+    // type that appears earlier or later in the flattened program.
     for (const d of prog.decls) {
       if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") this.collect(() => this.registerType(d));
+    }
+    for (const d of prog.decls) {
       if (d.k === "Trait") this.collect(() => this.registerTrait(d));
       if (d.k === "Effect") this.collect(() => this.registerEffect(d));
     }
@@ -334,8 +339,9 @@ export class Infer {
       if (!this.collect(() => this.declareExtern(d))) this.failedNames.add(d.sig.name);
     }
 
-    // Capabilities (Server / Client / Store) are declared by std::prelude, which
-    // every module imports implicitly; the compiler injects nothing here.
+    // Capabilities (Server / Client / Store) are declared by Flow.Server,
+    // Flow.Client and Flow.Store, which every module reaches through the
+    // prelude re-export; the compiler injects nothing here.
 
     // Providers determine where an effect lives, and effect placement determines
     // where the calls are placed. Run both to a fixpoint.

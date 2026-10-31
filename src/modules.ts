@@ -288,6 +288,8 @@ export class Linker {
       for (const imp of this.importsOf(u)) visit(imp.unit);
       ordered.push(u);
     };
+    const prelude = this.loadUnit(stdPackage(), ["prelude"]);
+    visit(prelude);
     visit(this.entry);
     for (const u of this.units.values()) visit(u);
 
@@ -295,8 +297,6 @@ export class Linker {
     // effects live in std, not in the compiler. Visiting it also pulls in the
     // modules it re-exports (the Monad family). It must be first so its types
     // (Option, …) are registered before modules that use them.
-    const prelude = this.loadUnit(stdPackage(), ["prelude"]);
-    visit(prelude);
     const preludeIndex = ordered.indexOf(prelude);
     if (preludeIndex >= 0) ordered.splice(preludeIndex, 1);
     ordered.unshift(prelude);
@@ -447,7 +447,19 @@ export class Linker {
           if (table.has(alias)) {
             throw new FlowError(`duplicate import '${alias}'`, { file: unit.file, code: "E_MODULE" });
           }
-          const decl = target.declares.get(item.name);
+          let actualUnit = target;
+          let actualName = item.name;
+          let decl = target.declares.get(item.name);
+          // The prelude is a re-export surface: importing a name from it
+          // resolves through the module that actually declares the name.
+          if (!decl && target.id === "std::prelude") {
+            const re = this.importTable(target).get(item.name);
+            if (re) {
+              actualUnit = re.unit;
+              actualName = re.name;
+              decl = actualUnit.declares.get(actualName);
+            }
+          }
           const where = moduleDisplayName(target, unit.pkg);
           if (!decl) {
             throw new FlowError(
@@ -461,7 +473,7 @@ export class Linker {
               { file: unit.file, line: d.span?.line, col: d.span?.col, code: "E_MODULE" },
             );
           }
-          table.set(alias, { unit: target, name: item.name });
+          table.set(alias, { unit: actualUnit, name: actualName });
         }
       } catch (e) {
         if (this.recover && e instanceof FlowError) this.errors.push(e);
@@ -604,38 +616,33 @@ export class Linker {
         else qValues.set(key, final);
       }
     }
+
+    // The prelude is an import surface too: `Prelude.at` / `Flow.Prelude.at`
+    // resolve to the module that actually declares the name.
+    const preludeQual = this.units.get("std::prelude");
+    if (preludeQual) {
+      for (const [alias, ref] of this.importTable(preludeQual)) {
+        const final = finalName.get(`${ref.unit.id}::${ref.name}`);
+        const decl = ref.unit.declares.get(ref.name);
+        if (!final || !decl) continue;
+        const key = `${preludeQual.id}::${alias}`;
+        if (isTypeName(decl, ref.name)) qTypes.set(key, final);
+        else qValues.set(key, final);
+      }
+    }
     QUALIFIED_VALUES = qValues;
     QUALIFIED_TYPES = qTypes;
 
-    // `Option` and its constructors live in the injected prelude but belong to
-    // the `Option` module as far as users are concerned: `Option.Some`,
-    // `Option.Option`.
-    const prelude = this.units.get("std::prelude");
-    const optionUnit = this.units.get("std::option");
-    if (prelude && optionUnit) {
-      for (const n of ["Option", "None", "Some"]) {
-        const d = prelude.declares.get(n);
-        const final = finalName.get(`${prelude.id}::${n}`);
-        if (!d || !final) continue;
-        const key = `${optionUnit.id}::${n}`;
-        if (isTypeName(d, n)) qTypes.set(key, final); else qValues.set(key, final);
-      }
-    }
     UNIT_BY_ID = new Map(units.map((u) => [u.id, u]));
 
     for (const u of units) {
       const values = new Map<string, string>();
       const types = new Map<string, string>();
       const unitName = moduleDisplayName(u, this.entry.pkg);
-      // Option is declared in the injected prelude but belongs to Flow.Option.
-      const displayFor = (n: string) =>
-        u.pkg === "std" && u.modulePath[0] === "prelude" && (n === "Option" || n === "None" || n === "Some")
-          ? `Flow.Option.${n}`
-          : `${unitName}.${n}`;
       for (const [n, d] of u.declares) {
         const final = finalName.get(`${u.id}::${n}`);
         if (!final) continue;
-        display.set(final, displayFor(n));
+        display.set(final, `${unitName}.${n}`);
         if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") types.set(n, final);
         if (d.k === "Adt") for (const v of d.variants) values.set(v.name, finalName.get(`${u.id}::${v.name}`)!);
         if (d.k === "Fn" || d.k === "Extern" || d.k === "Trait" || d.k === "Effect") values.set(n, final);

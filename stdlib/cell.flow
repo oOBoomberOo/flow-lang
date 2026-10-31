@@ -1,11 +1,37 @@
-module Flow.Cell (pure, make, read, write) where
+module Flow.Cell (pure, make, read, write, makeCell, CellOps) where
 
--- Cells are neutral reactive values, and they are monads (see std/monad), so a
+-- Cells are neutral reactive values, and they are monads (see Flow.Monad), so a
 -- do block reads them with `<-`:
 --
 --   do
 --     n <- counter
 --     Cell.pure (n + 1)
+
+foreign import js unsafe "__flow.host.cell" {
+  host_cell :: a -> Cell a
+}
+
+foreign import js unsafe "__flow.get" {
+  host_get :: Cell a -> a
+}
+
+foreign import js unsafe "__flow.set" {
+  host_set :: Cell a -> a -> ()
+}
+
+-- The prelude re-exports this class and `makeCell`.
+class CellOps a where
+  get :: Cell a -> a
+  set :: Cell a -> a -> ()
+  update :: Cell a -> (a -> a) -> ()
+
+instance CellOps (Cell a) a where
+  get c = host_get c
+  set c value = host_set c value
+  update c f = host_set c (f (host_get c))
+
+makeCell :: a -> Cell a
+makeCell init = host_cell init
 
 -- `pure` is the monadic return for Cell: a fresh cell holding the value.
 pure :: a -> Cell a

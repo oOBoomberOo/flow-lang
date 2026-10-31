@@ -1,10 +1,92 @@
-module Flow.String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower) where
+module Flow.String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower, trim, upper, lower, split, replace, contains, join, chars, strLen, int, float) where
 
--- std::string
---
--- The primitive operations live in the prelude (`trim`, `upper`, `lower`,
--- `split`, `replace`, `contains`, `join`, `chars`, `len`). This module adds the
--- composed helpers, with names that do not shadow the prelude.
+-- std::string: the primitive operations plus the composed helpers.
+-- The prelude re-exports `trim`, `upper`, `lower`, `split`, `replace`,
+-- `contains`, `join`, `chars`, `strLen`, `int` and `float`.
+import Flow.List (concat, push)
+
+foreign import js unsafe "@trim" {
+  s_trim :: Str -> Str
+}
+
+foreign import js unsafe "@toUpperCase" {
+  s_upper :: Str -> Str
+}
+
+foreign import js unsafe "@toLowerCase" {
+  s_lower :: Str -> Str
+}
+
+foreign import js unsafe "@split" {
+  s_split :: Str -> Str -> List Str
+}
+
+foreign import js unsafe "@replaceAll" {
+  s_replace :: Str -> Str -> Str -> Str
+}
+
+foreign import js unsafe "@includes" {
+  s_contains :: Str -> Str -> Bool
+}
+
+foreign import js unsafe "@join" {
+  s_join :: List Str -> Str -> Str
+}
+
+foreign import js unsafe "@charAt" {
+  s_char_at :: Str -> Int -> Str
+}
+
+foreign import js unsafe "#length" {
+  s_length :: Str -> Int
+}
+
+foreign import js unsafe "parseInt" {
+  host_parse_int :: Str -> Int
+}
+
+foreign import js unsafe "parseFloat" {
+  host_parse_float :: Str -> Float
+}
+
+trim :: Str -> Str
+trim s = s_trim s
+
+upper :: Str -> Str
+upper s = s_upper s
+
+lower :: Str -> Str
+lower s = s_lower s
+
+split :: Str -> Str -> List Str
+split sep s = s_split s sep
+
+replace :: Str -> Str -> Str -> Str
+replace from to s = s_replace s from to
+
+contains :: Str -> Str -> Bool
+contains sub s = s_contains s sub
+
+join :: Str -> List Str -> Str
+join sep xs = s_join xs sep
+
+chars :: Str -> List Str
+chars s = charsFrom s 0 (s_length s) []
+
+-- O(1) string length through the host, instead of walking the characters.
+strLen :: Str -> Int
+strLen s = s_length s
+
+charsFrom :: Str -> Int -> Int -> List Str -> List Str
+charsFrom s i n acc = if i >= n then acc else charsFrom s (i + 1) n (push (s_char_at s i) acc)
+
+int :: Str -> Int
+int s = host_parse_int s
+
+float :: Str -> Float
+float s = host_parse_float s
+
+-- ---------------------------------------------------------------- helpers
 length :: Str -> Int
 length s = strLen s
 

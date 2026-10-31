@@ -303,7 +303,7 @@ main :: Html
 main = <p>{Show.show 1}</p>`;
   const e1 = errorOf(wrongReturn);
   // an untyped instance method takes its type from the class
-  assert.match(e1.message, /return type mismatch in fn \$impl_Show_1_show: expected Str, got Int/);
+  assert.match(e1.message, /return type mismatch in fn \$impl_Show_\d+_show: expected Str, got Int/);
   assert.equal(e1.line, 5);
 
   const wrongParam = `class Show a where

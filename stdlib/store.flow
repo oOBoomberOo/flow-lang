@@ -1,0 +1,27 @@
+module Flow.Store (Store) where
+
+-- The Store capability: a server-side key/value store.
+--
+--   Store.set "started" "yes"
+--   Store.get "started"     -- Some "yes"
+--
+-- The runtime supplies the raw primitives; the provider below turns them into
+-- the capability. The prelude re-exports `Store`.
+
+import Flow.Option (Option)
+
+effect Store @ server where
+  get :: Str -> Option Str
+  set :: Str -> Str -> ()
+
+foreign import js unsafe "__flow.host.storeGet" {
+  host_store_get :: Str -> Option Str
+}
+
+foreign import js unsafe "__flow.host.storeSet" {
+  host_store_set :: Str -> Str -> ()
+}
+
+provide Store where
+  get key = host_store_get key
+  set key value = host_store_set key value

@@ -1,0 +1,26 @@
+module Flow.Basics (str, eq, not, neq) where
+
+-- The smallest language-wide helpers: showing and comparing values.
+--
+-- The runtime exposes them as raw host primitives; everything else is built
+-- from ordinary Flow. The prelude re-exports this module.
+
+foreign import js unsafe "__flow.show" {
+  host_show :: a -> Str
+}
+
+foreign import js unsafe "__flow.eq" {
+  host_eq :: a -> a -> Bool
+}
+
+str :: a -> Str
+str x = host_show x
+
+eq :: a -> a -> Bool
+eq x y = host_eq x y
+
+not :: Bool -> Bool
+not b = if b then False else True
+
+neq :: a -> a -> Bool
+neq x y = not (host_eq x y)

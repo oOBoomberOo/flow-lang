@@ -606,11 +606,11 @@ main = <p>{str 1} {str (len [1, 2])} {str (Some 3)}</p>
   try {
     await c.request("initialize", { rootUri: null, capabilities: {} });
     const text = await open(c, entry);
-    for (const [needle, name] of [["str 1", "str"], ["len ", "len"], ["Some ", "Some"]]) {
+    for (const [needle, name, file] of [["str 1", "str", "basics.flow"], ["len ", "len", "list.flow"], ["Some ", "Some", "option.flow"]]) {
       const at = pos(text, needle, 1);
       const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
       assert.ok(def, `definition for ${name}`);
-      assert.match(new URL(def.uri).pathname, /stdlib\/prelude\.flow$/, `${name} is std code`);
+      assert.match(new URL(def.uri).pathname, new RegExp(`stdlib/${file}$`), `${name} is std code`);
     }
   } finally { c.proc.kill(); }
 });

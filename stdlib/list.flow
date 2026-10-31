@@ -1,7 +1,67 @@
-module Flow.List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
+module Flow.List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem, len, isEmpty, push, concat, at, head, tail, reverse, cons) where
 
 -- std::list — list transforms, written in Flow itself. Operations take their
 -- function/index first and the list last, so `xs |> map f` works.
+
+-- The prelude re-exports the everyday names.
+import Flow.Option (Option(..))
+
+-- ---------------------------------------------------------------- primitives
+foreign import js unsafe "#length" {
+  length_ :: List a -> Int
+}
+
+foreign import js unsafe "#index" {
+  raw_at :: List a -> Int -> a
+}
+
+foreign import js unsafe "@concat" {
+  concat_arrays :: List a -> List a -> List a
+}
+
+foreign import js unsafe "@slice" {
+  slice :: List a -> Int -> List a
+}
+
+foreign import js unsafe "@slice" {
+  slice_to :: List a -> Int -> Int -> List a
+}
+
+foreign import js unsafe "@reverse" {
+  reverse_in_place :: List a -> ()
+}
+
+len :: List a -> Int
+len xs = length_ xs
+
+isEmpty :: List a -> Bool
+isEmpty xs = len xs == 0
+
+push :: a -> List a -> List a
+push x xs = concat_arrays xs [x]
+
+concat :: List a -> List a -> List a
+concat xs ys = concat_arrays xs ys
+
+cons :: a -> List a -> List a
+cons x xs = concat_arrays [x] xs
+
+at :: Int -> List a -> a
+at i xs = raw_at xs i
+
+head :: List a -> Option a
+head xs = if isEmpty xs then None else Some (at 0 xs)
+
+tail :: List a -> List a
+tail xs = if isEmpty xs then [] else slice xs 1
+
+reverse :: List a -> List a
+reverse xs = do
+  let out = slice_to xs 0 (len xs)
+  reverse_in_place out
+  out
+
+-- ---------------------------------------------------------------- transforms
 length :: List a -> Int
 length xs = len xs
 

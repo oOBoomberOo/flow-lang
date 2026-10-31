@@ -51,14 +51,14 @@ test("superclass bounds resolve when a local class shadows a prelude trait", () 
   // The prelude re-exports Functor/Applicative; a local declaration must win
   // in `class Functor f => Applicative f`, not become an unknown trait.
   ok(`class Functor f where
-  map :: (a -> b) -> f a -> f b
+  fmap2 :: (a -> b) -> f a -> f b
 
 class Functor f => Applicative f where
-  pure :: a -> f a
-  ap :: f (a -> b) -> f a -> f b
+  pure2 :: a -> f a
+  ap2 :: f (a -> b) -> f a -> f b
 
 class Applicative f => Monad f where
-  bind :: (a -> f b) -> f a -> f b
+  bind2 :: (a -> f b) -> f a -> f b
 
 main :: Html
 main = <p>{"x"}</p>`);
