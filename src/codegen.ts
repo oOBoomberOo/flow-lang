@@ -1177,6 +1177,9 @@ export class Codegen {
           }
         }
         if (/^\d+$/.test(e.name)) return `${this.emitExpr(e.target, side, ctxHome, env)}[${e.name}]`;
+        if (this.mod.adtProjections.has(e)) {
+          return `R.v(${this.emitExpr(e.target, side, ctxHome, env)}).args[0].${e.name}`;
+        }
         return `R.v(${this.emitExpr(e.target, side, ctxHome, env)}).${e.name}`;
       case "Tuple": return `[${e.items.map((i) => this.val(i, side, ctxHome, env)).join(", ")}]`;
       case "List": return `[${e.items.map((i) => this.val(i, side, ctxHome, env)).join(", ")}]`;

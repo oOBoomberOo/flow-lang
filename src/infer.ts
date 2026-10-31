@@ -124,6 +124,12 @@ export interface Module {
   rightPartials: Map<object, number>;
   /** `resume` references inside algebraic handler operations */
   resumeVars: Set<object>;
+  /**
+   * Field projections that read a single-constructor ADT's record payload
+   * (`data Todo = Todo { id :: Int }` -> `todo.id`). Codegen must read the
+   * constructor's first argument instead of the value itself.
+   */
+  adtProjections: Set<object>;
   /** references to top-level constants (`pi = 3.14`): evaluated by calling them */
   constRefs: Set<object>;
 }
@@ -180,6 +186,7 @@ export class Infer {
       genCalls: new Set(),
       partialCalls: new Set(),
       rightPartials: new Map(),
+      adtProjections: new Set(),
       constRefs: new Set(),
       resumeVars: new Set(),
     };
@@ -1311,6 +1318,13 @@ export class Infer {
           if (!f && (t.open || t.atLeast)) { f = fresh(0); t.fields[e.name] = f; }
           if (!f) this.fail(`record has no field '${e.name}'`, e.span);
           ty = f;
+        } else if (t.k === "con") {
+          const payload = this.recordPayload(t);
+          if (!payload) this.fail(`cannot project '.${e.name}' from ${typeStr(t)}`, e.span);
+          const f = payload.fields[e.name];
+          if (!f) this.fail(`${typeStr(t)} has no field '${e.name}'`, e.span);
+          ty = f;
+          this.mod.adtProjections.add(e);
         } else {
           this.fail(`cannot project '.${e.name}' from ${typeStr(t)}`, e.span);
         }
@@ -1674,6 +1688,26 @@ export class Infer {
       return;
     }
     this.fail(`cell ${op} needs an Int or Float cell, got ${typeStr(elem)}`, span);
+  }
+
+  /**
+   * The record payload of a single-constructor ADT, resolved with the type
+   * arguments at this occurrence: `data Todo = Todo { id :: Int }` makes
+   * `Todo` project like `{ id :: Int }`. Null for any other type.
+   */
+  private recordPayload(t: Type): (Type & { k: "rec" }) | null {
+    if (t.k !== "con") return null;
+    const def = this.mod.typeDefs.get(t.name);
+    if (!def || def.kind !== "adt") return null;
+    const decl = def.decl;
+    if (decl.k !== "Adt" || decl.variants.length !== 1) return null;
+    const variant = decl.variants[0]!;
+    if (variant.args.length !== 1 || variant.args[0]!.k !== "TRecord") return null;
+    const params = new Map<string, Type>();
+    decl.params.forEach((name, i) => params.set(name, t.args[i] ?? fresh(0)));
+    const fields: Record<string, Type> = {};
+    for (const f of variant.args[0]!.fields) fields[f.name] = this.resolveType(f.type, params);
+    return { k: "rec", fields };
   }
 
   /**
@@ -2380,6 +2414,24 @@ function forEachHtmlExpr(n: HtmlNode, fn: (e: Expr) => void): void {
 }
 
 /** The first binder (parameter, `let`, or pattern) named `name` in `e`, if any. */
+/**
+ * Field names of a single-constructor ADT with a record payload, for editor
+ * completion. `Infer.recordPayload` resolves the same payload's field types.
+ */
+export function adtRecordFieldNames(
+  t: Type,
+  typeDefs: Map<string, { params: string[]; kind: "adt" | "record" | "alias"; decl: Decl }>,
+): string[] | null {
+  if (t.k !== "con") return null;
+  const def = typeDefs.get(t.name);
+  if (!def || def.kind !== "adt") return null;
+  const decl = def.decl;
+  if (decl.k !== "Adt" || decl.variants.length !== 1) return null;
+  const variant = decl.variants[0]!;
+  if (variant.args.length !== 1 || variant.args[0]!.k !== "TRecord") return null;
+  return variant.args[0]!.fields.map((f) => f.name);
+}
+
 export function findBinderNamed(e: Expr, name: string): { line: number; col: number } | null {
   let found: { line: number; col: number } | null = null;
   const pat = (p: Pattern): void => {

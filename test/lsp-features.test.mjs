@@ -177,6 +177,33 @@ test("lsp: completion offers keywords, locals, symbols and module members", asyn
   } finally { c.proc.kill(); }
 });
 
+test("lsp: completion after an ADT value offers its payload fields", async () => {
+  const { entry } = packageWith({
+    "main.flow": `data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+label :: Todo -> Str
+label todo = todo.title
+
+main :: Html
+main = <p>{"x"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    await new Promise((r) => setTimeout(r, 300));
+    const res = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, "todo.title", 5),
+    });
+    const labels = res.items.map((i) => i.label);
+    for (const field of ["id", "title", "completed"]) {
+      assert.ok(labels.includes(field), `offers '${field}': ${labels.join(", ")}`);
+    }
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: definition, references, highlights and rename", async () => {
   const { entry, root } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
   const c = startServer();

@@ -62,6 +62,35 @@ main :: Html
 main = <p>{name Red}</p>`);
 });
 
+test("a single-constructor record ADT projects its fields", () => {
+  const r = ok(`data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+idOf :: Todo -> Int
+idOf todo = todo.id
+
+main :: Html
+main = <p>{str (idOf (Todo { id = 1, title = "x", completed = False }))}</p>`);
+  assert.match(r.client, /\.args\[0\]\.id/, "projection reads the constructor payload");
+});
+
+test("projection rejects a missing field and a multi-constructor ADT", () => {
+  bad(`data Todo = Todo { id :: Int }
+
+titleOf :: Todo -> Str
+titleOf todo = todo.title
+
+main :: Html
+main = <p>{"x"}</p>`, /Todo has no field 'title'/);
+
+  bad(`data Shape = Circle Int | Rect Int Int
+
+area :: Shape -> Int
+area shape = shape.value
+
+main :: Html
+main = <p>{"x"}</p>`, /cannot project '.value' from Shape/);
+});
+
 test("non-exhaustive match is a type error", () => {
   bad(`data Colour = Red | Green | Blue
 

@@ -199,6 +199,22 @@ u = { name = "ada", age = 36 }
 shout = u.name ++ "!"
 ```
 
+A `data` type with **one constructor whose only payload is a record** is a named
+record: fields project directly, and the payload still pattern-matches.
+
+```flow
+data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+done :: Todo -> Bool
+done todo = todo.completed
+
+retitle :: Todo -> Str -> Todo
+retitle (Todo t) title = Todo { id = t.id, title = title, completed = t.completed }
+```
+
+Projection is only unambiguous for a single constructor; a multi-constructor
+type must be matched with `case` before reading fields.
+
 ## 5. Client, Server and effects
 
 `Client` and `Server` are **modules**, not capabilities. Each function lives on one

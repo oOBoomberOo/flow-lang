@@ -118,6 +118,43 @@ main = <p>{"rs"}</p>
   });
 });
 
+test("functional: a record ADT projects its payload fields", async () => {
+  const source = `import Http (get, Router, RequestObject, textResponse)
+
+data Todo = Todo
+  { id :: Int
+  , title :: Str
+  , completed :: Bool
+  }
+
+data Box a = Box { value :: a }
+
+makeTodo :: Int -> Str -> Todo
+makeTodo id title = Todo { id = id, title = title, completed = False }
+
+isTodo :: Todo -> Int -> Bool
+isTodo todo target = todo.id == target
+
+unbox :: Box Int -> Int
+unbox box = box.value
+
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/adt" (\\(_req :: RequestObject) ->
+    textResponse (str (isTodo (makeTodo 7 "ship") 7) + "|" +
+      str ((makeTodo 9 "later").title) + "|" +
+      str (unbox (Box { value = 4 })))) ]
+
+main :: Html
+main = <p>{"adt"}</p>
+`;
+  await withHost(source, async (host) => {
+    const res = await fetch(host.url + "/adt");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "True|later|4");
+  });
+});
+
 test("functional: inferred lambda parameters work in every position", () => {
   const src = `import List (map, filter, range)
 
