@@ -122,6 +122,26 @@ main = do
   );
 });
 
+test("cells: CellOps passes the Cell itself to the host get/set primitives", () => {
+  const r = compileSource(`main :: Html
+main = do
+  let c = Client.state 1
+  c.update (\\(x :: Int) -> x + 1)
+  <p>{str c.value}</p>`, "cell-host.flow");
+  assert.deepEqual(r.errors, []);
+  assert.match(
+    r.client,
+    /function \$impl_CellOps_\d+_get\(c\) \{ return R\.ffiCall\("__flow\.get", \[c\]\)/,
+    "get receives the cell",
+  );
+  assert.match(
+    r.client,
+    /function \$impl_CellOps_\d+_update\(c, f\) \{ return R\.ffiCall\("__flow\.set", \[c,/,
+    "update receives the cell",
+  );
+  assert.doesNotMatch(r.client, /__flow\.set", \[R\.v\(c\)/);
+});
+
 test("cells: `state := pure x` explains the extra functor layer", () => {
   assert.throws(
     () => compileSource(`main :: Html

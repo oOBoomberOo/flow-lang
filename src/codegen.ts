@@ -1597,10 +1597,17 @@ export class Codegen {
       const info = this.mod.fns.get(e.fn.name);
       const ext = info?.extern;
       if (ext && !env.has(e.fn.name)) {
+        // `__flow.get` / `__flow.set` take the Cell itself, not its value.
+        const cellPrim = ext.implName === "__flow.get" || ext.implName === "__flow.set";
+        const externalArgs = e.args
+          .map((a, i) => (cellPrim && i === 0
+            ? this.emitExpr(a, side, ctxHome, env)
+            : this.val(a, side, ctxHome, env)))
+          .join(", ");
         if (ext.modulePath && ext.exportName) {
-          return `${this.shimRef(info!.span?.file, ext.modulePath, ext.exportName, side)}(${args})`;
+          return `${this.shimRef(info!.span?.file, ext.modulePath, ext.exportName, side)}(${externalArgs})`;
         }
-        return `R.ffiCall(${ev(ext.implName)}, [${args}])`;
+        return `R.ffiCall(${ev(ext.implName)}, [${externalArgs}])`;
       }
     }
 
