@@ -1,6 +1,10 @@
-module Flow.Html (classNames, text, Card, Badge, Page, Button, Items) where
+module Flow.Html (classNames, text, Card, Badge, Page, Button, Items, FromEvent, eventValue) where
 
--- Flow.Html — markup helpers and ready-made components.
+-- Flow.Html - markup helpers, ready-made components and typed event values.
+import Flow.Exn (Exn, fail)
+import Flow.Json (Json(..), decodeSafe)
+import Flow.Math (floor, toFloat)
+
 classNames :: List Str -> Str
 classNames xs = join " " xs
 
@@ -36,3 +40,60 @@ mapItems :: (a -> Html) -> List a -> Html
 mapItems render items = case items of
   [] -> <i class="empty" />
   x : rest -> <li class="list-item">{render x} {mapItems render rest}</li>
+
+-- ---------------------------------------------------------------- event values
+-- `eventValue event "target.value"` decodes a field path on the event into the
+-- type expected at the call site:
+--
+--   let name :: Str = eventValue event "target.value"
+--   let checked :: Bool = eventValue event "target.checked"
+--   Exn.attempt 0 (\() -> let n :: Int = eventValue event "target.value" in n + 1)
+--
+-- `Str` reads strings; `Int` and `Float` parse numeric strings; `Bool` accepts
+-- the `checked` flag or `"true"`/`"false"`/`"on"`/`"off"`/`"1"`/`"0"`. A
+-- missing path or a value that cannot be decoded raises the `Exn` effect.
+foreign import js unsafe "__flow.host.eventField" {
+  host_event_field :: Event -> Str -> Option Json
+}
+
+intOf :: Str -> Float -> Int ! Exn
+intOf path n = if toFloat (floor n) == n then floor n else fail ("event." + path + " is not an integer")
+
+class FromEvent a where
+  fromEvent :: Event -> Str -> a ! Exn
+
+eventValue :: FromEvent a => Event -> Str -> a ! Exn
+eventValue event path = fromEvent event path
+
+instance FromEvent Str where
+  fromEvent event path = case host_event_field event path of
+    Some (JStr s) -> s
+    _ -> fail ("event." + path + " is not a string")
+
+instance FromEvent Int where
+  fromEvent event path = case host_event_field event path of
+    Some (JNum n) -> intOf path n
+    Some (JStr s) -> case decodeSafe s of
+      Ok (JNum n) -> intOf path n
+      _ -> fail ("event." + path + " is not an integer")
+    _ -> fail ("event." + path + " is not an integer")
+
+instance FromEvent Float where
+  fromEvent event path = case host_event_field event path of
+    Some (JNum n) -> n
+    Some (JStr s) -> case decodeSafe s of
+      Ok (JNum n) -> n
+      _ -> fail ("event." + path + " is not a number")
+    _ -> fail ("event." + path + " is not a number")
+
+instance FromEvent Bool where
+  fromEvent event path = case host_event_field event path of
+    Some (JBool b) -> b
+    Some (JStr s) ->
+      if s == "true" || s == "on" || s == "1"
+        then True
+        else if s == "false" || s == "off" || s == "0"
+          then False
+          else fail ("event." + path + " is not a boolean")
+    _ -> fail ("event." + path + " is not a boolean")
+

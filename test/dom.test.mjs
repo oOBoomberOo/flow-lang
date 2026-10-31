@@ -45,6 +45,19 @@ test("dom: boolean attributes set and clear their attribute", () => {
   assert.equal(unchecked.attrs.checked, undefined, "false removes the attribute");
 });
 
+test("dom: eventField walks target.value and target.checked", () => {
+  runtime();
+  const host = globalThis.__flow.host;
+  const event = { target: { value: "12", checked: true }, key: "a" };
+  assert.deepEqual(host.eventField(event, "target.value"), {
+    $: "Some", args: [{ $: "JStr", args: ["12"] }],
+  });
+  assert.deepEqual(host.eventField(event, "target.checked"), {
+    $: "Some", args: [{ $: "JBool", args: [true] }],
+  });
+  assert.deepEqual(host.eventField(event, "target.missing"), { $: "None", args: [] });
+});
+
 test("dom: a list of markup renders its elements, empty lists included", () => {
   const R = runtime();
   const nodes = [document.createElement("li"), document.createElement("li")];

@@ -427,6 +427,27 @@ main = <input type="text" onSubmit={\e ->
 } />
 ```
 
+`Html.eventValue event path` decodes a field path to the type expected at the
+call site:
+
+```flow
+import Html (eventValue)
+
+readCount event =
+  Exn.attempt 0 (\() ->
+    let n :: Int = eventValue event "target.value"
+    in n)
+
+readChecked event =
+  Exn.attempt False (\() ->
+    let checked :: Bool = eventValue event "target.checked"
+    in checked)
+```
+
+`Str` reads strings, `Int`/`Float` parse numeric values, and `Bool` accepts
+`target.checked` or `"true"`/`"false"`/`"on"`/`"off"`/`"1"`/`"0"`. A missing
+path or an undecodable value raises the `Exn` effect.
+
 `Event` and `Dom` are client-only and cannot cross the boundary (they cannot be
 serialized or sent to the server).
 

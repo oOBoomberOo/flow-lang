@@ -101,6 +101,35 @@ main = <p>{
   assert.match(r.client, /function main/);
 });
 
+test("Html.eventValue decodes an event target into the expected type", () => {
+  ok(`import Flow.Html (eventValue)
+import Flow.Exn (attempt)
+
+readInt :: Event -> Int
+readInt e = attempt 0 (\\() -> eventValue e "target.value")
+
+readFloat :: Event -> Float
+readFloat e = attempt 0.0 (\\() -> eventValue e "target.value")
+
+readBool :: Event -> Bool
+readBool e = attempt False (\\() -> eventValue e "target.checked")
+
+readStr :: Event -> Str
+readStr e = attempt "" (\\() -> eventValue e "target.value")
+
+onSubmit :: Event -> ()
+onSubmit e = do
+  let n = readInt e
+  let f = readFloat e
+  let b = readBool e
+  let s = readStr e
+  let _ = (n, f, b, s)
+  ()
+
+main :: Html
+main = <form onSubmit={onSubmit}><p>{"x"}</p></form>`);
+});
+
 /* ------------------------- ADTs ------------------------- */
 
 test("exhaustive match on an ADT", () => {

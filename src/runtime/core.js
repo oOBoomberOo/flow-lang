@@ -503,6 +503,21 @@ function installSharedHost() {
     if (Array.isArray(v)) return { $: "JList", args: [v.map(toFlowJson)] };
     return { $: "JObject", args: [Object.entries(v).map(([k, x]) => [k, toFlowJson(x)])] };
   };
+
+  // Walk a dotted path on a DOM event (`target.value`, `target.checked`, ...).
+  // Only primitive leaves are returned; objects/nodes are not serialized.
+  host.eventField = (event, path) => {
+    let value = event;
+    for (const part of String(path).split(".")) {
+      if (value === null || value === undefined) return { $: "None", args: [] };
+      value = value[part];
+    }
+    if (value === undefined) return { $: "None", args: [] };
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+      return { $: "Some", args: [toFlowJson(value)] };
+    }
+    return { $: "None", args: [] };
+  };
   // Environment and paths (std/env, std/path). Node-only values are undefined in
   // a browser, which is why std/env is annotated @server.
   const nodeProcess = typeof process !== "undefined" ? process : undefined;
