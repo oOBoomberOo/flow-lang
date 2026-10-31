@@ -262,6 +262,20 @@ main = do
   assert.equal(r.diagnostics.length, 1);
 });
 
+test("an inferred parameter only requires the fields its body reads", () => {
+  ok(`total = \\user -> user.age + user.score
+
+main :: Html
+main = <p>{str (total { name = "Ada", age = 36, score = 1 })}</p>`);
+});
+
+test("a record argument must still supply every field the callee reads", () => {
+  bad(`total = \\user -> user.age + user.score
+
+main :: Html
+main = <p>{str (total { age = 36 })}</p>`, /record mismatch|missing/);
+});
+
 test("a non-serializable value cannot cross", () => {
   bad(`
 main :: Html

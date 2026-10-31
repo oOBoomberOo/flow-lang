@@ -213,10 +213,12 @@ log msg = server_write msg
 Calling one from the other side is a cut, exactly like any other crossing:
 
 ```flow
+import Http (servePage)
+
 main :: ()
 main = do
   Store.set "started" (str (Server.now ()))   -- server setup, once
-  serve (\_ ->                                -- rendered in the browser
+  servePage (\_ ->                            -- rendered in the browser
     let count = Client.state 0
     <div>
       <button onClick={\e -> count := count.value + 1}>{"+1"}</button>

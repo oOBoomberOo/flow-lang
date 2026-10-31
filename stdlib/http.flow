@@ -1,4 +1,4 @@
-module Http (RequestObject, Response, Handler, Route, Page, PageRoute, AppConfig, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch, serve, page, pagePost, pagePut, pagePatch, pageDelete, matchPath, matchPage) where
+module Http (RequestObject, Response, Handler, Route, Page, PageRoute, AppConfig, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch, serve, servePage, serveApi, page, pagePost, pagePut, pagePatch, pageDelete, matchPath, matchPage) where
 
 import List (filter, length)
 import String (startsWith)
@@ -23,10 +23,10 @@ type Page = RequestObject -> Html
 
 type PageRoute = { method :: Str, path :: Str, page :: Page }
 
--- / The plain-data app object accepted by `serve`. `page` is a client callback
--- / (browser routing/rendering); `routes` are server response handlers. A
--- / program may pass only one of the fields: `{ page = … }` for a page app or
--- / `{ routes = […] }` for an API-only app.
+-- / The typed app object accepted by `serve`. Both fields are required; use
+-- / `servePage` for a page-only app and `serveApi` for an API-only server.
+-- / `page` is a client callback (browser routing/rendering); `routes` are
+-- / server response handlers.
 type AppConfig = { page :: Page, routes :: List Route }
 
 -- ---------------------------------------------------------------- capabilities
@@ -151,20 +151,25 @@ findRoute routes method path = case routes of
 -- / Install the app. `main` runs once on the server; this call supplies the
 -- / plain-data configuration:
 -- /
--- /   serve { page = \req -> …, routes = [ get "/api" … ] }
+-- /   serve { page = \req -> ..., routes = [ get "/api" ... ] }
 -- /
 -- / `page` is emitted into the browser (routing/rendering); `routes` are
 -- / registered with the host at startup (JSON, redirects, status). The config
--- / may be inline or a top-level constant so the compiler can split its fields. A bare
--- / `serve handler` remains accepted for page-only programs.
+-- / may be inline or a top-level constant so the compiler can split its fields.
 -- /
--- / The declaration is an intrinsic: the compiler emits the page into app.js and
--- / the routes into the server startup path. The type is intentionally open; the
--- / compiler validates the `page` and `routes` fields.
+-- / These are typed entry points. `serve` takes the full app config; use
+-- / `servePage` for a browser-only page and `serveApi` for a routes-only server.
 foreign import js unsafe "__flow.serve" {
-  serve :: a -> () @server
+  serve :: AppConfig -> () @server
 }
 
+foreign import js unsafe "__flow.serve.page" {
+  servePage :: Page -> () @server
+}
+
+foreign import js unsafe "__flow.serve.routes" {
+  serveApi :: List Route -> () @server
+}
 page :: Str -> Page -> PageRoute
 page path handler = { method = "GET", path = path, page = handler }
 

@@ -19,6 +19,15 @@ type AppConfig = { page :: Page, routes :: List Route }
 ordinary typed Flow values split by the compiler — there is no separate HTML
 server.
 
+There are three typed entry points; each is an ordinary function with a real
+signature, so wrong values are rejected by the type checker:
+
+```flow
+serve     :: AppConfig -> () @server   -- the full app object
+servePage :: Page -> () @server        -- a browser-only page
+serveApi  :: List Route -> () @server  -- a server-only API
+```
+
 ```flow
 import Http (RequestObject, serve, get, jsonResponse)
 
@@ -61,7 +70,7 @@ that `matchPage` filled in.
 Pages are values, so a page table is an ordinary list:
 
 ```flow
-import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam)
+import Http (RequestObject, PageRoute, page, matchPage, pathParam, servePage)
 
 pages :: List PageRoute
 pages =
@@ -83,12 +92,10 @@ user request =
     None -> <h1>{"Missing id"}</h1>
 
 main :: ()
-main = serve
-  { page = \request ->
-      case matchPage pages request of
-        Some (matched, view) -> view matched
-        None -> <h1>{"Not found"}</h1>
-  }
+main = servePage (\request ->
+  case matchPage pages request of
+    Some (matched, view) -> view matched
+    None -> <h1>{"Not found"}</h1>)
 ```
 
 `page` is `GET`; `pagePost`, `pagePut`, `pagePatch` and `pageDelete` set the
@@ -100,15 +107,15 @@ The page handler is a normal client callback, so it can use cells, events and
 components:
 
 ```flow
+import Http (servePage)
+
 main :: ()
-main = serve
-  { page = \_ ->
-      let count = Client.state 0
-      <div>
-        <button onClick={\e -> count := count.value + 1}>{"+1"}</button>
-        <p>{str count.value}</p>
-      </div>
-  }
+main = servePage (\_ ->
+  let count = Client.state 0
+  <div>
+    <button onClick={\e -> count := count.value + 1}>{"+1"}</button>
+    <p>{str count.value}</p>
+  </div>)
 ```
 
 A page handler cannot close over `main`'s local bindings: it is compiled into
@@ -164,12 +171,13 @@ the reusable in-language dispatcher.
 
 ### API-only apps
 
-An app object may contain only `routes`; it gets no browser page:
+`serveApi` takes the route list directly; it gets no browser page:
 
 ```flow
+import Http (serveApi, get, textResponse)
+
 main :: ()
-main = serve
-  { routes = [ get "/api" (\_ -> textResponse "ok") ] }
+main = serveApi [ get "/api" (\_ -> textResponse "ok") ]
 ```
 
 ## Legacy entries
@@ -178,12 +186,14 @@ Before the app object, `serve` took a page callback and a top-level `routes()`
 function was called by the host:
 
 ```flow
-serve (\request -> …)          -- page-only compatibility
-routes () = Router.mount [ … ] -- deprecated server route table
+serve (\request -> …)           -- old page-only form; use servePage now
+routes () = Router.mount [ … ]  -- deprecated server route table
 ```
 
-Both still work for existing programs. New code should pass `{ page, routes }`
-to `serve`; no `routes()` function or `Router.mount` is needed.
+The bare `serve handler` form is no longer accepted because `serve` is typed as
+`AppConfig -> ()`; use `servePage` for a page-only app. A `routes()` function is
+still called after `main` for existing programs, but new code should pass
+`routes` inside the app object; no `Router.mount` is needed.
 
 ## Host behavior
 
@@ -194,7 +204,7 @@ to `serve`; no `routes()` function or `Router.mount` is needed.
 * When the app has a `page`, every non-reserved request gets the shell with the
   real request payload; the browser renders the page. Page responses answer
   `200 text/html`; server `routes` control status and `content-type`.
-* An API-only app (`routes` with no `page`) does not take over page URLs.
+* An API-only app (`serveApi`) does not take over page URLs.
 * `/app.js`, `/runtime/*`, `/modules/*` and `/__flow/*` stay reserved.
 * `main :: Html` (no `serve`) keeps the old single-page behavior: only `/` and
   `/index.html` get the shell, and unknown paths are `404`.

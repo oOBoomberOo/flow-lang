@@ -17,7 +17,7 @@ import type {
 import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
-  cellOf, eventOf, typeStr, joinPlace, typePlace,
+  cellOf, eventOf, typeStr, joinPlace, typePlace, hasGeneric,
   snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
 } from "./types.ts";
 
@@ -153,9 +153,13 @@ export class Infer {
   /** the type a lambda argument is expected to have, so its parameters need no annotation */
   private expectedFor = new Map<Expr, Type>();
 
-  /** Infer a call argument; a lambda learns its parameter types from the callee. */
+  /**
+   * Infer a call argument; a lambda learns its parameter types from the callee,
+   * and a record literal hands the expected field types down to nested
+   * lambdas, so `serve { page = \req -> … }` types `req` as `RequestObject`.
+   */
   private inferArg(a: Expr, expected: Type): ResInfo {
-    if (a.k === "Lam") this.expectedFor.set(a, expected);
+    if (a.k === "Lam" || a.k === "Record") this.expectedFor.set(a, expected);
     return this.infer(a);
   }
 
@@ -288,7 +292,7 @@ export class Infer {
   lookupVar(name: string, span?: { line: number; col: number }): Type {
     if (this.failedNames.has(name)) return fresh(0);
     const local = this.env.get(name);
-    if (local) return instantiate(local.ty, 0);
+    if (local) return hasGeneric(local.ty) ? instantiate(local.ty, 0) : local.ty;
     const fn = this.mod.fns.get(name);
     if (fn) return instantiate(fn.scheme, 0);
     const ctor = this.mod.ctors.get(name);
@@ -1248,12 +1252,14 @@ export class Infer {
       case "Record": {
         const fields: Record<string, Type> = {};
         const seenFields = new Set<string>();
+        const expectedRec = this.expectedFor.get(e) ? prune(this.expectedFor.get(e)!) : undefined;
         let place: Place = "neutral";
         let eff = emptyEff();
         for (const f of e.fields) {
           if (seenFields.has(f.name)) this.fail(`duplicate field '${f.name}' in record literal`, f.value.span);
           seenFields.add(f.name);
-          const r = this.infer(f.value);
+          const expectedField = expectedRec?.k === "rec" ? expectedRec.fields[f.name] : undefined;
+          const r = expectedField ? this.inferArg(f.value, expectedField) : this.infer(f.value);
           fields[f.name] = r.ty;
           place = joinPlace(place, r.place);
           eff = mergeEff(eff, r.eff);
@@ -1290,10 +1296,10 @@ export class Infer {
         let ty: Type;
         if (t.k === "var") {
           ty = fresh(0);
-          unify(t, { k: "rec", fields: { [e.name]: ty }, open: true });
+          unify(t, { k: "rec", fields: { [e.name]: ty }, atLeast: true });
         } else if (t.k === "rec") {
           let f = t.fields[e.name];
-          if (!f && t.open) { f = fresh(0); t.fields[e.name] = f; }
+          if (!f && (t.open || t.atLeast)) { f = fresh(0); t.fields[e.name] = f; }
           if (!f) this.fail(`record has no field '${e.name}'`, e.span);
           ty = f;
         } else {
@@ -2005,7 +2011,7 @@ export class Infer {
       case "PRecord": {
         const fields: Record<string, Type> = {};
         for (const f of p.fields) fields[f.name] = fresh(0);
-        this.unifyArg(ty, { k: "rec", fields, open: true }, p.span, "record pattern does not match the scrutinee");
+        this.unifyArg(ty, { k: "rec", fields, atLeast: true }, p.span, "record pattern does not match the scrutinee");
         for (const f of p.fields) this.bindPattern(f.pat, fields[f.name]!, seen);
         return;
       }

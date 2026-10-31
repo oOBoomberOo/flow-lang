@@ -222,6 +222,7 @@ main = do
 ```
 
 A legacy `routes :: () -> ()` table is still called after `main` for existing
-programs, and a bare `serve handler` remains the page-only form. Server route
-handlers run on the server; `serve` pages run in the browser. `main :: Html`
-remains the single-page client form. See [`http.md`](http.md).
+programs. `serve` is a typed function (`AppConfig -> ()`), so page-only apps use
+`servePage` and server-only APIs use `serveApi`. Server route handlers run on
+the server; `serve`/`servePage` pages run in the browser. `main :: Html` remains
+the single-page client form. See [`http.md`](http.md).

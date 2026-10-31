@@ -14,7 +14,14 @@ export interface TCon { k: "con"; name: string; args: Type[] }
 /** A higher-kinded application: `f<a>` where `f` is a type constructor. */
 export interface TApp { k: "app"; fn: Type; args: Type[] }
 export interface TFun { k: "fun"; params: Type[]; ret: Type; eff: Eff }
-export interface TRec { k: "rec"; fields: Record<string, Type>; open?: boolean }
+export interface TRec {
+  k: "rec";
+  fields: Record<string, Type>;
+  /** This value may carry fields beyond the ones listed (a call-site record). */
+  open?: boolean;
+  /** Every listed field must exist on the other record (a field-access bound). */
+  atLeast?: boolean;
+}
 export interface TTuple { k: "tuple"; items: Type[] }
 export type Type = TVar | TCon | TApp | TFun | TRec | TTuple;
 
@@ -229,22 +236,44 @@ export function unify(a: Type, b: Type): void {
     return;
   }
   if (x.k === "rec" && y.k === "rec") {
-    // An `open` record is a lower bound (the fields a call site supplies).
-    const check = (closed: TRec, open: TRec) => {
-      for (const k of Object.keys(closed.fields)) {
-        if (!(k in open.fields)) tErr(`record mismatch: field '${k}' is missing in ${typeStr(open)}`);
-        unify(closed.fields[k]!, open.fields[k]!);
+    // Two different partial records can meet here:
+    //  * `open` marks a real value that may have fields beyond those listed
+    //    (a component call site supplies at least its attributes + children);
+    //  * `atLeast` marks a requirement created by field access or a record
+    //    pattern: whatever the value is, it must have these fields.
+    // A requirement is checked against the actual record's fields; a plain
+    // record is exact, so two exact records must match in both directions.
+    const actualOf = (t: TRec) => t.open === true;
+    const checkFields = (req: TRec, actual: TRec) => {
+      for (const k of Object.keys(req.fields)) {
+        if (!(k in actual.fields)) tErr(`record mismatch: field '${k}' is missing in ${typeStr(actual)}`);
+        unify(req.fields[k]!, actual.fields[k]!);
       }
     };
-    if (x.open && y.open) {
+    if (x.atLeast && y.atLeast) {
+      // Two constraints on the same value accumulate: keep both field sets.
+      for (const k of Object.keys(y.fields)) if (!(k in x.fields)) x.fields[k] = y.fields[k]!;
+      for (const k of Object.keys(x.fields)) if (!(k in y.fields)) y.fields[k] = x.fields[k]!;
+      for (const k of Object.keys(x.fields)) unify(x.fields[k]!, y.fields[k]!);
+      return;
+    }
+    if (x.atLeast) {
+      checkFields(x, y);
+      return;
+    }
+    if (y.atLeast) {
+      checkFields(y, x);
+      return;
+    }
+    if (actualOf(x) && actualOf(y)) {
       for (const k of Object.keys(x.fields)) if (k in y.fields) unify(x.fields[k]!, y.fields[k]!);
-    } else if (x.open) {
-      check(y, x);
-    } else if (y.open) {
-      check(x, y);
+    } else if (actualOf(x)) {
+      checkFields(y, x);
+    } else if (actualOf(y)) {
+      checkFields(x, y);
     } else {
-      check(x, y);
-      check(y, x);
+      checkFields(x, y);
+      checkFields(y, x);
     }
     return;
   }
@@ -320,9 +349,27 @@ export function mapType(t: Type, f: (t: Type) => Type): Type {
     case "rec": {
       const fields: Record<string, Type> = {};
       for (const [k, v] of Object.entries(p.fields)) fields[k] = mapType(v, f);
-      return { k: "rec", fields };
+      // Partial records must stay partial through generalization/instantiation;
+      // turning one into an exact record would reject the real value it meets.
+      const out: TRec = { k: "rec", fields };
+      if (p.open) out.open = true;
+      if (p.atLeast) out.atLeast = true;
+      return out;
     }
     case "tuple": return { k: "tuple", items: p.items.map((i) => mapType(i, f)) };
+  }
+}
+
+/** True when the type mentions a generalized (scheme) variable. */
+export function hasGeneric(t: Type): boolean {
+  const p = prune(t);
+  switch (p.k) {
+    case "var": return Boolean(p.generic);
+    case "con": return p.args.some(hasGeneric);
+    case "app": return hasGeneric(p.fn) || p.args.some(hasGeneric);
+    case "fun": return p.params.some(hasGeneric) || hasGeneric(p.ret);
+    case "rec": return Object.values(p.fields).some(hasGeneric);
+    case "tuple": return p.items.some(hasGeneric);
   }
 }
 

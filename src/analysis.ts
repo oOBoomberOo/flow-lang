@@ -14,9 +14,10 @@ import { parse } from "./parser.ts";
 import { FlowError } from "./lexer.ts";
 import { prune, typeStr } from "./types.ts";
 import type { Type } from "./types.ts";
-import type { Program, Span } from "./ast.ts";
+import type { Param, Program, Span } from "./ast.ts";
 import type { Place } from "./types.ts";
 import type { SymKind } from "./modules.ts";
+import { printType } from "./printer.ts";
 
 export interface Position { line: number; character: number }
 export interface Range { start: Position; end: Position }
@@ -221,10 +222,17 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
     const signatures = new Map<string, SignatureInfo>();
     for (const [name, fn] of result.mod.fns) {
       if (fn.scheme.k !== "fun") continue;
+      // A declared signature is shown as written (`serve :: AppConfig -> ()`),
+      // not as the resolved record it expands to. Inferred parts still print
+      // the inferred type.
+      const declared = (p: Param, i: number): string =>
+        p.type.k === "TVar" && p.type.name === "_"
+          ? typeStr(fn.scheme.k === "fun" ? fn.scheme.params[i]! : p.type as never)
+          : printType(p.type);
       signatures.set(name, {
         name,
-        params: fn.params.map((p, i) => ({ name: p.name, type: typeStr(fn.scheme.k === "fun" ? fn.scheme.params[i]! : p.type as never) })),
-        ret: typeStr(fn.scheme.ret),
+        params: fn.params.map((p, i) => ({ name: p.name, type: declared(p, i) })),
+        ret: fn.ret ? printType(fn.ret) : typeStr(fn.scheme.ret),
         effects: [...fn.scheme.eff.labels].sort(),
       });
     }

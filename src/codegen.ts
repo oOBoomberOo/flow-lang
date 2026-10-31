@@ -349,9 +349,17 @@ export class Codegen {
     };
   }
 
-  /** True when `name` is the compiler-visible `serve` entry point. */
+  /** Which typed `serve` entry point is this? */
+  private serveKind(name: string): "config" | "page" | "routes" | null {
+    const impl = this.mod.fns.get(name)?.extern?.implName;
+    if (impl === "__flow.serve") return "config";
+    if (impl === "__flow.serve.page") return "page";
+    if (impl === "__flow.serve.routes") return "routes";
+    return null;
+  }
+
   private isServeName(name: string): boolean {
-    return this.mod.fns.get(name)?.extern?.implName === "__flow.serve";
+    return this.serveKind(name) !== null;
   }
 
   private isServeCall(e: Expr): boolean {
@@ -359,10 +367,10 @@ export class Codegen {
   }
 
   /**
-   * `serve handler` is a build-time entry point, not a server call: the handler
-   * is emitted in the browser bundle and the server only records that the
-   * program has a page router. Find the single call and check that the handler
-   * does not close over server startup locals.
+   * `serve`, `servePage` and `serveApi` are build-time entry points, not server
+   * calls: the page is emitted in the browser bundle and the server only
+   * records that the program has a page router. Find the single call and check
+   * that the page does not close over server startup locals.
    */
   private findServe(): void {
     let owner: Decl | null = null;
@@ -374,23 +382,26 @@ export class Codegen {
             e.span,
           );
         }
+        const kind = this.serveKind((e.fn as Expr & { k: "Var" }).name)!;
         const arg = (e as Expr & { k: "App" }).args[0];
-        if (!arg) this.fail("`serve` expects a page handler or `{ page = …, routes = […] }`", e.span);
+        if (!arg) this.fail("`serve` expects an app object or page", e.span);
         this.serveSpan = e.span;
         this.serveOwner = owner;
-        const t = this.mod.info.get(arg)?.ty;
-        const p = t ? prune(t) : null;
-        if (p?.k === "fun" || arg.k === "Lam") {
-          // Backward-compatible page-only form: `serve \request -> …`.
+
+        if (kind === "page") {
           this.servePage = arg;
-          this.checkServePageType(arg, e.span);
+          this.checkServePageType(arg, e.span, "`servePage`");
           this.checkServeCapture(arg, bound);
           return;
         }
+        if (kind === "routes") {
+          this.serveRoutes = arg;
+          this.checkServeRoutesType(arg, e.span, "`serveApi`");
+          return;
+        }
 
-        // A config may be inline or a top-level constant. The constant is
-        // consumed here and is not emitted as a normal value; both sides get
-        // their field only.
+        // `serve` takes the full AppConfig. It may be inline or a top-level
+        // constant; the constant is consumed here and not emitted as a value.
         let config: (Expr & { k: "Record" }) | null = null;
         if (arg.k === "Record") {
           config = arg;
@@ -416,25 +427,25 @@ export class Codegen {
         }
         if (!config) {
           this.fail(
-            "`serve` expects a page handler or an app object `{ page = …, routes = […] }` " +
+            "`serve` expects an app object `{ page = ..., routes = [...] }` " +
             "(written inline or as a top-level constant)",
             arg.span ?? e.span,
           );
         }
         const page = config.fields.find((f) => f.name === "page")?.value;
         const routes = config.fields.find((f) => f.name === "routes")?.value;
-        if (!page && !routes) {
-          this.fail("`serve` app needs a `page`, a `routes` list, or both", config.span);
+        if (!page || !routes) {
+          this.fail(
+            "`serve` needs an AppConfig with both `page` and `routes`; " +
+            "use `servePage` for a page-only app or `serveApi` for a routes-only app",
+            config.span,
+          );
         }
-        if (page) {
-          this.servePage = page;
-          this.checkServePageType(page, config.span);
-          this.checkServeCapture(page, bound);
-        }
-        if (routes) {
-          this.serveRoutes = routes;
-          this.checkServeRoutesType(routes, config.span);
-        }
+        this.servePage = page;
+        this.checkServePageType(page, config.span);
+        this.checkServeCapture(page, bound);
+        this.serveRoutes = routes;
+        this.checkServeRoutesType(routes, config.span);
         return;
       }
       switch (e.k) {
@@ -487,8 +498,8 @@ export class Codegen {
     }
   }
 
-  /** `serve.page` must be a client callback returning markup. */
-  private checkServePageType(page: Expr, span?: { line?: number; col?: number; file?: string }): void {
+  /** The page argument must be a client callback returning markup. */
+  private checkServePageType(page: Expr, span?: { line?: number; col?: number; file?: string }, label = "`serve.page`"): void {
     const ty = this.mod.info.get(page)?.ty;
     if (!ty) return;
     const p = prune(ty);
@@ -496,25 +507,25 @@ export class Codegen {
     const ret = p.k === "fun" ? prune(p.ret) : null;
     const isHtml = ret && ret.k === "con" && (ret.name === "Html" || ret.name.startsWith("Html$"));
     if (p.k !== "fun" || !isHtml) {
-      this.fail("`serve.page` must be a client handler `RequestObject -> Html`", span ?? page.span);
+      this.fail(`${label} must be a client handler ` + "`RequestObject -> Html`", span ?? page.span);
     }
   }
 
-  /** `serve.routes` is a plain list of server response routes. */
-  private checkServeRoutesType(routes: Expr, span?: { line?: number; col?: number; file?: string }): void {
+  /** The routes argument is a plain list of server response routes. */
+  private checkServeRoutesType(routes: Expr, span?: { line?: number; col?: number; file?: string }, label = "`serve.routes`"): void {
     const ty = this.mod.info.get(routes)?.ty;
     if (!ty) return;
     const p = prune(ty);
     if (p.k === "var") return;
     if (p.k !== "con" || (p.name !== "List" && !p.name.startsWith("List$"))) {
-      this.fail("`serve.routes` must be a `List Route`", span ?? routes.span);
+      this.fail(`${label} must be a ` + "`List Route`", span ?? routes.span);
     }
     const item = p.args[0] ? prune(p.args[0]) : null;
     if (!item || item.k === "var") return; // an empty list is fine
     const isRoute = item.k === "rec" &&
       Boolean(item.fields.method) && Boolean(item.fields.path) && Boolean(item.fields.handler);
     if (!isRoute) {
-      this.fail("`serve.routes` must be a `List Route` (`get`, `post`, `route`, …)", span ?? routes.span);
+      this.fail(`${label} must be a ` + "`List Route` (`get`, `post`, `route`, ...)", span ?? routes.span);
     }
   }
   /** A page handler is emitted in the browser, so it cannot read local bindings. */
@@ -1075,10 +1086,10 @@ export class Codegen {
         const info = this.mod.fns.get(e.name);
         const ext = info?.extern;
         if (ext && !env.has(e.name)) {
-          if (ext.implName.startsWith("__flow.reflect.") || ext.implName.startsWith("__flow.serialize.") || ext.implName === "__flow.serve") {
+          if (ext.implName.startsWith("__flow.reflect.") || ext.implName.startsWith("__flow.serialize.") || ext.implName.startsWith("__flow.serve")) {
             this.fail(
-              ext.implName === "__flow.serve"
-                ? "`serve` must be called directly with its app object: `serve { page = …, routes = […] }`"
+              ext.implName.startsWith("__flow.serve")
+                ? "`serve`, `servePage` and `serveApi` must be called directly with their config"
                 : `'${e.name}' is resolved from the static type at a call site and cannot be used as a value; ` +
                   `pass Reflect.meta or an explicit *With function instead`,
               e.span,

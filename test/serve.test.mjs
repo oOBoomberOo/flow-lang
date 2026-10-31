@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
+import { analyze } from "../src/analysis.ts";
 import { createHost } from "../src/host.ts";
 import { createRuntime } from "../src/runtime/core.js";
 
@@ -11,7 +12,7 @@ import { createRuntime } from "../src/runtime/core.js";
  * The server-first entry model:
  *
  *   main :: ()     runs once on the server at startup (server-side setup)
- *   serve handler  installs a client-placed page handler (Request -> Html)
+ *   serve { page, routes } / servePage / serveApi install the app
  *
  * `main :: Html` remains a single-page client entry, and `routes()` remains the
  * server-side response table (JSON, redirects, custom status).
@@ -56,7 +57,7 @@ async function withHost(entry, fn) {
   }
 }
 
-const pageApp = (marker) => `import Http (RequestObject, PageRoute, serve, page, matchPage)
+const pageApp = (marker) => `import Http (RequestObject, PageRoute, servePage, page, matchPage)
 import Fs (writeText)
 
 pages :: List PageRoute
@@ -68,7 +69,7 @@ pages =
 main :: ()
 main = do
   writeText ${JSON.stringify(marker)} "started"
-  serve (\\req ->
+  servePage (\\req ->
     case matchPage pages req of
       Some (matched, view) -> view matched
       None -> <h1>{"404 " + req.path}</h1>)
@@ -111,7 +112,7 @@ test("serve: main is a server startup hook and serve installs the client page", 
 
 test("serve: a named page function works and path captures are matched", () => {
   const entry = packageWith({
-    "main.flow": `import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam)
+    "main.flow": `import Http (RequestObject, PageRoute, servePage, page, matchPage, pathParam)
 
 users :: List PageRoute
 users = [ page "/users/:id" (\\req ->
@@ -120,7 +121,7 @@ users = [ page "/users/:id" (\\req ->
       None -> <h1>{"Missing id"}</h1>) ]
 
 main :: ()
-main = serve (\\req ->
+main = servePage (\\req ->
   case matchPage users req of
     Some (matched, view) -> view matched
     None -> <h1>{"Not found"}</h1>)
@@ -134,12 +135,12 @@ main = serve (\\req ->
 
 test("serve: a page handler cannot capture server startup locals", () => {
   const entry = packageWith({
-    "main.flow": `import Http (serve)
+    "main.flow": `import Http (servePage)
 
 main :: ()
 main = do
   let secret = "shh"
-  serve (\\_ -> <p>{secret}</p>)
+  servePage (\\_ -> <p>{secret}</p>)
 `,
   });
   assert.throws(() => compileFile(entry), /cannot capture server startup binding\(s\) 'secret'/);
@@ -147,12 +148,12 @@ main = do
 
 test("serve: it can be installed once, and main must return () or Html", () => {
   const twice = packageWith({
-    "main.flow": `import Http (serve)
+    "main.flow": `import Http (servePage)
 
 main :: ()
 main = do
-  serve (\\_ -> <p>{"one"}</p>)
-  serve (\\_ -> <p>{"two"}</p>)
+  servePage (\\_ -> <p>{"one"}</p>)
+  servePage (\\_ -> <p>{"two"}</p>)
 `,
   });
   assert.throws(() => compileFile(twice), /`serve` can be called only once/);
@@ -174,11 +175,11 @@ main = log "only the browser"
   assert.throws(() => compileFile(clientOnly), /only touches the browser/);
 
   const mixed = packageWith({
-    "main.flow": `import Http (serve)
+    "main.flow": `import Http (servePage)
 
 main :: Html
 main = do
-  serve (\\_ -> <p>{"page"}</p>)
+  servePage (\\_ -> <p>{"page"}</p>)
   <p>{"page"}</p>
 `,
   });
@@ -204,7 +205,7 @@ main = <h1>{"Legacy page"}</h1>
 
 test("serve: server routes and page routing coexist", async () => {
   const entry = packageWith({
-    "main.flow": `import Http (RequestObject, serve, get, Router, jsonResponse, redirect)
+    "main.flow": `import Http (RequestObject, servePage, get, Router, jsonResponse, redirect)
 
 routes :: () -> ()
 routes () = Router.mount
@@ -213,7 +214,7 @@ routes () = Router.mount
   ]
 
 main :: ()
-main = serve (\\req -> <h1>{"page " + req.path}</h1>)
+main = servePage (\\req -> <h1>{"page " + req.path}</h1>)
 `,
   });
   await withHost(entry, async (host) => {
@@ -307,12 +308,12 @@ main = serve
   });
 });
 
-test("serve: a page-only app object is still a client app", async () => {
+test("serve: a page-only app is a client app", async () => {
   const entry = packageWith({
-    "main.flow": `import Http (serve)
+    "main.flow": `import Http (servePage)
 
 main :: ()
-main = serve { page = \\_ -> <h1>{"just a page"}</h1> }
+main = servePage (\\_ -> <h1>{"just a page"}</h1>)
 `,
   });
   await withHost(entry, async (host, result) => {
@@ -326,10 +327,10 @@ main = serve { page = \\_ -> <h1>{"just a page"}</h1> }
 
 test("serve: an API-only app object registers routes without a client shell", async () => {
   const entry = packageWith({
-    "main.flow": `import Http (serve, get, textResponse)
+    "main.flow": `import Http (serveApi, get, textResponse)
 
 main :: ()
-main = serve { routes = [ get "/api" (\\_ -> textResponse "ok") ] }
+main = serveApi [ get "/api" (\\_ -> textResponse "ok") ]
 `,
   });
   await withHost(entry, async (host, result) => {
@@ -392,19 +393,48 @@ main = serve app
   });
 });
 
-test("serve: the app object fields are validated", () => {
-  const badPage = packageWith({
-    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { page = 1 }\n`,
+test("serve: the entry points are ordinary typed functions", () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve)
+
+main :: ()
+main = serve { page = \\_ -> <p>{"x"}</p>, routes = [] }
+`,
   });
-  assert.throws(() => compileFile(badPage), /serve\.page.*RequestObject -> Html/);
+  const a = analyze(entry);
+  assert.equal(a.ok, true, "the app type-checks");
+  const sig = (name) => a.signatures.get(name);
+  assert.deepEqual(sig("serve")?.params.map((p) => p.type), ["AppConfig"]);
+  assert.equal(sig("serve")?.ret, "() @server");
+  assert.deepEqual(sig("servePage")?.params.map((p) => p.type), ["Page"]);
+  assert.equal(sig("servePage")?.ret, "() @server");
+  assert.deepEqual(sig("serveApi")?.params.map((p) => p.type), ["List Route"]);
+  assert.equal(sig("serveApi")?.ret, "() @server");
+});
+
+test("serve: the typed entry points reject bad values", () => {
+  const badPage = packageWith({
+    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { page = 1, routes = [] }\n`,
+  });
+  assert.throws(() => compileFile(badPage), /type mismatch|Page/);
 
   const badRoutes = packageWith({
-    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { routes = [1] }\n`,
+    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { page = \\_ -> <p>{"x"}</p>, routes = [1] }\n`,
   });
-  assert.throws(() => compileFile(badRoutes), /serve\.routes.*List Route/);
+  assert.throws(() => compileFile(badRoutes), /type mismatch|List Route/);
 
-  const empty = packageWith({
+  const missing = packageWith({
     "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { }\n`,
   });
-  assert.throws(() => compileFile(empty), /needs a `page`, a `routes` list, or both/);
+  assert.throws(() => compileFile(missing), /type mismatch|missing/i);
+
+  const badServePage = packageWith({
+    "main.flow": `import Http (servePage)\n\nmain :: ()\nmain = servePage 1\n`,
+  });
+  assert.throws(() => compileFile(badServePage), /type mismatch|Page/);
+
+  const badServeApi = packageWith({
+    "main.flow": `import Http (serveApi)\n\nmain :: ()\nmain = serveApi [1]\n`,
+  });
+  assert.throws(() => compileFile(badServeApi), /type mismatch|List Route/);
 });

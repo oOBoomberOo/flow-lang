@@ -60,9 +60,9 @@ main = do
     }
 ```
 
-`main :: Html` is still accepted as the single-page form, and a bare
-`serve handler` still works for page-only apps. Legacy `routes()` / `Router`
-tables remain for existing programs; new code passes `routes` inside `serve`.
+`main :: Html` is still accepted as the single-page form. Legacy `routes()` /
+`Router` tables remain for existing programs; page-only apps use `servePage`,
+API-only apps use `serveApi`, and new code passes the full app object to `serve`.
 See [docs/http.md](docs/http.md).
 
 ## Reflection and JSON
