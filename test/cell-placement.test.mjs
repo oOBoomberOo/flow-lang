@@ -143,7 +143,7 @@ test("cells: a server-bound cell is created once and read/written through cuts",
   assert.match(r.server, /let __flow_v_counter/);
   assert.match(r.server, /function counter\(\) \{ if \(__flow_v_counter === undefined\)/,
     "the server cell is memoized, not re-created on every read");
-  assert.match(r.server, /R\.serve\("[^"]+", \(A\) => \{  return bump\(/);
+  assert.match(r.server, /R\.serve\("[^"]+", \(A\) => \{  return (?:R\.run\()?bump\(/);
   assert.match(r.client, /on:click/);
   assert.match(r.client, /R\.call\("/, "the handler calls the server");
   assert.match(r.client, /R\.remote\("/, "the read subscribes to the server cell");

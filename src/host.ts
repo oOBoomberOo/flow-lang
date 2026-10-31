@@ -60,7 +60,7 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     try {
       const started = (serverModule.__flow_entry as () => unknown)();
       if (started && typeof (started as { next?: unknown }).next === "function") {
-        (R as { run: (value: unknown) => unknown }).run(started);
+        await (R as { runAsync: (value: unknown) => Promise<unknown> }).runAsync(started);
       } else {
         await started;
       }

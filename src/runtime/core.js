@@ -71,11 +71,51 @@ export function createRuntime() {
   const remotes = new Map();     // id -> { node, state }
   const serves = new Map();      // id -> fn(args) -> value
   const served = new Map();      // key -> { argCell, node }
-  const pending = new Map();     // reqId -> { resolve }
+  const pending = new Map();     // reqId -> { resolve, handlers }
+  const pendingEffects = new Map(); // reqId -> resolve(effect answer)
+  const handlerStack = [];       // { effect, ops } installed by algebraic handles
   const provides = new Map();    // effect -> { op: fn }
   let seq = 0;
   let sendFn = () => {};
   let sid = "local";
+
+  /**
+   * Drive a cut body that may perform algebraic effects. A performed operation
+   * is sent to the caller; the caller's handler replies resume/abort and the
+   * generator continues. This is the same `yield` protocol as a local handle,
+   * with the wire as the driver.
+   */
+  async function driveRemote(value, callReqId) {
+    const it = value;
+    if (!it || typeof it.next !== "function") return value;
+    let step = it.next();
+    while (!step.done) {
+      const req = step.value;
+      if (req && typeof req.then === "function") {
+        step = it.next(await req);
+        continue;
+      }
+      const reqId = ++seq;
+      const answer = new Promise((resolve) => pendingEffects.set(reqId, resolve));
+      sendFn({
+        t: "effect",
+        reqId,
+        call: callReqId,
+        effect: req && req.effect,
+        name: req && req.name,
+        args: (req && req.args) || [],
+      });
+      const res = await answer;
+      pendingEffects.delete(reqId);
+      if (res.error) throw new Error(res.error);
+      if (res.abort) {
+        if (typeof it.return === "function") it.return(undefined);
+        return res.value;
+      }
+      step = it.next(res.value);
+    }
+    return step.value;
+  }
 
   const R = {
     Node,
@@ -241,6 +281,13 @@ export function createRuntime() {
     },
 
     /** Drive a generator (or plain value) to completion; unhandled operations throw. */
+    /** Call a function that may be a generator; yield its effects if so. */
+    *genCall(thunk) {
+      const v = thunk();
+      if (v && typeof v.next === "function") return yield* v;
+      return v;
+    },
+
     run(value) {
       const it = typeof value === "function" ? value() : value;
       if (!it || typeof it.next !== "function") return it;
@@ -253,6 +300,33 @@ export function createRuntime() {
     },
 
     /**
+     * Drive a handler body that may wait on a boundary cut. A cut inside a
+     * generator is yielded as a Promise; await it and resume the generator, so
+     * the handle (and its effect handlers) stays installed across the wire.
+     */
+    async runAsync(value) {
+      const it = typeof value === "function" ? value() : value;
+      if (!it || typeof it.next !== "function") {
+        return it && typeof it.then === "function" ? await it : it;
+      }
+      let input;
+      for (;;) {
+        const step = it.next(input);
+        if (step.done) {
+          return step.value && typeof step.value.then === "function"
+            ? await step.value
+            : step.value;
+        }
+        const req = step.value;
+        if (req && typeof req.then === "function") {
+          input = await req;
+          continue;
+        }
+        throw new Error(`flow: unhandled algebraic effect ${req && req.effect}.${req && req.name}`);
+      }
+    },
+
+    /**
      * Deep handler for an algebraic effect.
      *
      * The handled body is a generator. An operation it performs suspends there;
@@ -262,32 +336,49 @@ export function createRuntime() {
      * resumes aborts. Operations for other effects are forwarded outward.
      */
     *handle(effect, ops, body) {
-      const gen = body();
-      const invoke = function* (req) {
-        const impl = ops && ops[req.name];
-        if (typeof impl !== "function") throw new Error(`flow: no handler for ${effect}.${req.name}`);
-        let used = false;
-        const resume = function* (value) {
-          if (used) throw new Error(`flow: resume for ${effect}.${req.name} called more than once (handlers are one-shot)`);
-          used = true;
-          return yield* drive(value, true);
-        };
-        return yield* impl(...req.args, resume);
-      };
-      const drive = function* (input, hasInput) {
-        let step = hasInput ? gen.next(input) : gen.next();
-        while (!step.done) {
-          const req = step.value;
-          if (!req || req.effect !== effect) {
-            const v = yield req;
-            step = gen.next(v);
-            continue;
-          }
-          return yield* invoke(req);
+      const entry = { effect, ops };
+      handlerStack.push(entry);
+      try {
+        const gen = body();
+        if (!gen || typeof gen.next !== "function") {
+          if (gen && typeof gen.then === "function") return yield gen;
+          return gen;
         }
-        return step.value;
-      };
-      return yield* drive(undefined, false);
+        const invoke = function* (req) {
+          const impl = ops && ops[req.name];
+          if (typeof impl !== "function") throw new Error(`flow: no handler for ${effect}.${req.name}`);
+          let used = false;
+          const resume = function* (value) {
+            if (used) throw new Error(`flow: resume for ${effect}.${req.name} called more than once (handlers are one-shot)`);
+            used = true;
+            return yield* drive(value, true);
+          };
+          return yield* impl(...req.args, resume);
+        };
+        const drive = function* (input, hasInput) {
+          let step = hasInput ? gen.next(input) : gen.next();
+          while (!step.done) {
+            const req = step.value;
+            if (!req || req.effect !== effect) {
+              // A cut inside this handler is yielded as a Promise; the async
+              // driver awaits it and resumes us. Effects from outer handlers
+              // are forwarded the same way.
+              const v = yield req;
+              step = gen.next(v);
+              continue;
+            }
+            return yield* invoke(req);
+          }
+          if (step.value && typeof step.value.then === "function") {
+            return yield step.value;
+          }
+          return step.value;
+        };
+        return yield* drive(undefined, false);
+      } finally {
+        const i = handlerStack.lastIndexOf(entry);
+        if (i >= 0) handlerStack.splice(i, 1);
+      }
     },
 
     /** Scoped capability handler whose body performs algebraic effects. */
@@ -335,7 +426,7 @@ export function createRuntime() {
           if (pending.delete(reqId)) reject(new Error(`flow: remote call '${id}' timed out`));
         }, 20000);
         if (timer && typeof timer.unref === "function") timer.unref();
-        pending.set(reqId, { resolve, reject, timer });
+        pending.set(reqId, { resolve, reject, timer, handlers: handlerStack.slice() });
         sendFn({ t: "call", id, args: resolveArgs(args ?? {}), reqId });
       });
     },
@@ -379,10 +470,30 @@ export function createRuntime() {
           if (!fn) { sendFn({ t: "ret", reqId: msg.reqId, error: `no such cut '${msg.id}'` }); return; }
           try {
             const value = await fn(msg.args ?? {});
-            sendFn({ t: "ret", reqId: msg.reqId, value });
+            const result = await driveRemote(value, msg.reqId);
+            sendFn({ t: "ret", reqId: msg.reqId, value: result });
           } catch (e) {
             sendFn({ t: "ret", reqId: msg.reqId, error: String(e && e.message ? e.message : e) });
           }
+          return;
+        }
+        case "effect": {
+          await R._remoteEffect(msg);
+          return;
+        }
+        case "effect-ret": {
+          const p = pendingEffects.get(msg.reqId);
+          if (p) { pendingEffects.delete(msg.reqId); p({ value: msg.value }); }
+          return;
+        }
+        case "effect-abort": {
+          const p = pendingEffects.get(msg.reqId);
+          if (p) { pendingEffects.delete(msg.reqId); p({ abort: true, value: msg.value }); }
+          return;
+        }
+        case "effect-error": {
+          const p = pendingEffects.get(msg.reqId);
+          if (p) { pendingEffects.delete(msg.reqId); p({ error: msg.error }); }
           return;
         }
         case "ret": {
@@ -396,6 +507,45 @@ export function createRuntime() {
         }
         default:
           if (reply) reply(msg);
+      }
+    },
+
+    /**
+     * A cut on the other side performed an algebraic effect. Dispatch it to the
+     * handler installed around the pending call. A handler that does not resume
+     * aborts the remote computation and supplies the call's result.
+     */
+    async _remoteEffect(msg) {
+      const call = pending.get(msg.call);
+      const handlers = call?.handlers ?? [];
+      let handler;
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        if (handlers[i].effect === msg.effect) { handler = handlers[i]; break; }
+      }
+      if (!handler) {
+        sendFn({ t: "effect-error", reqId: msg.reqId, error: `flow: unhandled algebraic effect ${msg.effect}.${msg.name}` });
+        return;
+      }
+      let resumed = false;
+      const resume = function* (value) {
+        resumed = true;
+        sendFn({ t: "effect-ret", reqId: msg.reqId, value });
+        return undefined;
+      };
+      try {
+        let result = handler.ops[msg.name](...(msg.args ?? []), resume);
+        result = R.run(result);
+        if (result && typeof result.then === "function") result = await result;
+        if (!resumed) {
+          if (call) {
+            pending.delete(msg.call);
+            if (call.timer) clearTimeout(call.timer);
+            call.resolve(result);
+          }
+          sendFn({ t: "effect-abort", reqId: msg.reqId, value: result });
+        }
+      } catch (e) {
+        sendFn({ t: "effect-error", reqId: msg.reqId, error: String(e && e.message ? e.message : e) });
       }
     },
 

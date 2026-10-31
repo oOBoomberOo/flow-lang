@@ -196,7 +196,7 @@ main = <h1>{"Legacy page"}</h1>
   await withHost(entry, async (host, result) => {
     assert.ok(!result.server.includes("__flow_entry"), "a page main is not a server hook");
     assert.ok(!result.server.includes("__flow_serve"), "a page main installs no router");
-    assert.ok(/__flow_start\(root\)[^\n]*main\(\)/.test(result.client), "the client mounts main");
+    assert.ok(/R\.runAsync\(\(\) => main\(\)\)/.test(result.client), "the client mounts main");
     const root = await fetch(host.url + "/");
     assert.equal(root.status, 200);
     assert.match(await root.text(), /__flow_start/);

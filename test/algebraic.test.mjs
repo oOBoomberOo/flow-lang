@@ -284,7 +284,7 @@ main = <p>{str (f ())}</p>
   try {
     assert.throws(
       () => compileFile(entry),
-      /cannot pass a function that performs \{State\} to '.*map'/,
+      /performs algebraic effect.*\{State\}.*without handling/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -330,6 +330,28 @@ test("algebraic: unhandled operations fail loudly at runtime", async () => {
   assert.equal(R.run(() => 7), 7);
 });
 
+test("algebraic: a server cut's effect reaches the caller's handler", async () => {
+  const { createRuntime } = await import("../src/runtime/core.js");
+  const client = createRuntime();
+  const server = createRuntime();
+  client._attach((m) => server._receive(m), "client");
+  server._attach((m) => client._receive(m), "server");
+  server.serve("ask", () =>
+    (function* () { return yield server.perform("Ask", "ask", [null]); })());
+  server.serve("abort", () =>
+    (function* () { return yield server.perform("Ask", "stop", [null]); })());
+
+  const resumed = await client.runAsync(client.handle("Ask", {
+    ask: function* (_unit, resume) { return yield* resume(41); },
+  }, async () => await client.call("ask")));
+  assert.equal(resumed, 41, "the client handler resumes the server computation");
+
+  const aborted = await client.runAsync(client.handle("Ask", {
+    stop: function* (_unit, _resume) { return 7; },
+  }, async () => await client.call("abort")));
+  assert.equal(aborted, 7, "a handler that does not resume supplies the result");
+});
+
 test("algebraic: the client entry drives main through the runtime", () => {
   const r = compileSource(`algebraic effect E where
   ask :: () -> Int
@@ -342,6 +364,6 @@ main = do
         in E.ask ()
   <p>{str n}</p>
 `, "client.flow");
-  assert.ok(r.client.includes("R.run(() => main())"), "main is driven, not called bare");
+  assert.ok(r.client.includes("R.runAsync(() => main())"), "main is driven, not called bare");
   assert.ok(/function\*/.test(r.client), "the handled body is a generator");
 });

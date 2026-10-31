@@ -344,6 +344,11 @@ binding such as `let title = event.target.value` stays on the client and
 (including a `where` function) is re-emitted on the cut's side and removed from
 the wire deps; its captured non-function values are sent normally.
 
+A cut body that performs an algebraic effect sends the operation to the caller's handler. The
+handler's `resume` continues the remote generator; a handler that does not resume aborts it and
+supplies the call's result. Effectful callbacks also propagate through higher-order calls, and a
+partial application keeps the callee's effect row.
+
 Two cut modes, chosen by *where the node sits*, not by a flag:
 
 | Context | Mode | Semantics |

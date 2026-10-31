@@ -2008,9 +2008,13 @@ export class Infer {
     callee: FnInfo | undefined,
     slots: number[],
     seed: Place,
-  ): { place: Place; argEff: Eff } {
+  ): { place: Place; argEff: Eff; funArgEff: Eff } {
     let place = seed;
     let argEff = emptyEff();
+    // Effects carried by function arguments are deferred to the consumer: a
+    // full call performs them, a partial application puts them in its result
+    // type.
+    let funArgEff = emptyEff();
     // Infer values before callbacks: `map f xs` needs the element type from
     // `xs` before checking `f`'s parameter.
     const order = e.args.map((_, i) => i)
@@ -2025,21 +2029,14 @@ export class Infer {
         if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
         throw err;
       }
-      // A function that performs an algebraic effect can only be passed to a
-      // parameter whose declared row admits it; otherwise the callee would call
-      // a generator and receive an iterator.
+      // A callback's effects are not performed here: a full call forwards them
+      // to the consumer, while a partial application stores them in the result
+      // function type. The callee invokes the callback in a generator-aware
+      // way, so effectful callbacks are ordinary values.
       const argFun = prune(r.ty);
-      if (callee && argFun.k === "fun" && this.effHasAlgebraic(argFun.eff)) {
-        const declaredParam = callee.scheme.k === "fun" ? prune(callee.scheme.params[slot]!) : undefined;
-        if (declaredParam && declaredParam.k === "fun" && !this.effHasAlgebraic(declaredParam.eff)) {
-          const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
-          this.fail(
-            `cannot pass a function that performs {${labels.join(", ")}} to '${callee.name}': ` +
-            `argument ${i + 1} is declared ${typeStr(declaredParam)} without that effect row. ` +
-            `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
-            a.span,
-          );
-        }
+      if (argFun.k === "fun") {
+        const declared = callee?.scheme.k === "fun" ? callee.scheme.params[slot] : undefined;
+        funArgEff = mergeEff(funArgEff, this.unadmittedEffects(argFun.eff, declared));
       }
       const expected = callee?.paramPlaces?.[slot];
       if (expected) {
@@ -2048,7 +2045,7 @@ export class Infer {
       place = joinPlace(place, r.place);
       argEff = mergeEff(argEff, r.eff);
     }
-    return { place, argEff };
+    return { place, argEff, funArgEff };
   }
 
   inferApp(e: Expr & { k: "App" }): ResInfo {
@@ -2166,15 +2163,8 @@ export class Infer {
     }
     const partial = e.args.length < ft.params.length;
     if (partial) {
-      const names = e.fn.k === "Var" ? e.fn.name : "this function";
       if (callee?.dicts?.length) {
         this.fail(`cannot partially apply '${callee.name}': it needs trait dictionaries; call it with all arguments`, e.span);
-      }
-      if (callee?.scheme.k === "fun" && this.effHasAlgebraic(callee.scheme.eff)) {
-        this.fail(`cannot partially apply '${callee.name}': it performs an algebraic effect`, e.span);
-      }
-      if (!callee && this.effHasAlgebraic(ft.eff)) {
-        this.fail(`cannot partially apply ${names}: it performs an algebraic effect`, e.span);
       }
       if (e.fn.k === "Var" && !this.env.has(e.fn.name) && this.findEffectOp(e.fn.name)) {
         this.fail(`cannot partially apply effect operation '${e.fn.name}'`, e.span);
@@ -2184,7 +2174,7 @@ export class Infer {
     const seed = joinPlace(fnInfo.place, typePlace(ft));
     let slots = e.args.map((_, i) => i);
     let right = false;
-    let inferred: { place: Place; argEff: Eff };
+    let inferred: { place: Place; argEff: Eff; funArgEff: Eff };
     const beforeArgs = snapshotSubst();
     try {
       inferred = this.inferCallArgs(e, ft, callee, slots, seed);
@@ -2213,7 +2203,7 @@ export class Infer {
         throw err;
       }
     }
-    const { place, argEff } = inferred;
+    const { place, argEff, funArgEff } = inferred;
 
     if (partial) {
       this.mod.partialCalls.add(e);
@@ -2221,7 +2211,9 @@ export class Infer {
       const remaining = right
         ? ft.params.slice(0, ft.params.length - e.args.length)
         : ft.params.slice(e.args.length);
-      const eff: Eff = { labels: new Set(ft.eff.labels) };
+      // The remaining function performs the callee's effects and those of any
+      // callbacks already supplied; constructing the partial itself does not.
+      const eff: Eff = mergeEff(ft.eff, funArgEff);
       return {
         ty: fnT(remaining, ft.ret, eff),
         // A partial application is a function value: it runs where it is
@@ -2232,7 +2224,7 @@ export class Infer {
       };
     }
 
-    const eff = mergeEff(fnInfo.eff, ft.eff, argEff);
+    const eff = mergeEff(fnInfo.eff, ft.eff, argEff, funArgEff);
     if (callee?.dicts?.length && calleeTrace) {
       const dicts: { trait: string; type: Type }[] = [];
       for (const d of callee.dicts) {
@@ -2241,7 +2233,7 @@ export class Infer {
       }
       this.mod.dictArgs.set(e, dicts);
     }
-    if (this.effHasAlgebraic(ft.eff)) this.mod.genCalls.add(e);
+    if (this.effHasAlgebraic(eff)) this.mod.genCalls.add(e);
     // Producing a placed value places the call: `Server.state 0` returns a
     // `Cell a @server`, and a component returns `Html`.
     return {
@@ -2254,6 +2246,28 @@ export class Infer {
   private effHasAlgebraic(eff: Eff): boolean {
     for (const l of eff.labels) if (this.mod.effects.get(l)?.algebraic) return true;
     return false;
+  }
+
+  /**
+   * A callback's algebraic effects propagate through the consumer only when the
+   * declared parameter row does not admit them. `withState` and `Exn.attempt`
+   * declare the handled row, so their callbacks do not leak State/Exn into the
+   * caller; `map` declares a pure callback, so an effectful lambda propagates.
+   */
+  private unadmittedEffects(arg: Eff, param: Type | undefined): Eff {
+    const p = param ? prune(param) : undefined;
+    if (!p || p.k !== "fun") {
+      return { labels: new Set([...arg.labels].filter((l) => this.mod.effects.get(l)?.algebraic)) };
+    }
+    if (p.eff.tail !== undefined) return emptyEff();
+    const admitted = p.eff.labels;
+    return {
+      labels: new Set(
+        [...arg.labels].filter(
+          (l) => this.mod.effects.get(l)?.algebraic && !admitted.has(l),
+        ),
+      ),
+    };
   }
 
   /** Index of the parameter a trait method dispatches on; -1 means its result. */
@@ -2283,9 +2297,10 @@ export class Infer {
     // A trait method may declare effects; they participate in placement exactly
     // like a function's declared row (CellOps declares `! Client`).
     const seed: Place = placeFromEffects(inst.eff, this);
-    const inferArgs = (slots: number[]): { place: Place; eff: Eff } => {
+    const inferArgs = (slots: number[]): { place: Place; evalEff: Eff; funArgEff: Eff } => {
       let place = seed;
-      let eff: Eff = { labels: new Set(inst.eff.labels) };
+      let evalEff = emptyEff();
+      let funArgEff = emptyEff();
       const order = args.map((_, i) => i)
         .sort((a, b) => Number(args[a]!.k === "Lam") - Number(args[b]!.k === "Lam"));
       for (const i of order) {
@@ -2298,30 +2313,22 @@ export class Infer {
             ? this.cellBindHint(r.ty, want)
             : undefined;
         this.unifyArg(r.ty, want, a.span, `${traitName}.${method} argument ${i + 1}`, hint);
-        // A callback that performs an algebraic effect cannot be passed to a
-        // parameter whose declared row does not admit it.
+        // Callback effects are deferred to the consumer (full call) or to the
+        // resulting function type (partial application).
         const argFun = prune(r.ty);
-        if (argFun.k === "fun" && this.effHasAlgebraic(argFun.eff) && schemeTy.k === "fun") {
-          const declared = prune(schemeTy.params[slot]!);
-          if (declared.k === "fun" && !this.effHasAlgebraic(declared.eff)) {
-            const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
-            this.fail(
-              `cannot pass a function that performs {${labels.join(", ")}} to '${traitName}.${method}': ` +
-              `argument ${i + 1} is declared ${typeStr(declared)} without that effect row. ` +
-              `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
-              a.span,
-            );
-          }
+        if (argFun.k === "fun") {
+          const declared = schemeTy.k === "fun" ? schemeTy.params[slot] : undefined;
+          funArgEff = mergeEff(funArgEff, this.unadmittedEffects(argFun.eff, declared));
         }
         place = joinPlace(place, r.place);
-        eff = mergeEff(eff, r.eff);
+        evalEff = mergeEff(evalEff, r.eff);
       }
-      return { place, eff };
+      return { place, evalEff, funArgEff };
     };
     let slots = args.map((_, i) => i);
     let right = false;
     const beforeArgs = snapshotSubst();
-    let placed: { place: Place; eff: Eff };
+    let placed: { place: Place; evalEff: Eff; funArgEff: Eff };
     try {
       placed = inferArgs(slots);
     } catch (err) {
@@ -2337,14 +2344,18 @@ export class Infer {
         throw err;
       }
     }
-    const { place, eff } = placed;
-    if (this.effHasAlgebraic(inst.eff)) this.mod.genCalls.add(node);
+    const { place, evalEff, funArgEff } = placed;
+    const callEff = mergeEff(inst.eff, evalEff, funArgEff);
+    if (!partial && this.effHasAlgebraic(callEff)) this.mod.genCalls.add(node);
     if (partial) {
       this.mod.partialCalls.add(node);
       if (right) this.mod.rightPartials.set(node, arity - args.length);
     }
     const remaining = right ? inst.params.slice(0, arity - args.length) : inst.params.slice(args.length);
-    const resultTy = partial ? fnT(remaining, inst.ret, inst.eff) : inst.ret;
+    const resultTy = partial
+      ? fnT(remaining, inst.ret, mergeEff(inst.eff, funArgEff))
+      : inst.ret;
+    const eff = partial ? evalEff : callEff;
 
     const trait = this.mod.traits.get(traitName)!;
     const di = this.dispatchIndex(trait, schemeTy);

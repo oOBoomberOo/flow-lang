@@ -397,6 +397,27 @@ run () = handle State with
 Operations suspend the body; the handler calls `resume` to continue it. A handler that never
 resumes aborts the handled body.
 
+Calls are effect-lenient: a callback's effects flow through higher-order functions such as
+`map`, `bind` and `Cell.update` instead of being rejected at the callback boundary, and
+partially applying an effectful function keeps its effect row:
+
+```flow
+toggle :: Int -> List Todo -> List Todo ! Exn
+toggle id = map \(t) -> if t.id == id then ... else ...
+```
+
+The same effect can cross a tier cut. A cut body that performs an algebraic operation sends it
+to the caller's handler; `resume` continues the remote body, and a handler that does not resume
+supplies the call's result:
+
+```flow
+handle Exn with
+  fail msg = Client.log ("caught: " + msg)
+in state.update $ Todo.toggleTodo todo.id
+```
+
+The handler is on the caller's side; the effect row no longer has to be handled before the cut.
+
 ### 5.4 Entry points
 
 A program has a server startup hook and one plain-data app object:

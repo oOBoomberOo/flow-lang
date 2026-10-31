@@ -39,7 +39,7 @@ test("timer: FFI calls and discarded bindings run eagerly, not as lazy signals",
   const client = compileSource(TIMER);
   assert.match(client, /const timer_id = R\.ffiCall\("window\.setInterval"/);
   assert.doesNotMatch(client, /R\.sig\(\(\) => R\.ffiCall\("window\.setInterval"/);
-  assert.match(client, /const _ = \(\(\$p\d+\)/);
+  assert.match(client, /const _ = .*\(\$p\d+\)/);
   assert.doesNotMatch(client, /const _ = R\.sig/);
 });
 

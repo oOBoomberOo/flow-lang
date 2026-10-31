@@ -47,17 +47,31 @@ export function installDom(R) {
     return n;
   }
 
+  /** A value, generator or promise from a boundary/effectful computation. */
+  const force = (v) => {
+    if (v && typeof v.next === "function") return R.runAsync(v);
+    return R.v(v);
+  };
+
   const D = {
     el(tag, attrs, children) {
       const e = newElem(tag);
       for (const [k, v] of Object.entries(attrs ?? {})) {
         if (k.startsWith("on:")) {
           const name = k.slice(3);
-          e.addEventListener(name, v);
+          e.addEventListener(name, (ev) => {
+            try {
+              const r = v(ev);
+              if (r && typeof r.next === "function") R.runAsync(r).catch((x) => console.error("[flow] event failed", x));
+              else if (r && typeof r.then === "function") r.catch((x) => console.error("[flow] event failed", x));
+            } catch (x) {
+              console.error("[flow] event failed", x);
+            }
+          });
           continue;
         }
         if (v && v.__attr) {
-          reactive(() => R.v(v.fn()), (val) => setAttr(e, k, val));
+          reactive(() => force(v.fn()), (val) => setAttr(e, k, val));
           continue;
         }
         setAttr(e, k, v);
@@ -74,7 +88,7 @@ export function installDom(R) {
     hole(thunk) {
       const host = newElem("flow-hole");
       host.style.display = "contents";
-      reactive(() => R.v(thunk()), (v) => { host.replaceChildren(...toNodes(v)); });
+      reactive(() => force(thunk()), (v) => { host.replaceChildren(...toNodes(v)); });
       return host;
     },
 

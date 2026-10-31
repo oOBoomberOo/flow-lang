@@ -74,6 +74,10 @@ export class Codegen {
   cutList: CutInfo[] = [];
   /** Local `let`/`where` bindings in scope, for duplicating pure helpers. */
   private localDefs = new Map<string, Expr>();
+  /** Functions compiled as generators because they may call a callback. */
+  private generatorFns = new Set<string>();
+  /** Trait methods that take a callback and may propagate its effects. */
+  private generatorTraitMethods = new Set<string>();
   emitting = new Set<object>();
   diagnostics: string[] = [];
   private counter = 0;
@@ -223,6 +227,100 @@ export class Codegen {
   /* 2. cut collection                                                */
   /* ---------------------------------------------------------------- */
 
+  /** True when `body` invokes one of `names` as a function. */
+  private callsFunctionParam(body: Expr, names: Set<string>): boolean {
+    if (!names.size) return false;
+    let found = false;
+    const visit = (e: Expr) => {
+      if (found || e.k === "Lam") return;
+      if (e.k === "App" && this.mod.partialCalls.has(e)) {
+        for (const a of e.args) visit(a);
+        return;
+      }
+      if (e.k === "App" && e.fn.k === "Var" && names.has(e.fn.name)) {
+        found = true;
+        return;
+      }
+      for (const c of childExprs(e)) visit(c);
+      for (const n of htmlChildren(e)) for (const h of htmlHoles([n])) visit(h);
+    };
+    visit(body);
+    return found;
+  }
+
+  /** True when the body calls a function that may return a generator. */
+  private callsGenerator(body: Expr): boolean {
+    let found = false;
+    const visit = (e: Expr) => {
+      if (found || e.k === "Lam") return;
+      if (e.k === "App" && this.mod.partialCalls.has(e)) {
+        for (const a of e.args) visit(a);
+        return;
+      }
+      if (e.k === "App" && this.calleeMayGenerate(e.fn)) { found = true; return; }
+      for (const c of childExprs(e)) visit(c);
+    };
+    visit(body);
+    return found;
+  }
+
+  /**
+   * A function that may call a callback, perform a cut, or call another
+   * generator is compiled as a generator; calls are driven with `R.genCall`.
+   * This is what lets an effect propagate to a handler up the stack.
+   */
+  private computeGenerators(): void {
+    for (const [tname, tr] of this.mod.traits) {
+      for (const [mname, m] of tr.methods) {
+        if (m.ty.k === "fun" && m.ty.params.some((p) => prune(p).k === "fun")) {
+          this.generatorTraitMethods.add(`${tname}.${mname}`);
+          this.generatorTraitMethods.add(`${traitBase(tname)}.${mname}`);
+        }
+      }
+    }
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const d of this.prog.decls) {
+        if (d.k !== "Fn" || this.generatorFns.has(d.name)) continue;
+        const gen =
+          this.rowHasAlgebraic(this.mod.info.get(d.body)?.eff) ||
+          this.callsFunctionParam(d.body, new Set(d.params.map((p) => p.name)));
+        if (gen) { this.generatorFns.add(d.name); changed = true; }
+      }
+      for (let i = 0; i < this.mod.impls.length; i++) {
+        const im = this.mod.impls[i]!;
+        for (const [mname, m] of im.methods) {
+          const fname = implFnName(im.trait, i, mname);
+          if (this.generatorFns.has(fname)) continue;
+          const gen =
+            this.rowHasAlgebraic(this.mod.info.get(m.body)?.eff) ||
+            this.callsFunctionParam(m.body, new Set(m.params.map((p) => p.name)));
+          if (gen) { this.generatorFns.add(fname); changed = true; }
+        }
+      }
+    }
+  }
+
+  /** A callee that may return a generator: a callback, partial or generator fn. */
+  private calleeMayGenerate(e: Expr): boolean {
+    if (e.k === "App" && this.mod.partialCalls.has(e)) return true;
+    // A function-valued expression (a partial application or a returned
+    // function) may be a generator; driving it is always safe.
+    if (e.k === "App" || e.k === "Lam") return true;
+    const t = this.mod.info.get(e)?.ty;
+    const fun = t ? prune(t) : undefined;
+    if (!fun || fun.k !== "fun") return false;
+    if (e.k === "Var") {
+      if (this.generatorFns.has(e.name)) return true;
+      // A local/parameter function value has unknown effects.
+      if (!this.mod.fns.has(e.name) && !this.mod.effects.has(e.name) && !this.mod.traits.has(e.name)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   collect(): void {
     for (const d of this.prog.decls) {
       if (d.k === "Fn" && d.name !== this.serveConfigName) this.walk(d.body, "neutral", false, d.body);
@@ -244,7 +342,7 @@ export class Codegen {
     // A let/block is a sequence of independently placed parts, not one region.
     // Walk the binding(s) and the body separately so `let title = event.value`
     // stays on the client while the server call in the body becomes the cut.
-    if (e.k === "Let" || e.k === "Block") {
+    if (e.k === "Let" || e.k === "Block" || e.k === "Handle") {
       if (ctxHome === "neutral" && h !== "neutral" && h !== "cross") ctxHome = h;
       if (e.k === "Let") {
         this.walk(e.value, ctxHome, inHandler, top);
@@ -253,6 +351,10 @@ export class Codegen {
         this.walk(e.body, ctxHome, inHandler, top);
         if (prev) this.localDefs.set(e.name, prev);
         else this.localDefs.delete(e.name);
+        return;
+      }
+      if (e.k === "Handle") {
+        for (const c of childExprs(e)) this.walk(c, ctxHome, inHandler, top);
         return;
       }
       const saved = new Map(this.localDefs);
@@ -269,13 +371,6 @@ export class Codegen {
       return;
     }
     if (h !== "neutral" && ctxHome !== "neutral" && h !== ctxHome) {
-      if (this.rowHasAlgebraic(this.effOf(e))) {
-        this.fail(
-          `an algebraic effect cannot cross the ${h} tier boundary: handle it before the cut ` +
-          `('handle … with … in …' must run on the side that performs it)`,
-          e.span,
-        );
-      }
       const deps = [...freeVars(e, new Set())].filter((n) => this.isRuntimeLocal(n));
       const lifted = this.liftLocalDeps(e, deps, h);
       const mode = inHandler ? "call" : "reactive";
@@ -459,6 +554,7 @@ export class Codegen {
     this.collectShims();
     this.findServe();
     this.collect();
+    this.computeGenerators();
     this.checkEntryEffects();
     const main = this.mod.fns.get("main");
     const mainUsesRouter = Boolean(
@@ -1074,12 +1170,28 @@ export class Codegen {
 
     for (const cut of this.cutList) {
       if (cut.home !== side) continue;
+      const gen = this.rowHasAlgebraic(this.effOf(cut.node));
+      const nestedCall = this.hasCallCut(cut.node, true);
+      if (gen && nestedCall) {
+        this.fail(
+          "a cut that performs an algebraic effect cannot also contain a request/response cut",
+          cut.node.span,
+        );
+      }
       this.emitting.add(cut.node);
-      const body = this.emitExpr(cut.serverNode ?? cut.node, side, side, new Set(cut.deps));
-      this.emitting.delete(cut.node);
+      const savedGen = this.genMode;
+      if (gen) this.genMode = true;
+      let body: string;
+      try {
+        body = this.emitExpr(cut.serverNode ?? cut.node, side, side, new Set(cut.deps));
+      } finally {
+        this.genMode = savedGen;
+        this.emitting.delete(cut.node);
+      }
       const destructure = cut.deps.length ? `const { ${cut.deps.join(", ")} } = A;` : "";
-      const asyncKw = this.hasCallCut(cut.node, true) ? "async " : "";
-      out.push(`R.serve(${ev(cut.id)}, ${asyncKw}(A) => { ${destructure} return ${body}; });`);
+      const asyncKw = !gen && nestedCall ? "async " : "";
+      const runner = gen ? `(function* () { return ${body}; })()` : body;
+      out.push(`R.serve(${ev(cut.id)}, ${asyncKw}(A) => { ${destructure} return ${runner}; });`);
     }
 
     // The page handler is a client value; emit it before the shim imports so
@@ -1105,14 +1217,17 @@ export class Codegen {
       out.push("");
       if (this.servePage) {
         out.push(`export async function __flow_start(root, request) {`);
-        out.push(`  const page = await R.run(() => $serve(request));`);
+        out.push(`  const page = await R.runAsync(() => $serve(request));`);
         out.push(`  R.mount(root, () => page);`);
         out.push(`}`);
       } else if (this.mainKind() === "server") {
         // An API-only program has no client page; the shell stays empty.
         out.push(`export function __flow_start(root) { R.mount(root, () => null); }`);
       } else {
-        out.push(`export function __flow_start(root) { R.mount(root, () => R.v(R.run(() => main()))); }`);
+        out.push(`export async function __flow_start(root) {`);
+        out.push(`  const page = await R.runAsync(() => main());`);
+        out.push(`  R.mount(root, () => R.v(page));`);
+        out.push(`}`);
       }
       out.push(`export { R };`);
     } else {
@@ -1144,7 +1259,16 @@ export class Codegen {
     const savedGen = this.genMode;
     this.currentDicts = new Map((dicts ?? []).map((d) => [dictKey(d.trait, d.varId), d.name]));
     const info = this.mod.fns.get(name);
-    const gen = Boolean(info && info.scheme.k === "fun" && this.rowHasAlgebraic(info.scheme.eff));
+    const gen =
+      this.generatorFns.has(name) ||
+      this.rowHasAlgebraic(this.mod.info.get(body)?.eff);
+    if (gen && this.hasCallCut(body)) {
+      this.fail(
+        `fn ${name} both performs an algebraic effect and needs a request/response cut; ` +
+        `handle the effect before the cut`,
+        body.span,
+      );
+    }
     this.genMode = gen;
     let js: string;
     try {
@@ -1152,13 +1276,6 @@ export class Codegen {
     } finally {
       this.currentDicts = savedDicts;
       this.genMode = savedGen;
-    }
-    if (gen && this.hasCallCut(body)) {
-      this.fail(
-        `fn ${name} both performs an algebraic effect and needs a request/response cut; ` +
-        `handle the effect before the cut`,
-        body.span,
-      );
     }
     const asyncKw = this.hasCallCut(body) ? "async " : "";
     const allParams = [...params.map((p) => p.name), ...dictParams];
@@ -1268,14 +1385,23 @@ export class Codegen {
           return `R.ffiFn(${ev(ext.implName)})`;
         }
         // a top-level constant (`pi = 3.14`) is a nullary function: read its value
-        if (!env.has(e.name) && this.mod.constRefs.has(e)) return `${e.name}()`;
+        if (!env.has(e.name) && this.mod.constRefs.has(e)) {
+          const call = `${e.name}()`;
+          const info = this.mod.fns.get(e.name);
+          if (this.generatorFns.has(e.name) || (info?.body && this.callsGenerator(info.body))) {
+            return this.genMode ? `(yield* R.genCall(() => ${call}))` : `R.run(${call})`;
+          }
+          return call;
+        }
         // a local that shadows a top-level name was renamed when it was bound
         return env.has(e.name) ? (this.localNames.get(e.name) ?? e.name) : e.name;
       }
       case "Lam": {
         const inner = new Set(env);
         for (const p of e.params) inner.add(p.name);
-        const gen = this.typeHasAlgebraic(this.mod.info.get(e)?.ty);
+        const gen =
+          this.typeHasAlgebraic(this.mod.info.get(e)?.ty) ||
+          this.callsFunctionParam(e.body, new Set(e.params.map((p) => p.name)));
         if (gen && this.hasCallCut(e.body)) {
           this.fail("a function that performs an algebraic effect cannot also contain a request/response cut", e.span);
         }
@@ -1384,15 +1510,21 @@ export class Codegen {
       const ops = e.ops
         .map((op) => `${ev(op.name)}: ${this.emitAlgebraicOp(op, side, ctxHome, env)}`)
         .join(", ");
+      const cutBody = this.hasCallCut(e.body);
       const savedGen = this.genMode;
-      this.genMode = true;
+      this.genMode = !cutBody;
       let bodyJs: string;
       try {
         bodyJs = this.emitExpr(e.body, side, ctxHome, env);
       } finally {
         this.genMode = savedGen;
       }
-      const call = `R.handle(${ev(e.effect)}, { ${ops} }, function* () { return ${bodyJs}; })`;
+      const bodyFn = cutBody ? `async () => ${bodyJs}` : `function* () { return ${bodyJs}; }`;
+      const call = `R.handle(${ev(e.effect)}, { ${ops} }, ${bodyFn})`;
+      if (cutBody) {
+        const drive = `R.runAsync(${call})`;
+        return this.genMode ? `(yield ${drive})` : `(await ${drive})`;
+      }
       return this.genMode ? `(yield* ${call})` : `R.run(${call})`;
     }
 
@@ -1561,8 +1693,17 @@ export class Codegen {
     }
     if (this.mod.partialCalls.has(e)) return this.emitPartialApp(e, side, ctxHome, env);
 
-    const genCall = (js: string): string =>
-      this.mod.genCalls.has(e) ? this.yieldStar(js, e.span, `'${this.callName(e)}'`) : js;
+    const genCall = (js: string, force = false): string => {
+      const mayGen = force || this.mod.genCalls.has(e) || this.calleeMayGenerate(e);
+      if (!mayGen) return js;
+      if (this.genMode) {
+        // Evaluate the call (including any yield-bearing arguments) inside the
+        // generator, then drive a generator result if there is one.
+        const v = `$g${++this.tmp}`;
+        return `(yield* (function* () { const ${v} = ${js}; return ${v} && typeof ${v}.next === "function" ? (yield* ${v}) : ${v}; })())`;
+      }
+      return this.mod.genCalls.has(e) ? `R.runAsync(${js})` : `R.run(${js})`;
+    };
 
     const bound = this.mod.boundChoices.get(e);
     if (bound) {
@@ -1572,7 +1713,10 @@ export class Codegen {
       if (e.fn.k === "Field" && !qualified) {
         parts = this.withReceiver(parts, bound.trait, bound.method, this.emitExpr(e.fn.target, side, ctxHome, env));
       }
-      return genCall(`${bound.dictName}.${bound.method}(${parts.join(", ")})`);
+      const traitMayGen =
+        this.generatorTraitMethods.has(`${bound.trait}.${bound.method}`) ||
+        this.generatorTraitMethods.has(`${traitBase(bound.trait)}.${bound.method}`);
+      return genCall(`${bound.dictName}.${bound.method}(${parts.join(", ")})`, traitMayGen);
     }
 
     const choice = this.mod.implChoices.get(e);
@@ -1587,7 +1731,11 @@ export class Codegen {
         parts = this.withReceiver(parts, choice.impl.trait, choice.method, this.emitExpr(e.fn.target, side, ctxHome, env));
       }
       for (const d of choice.dicts ?? []) parts.push(this.emitDict(d.trait, d.type));
-      return genCall(`${choice.mangled}(${parts.join(", ")})`);
+      const traitMayGen =
+        this.generatorFns.has(choice.mangled) ||
+        this.generatorTraitMethods.has(`${choice.impl.trait}.${choice.method}`) ||
+        this.generatorTraitMethods.has(`${traitBase(choice.impl.trait)}.${choice.method}`);
+      return genCall(`${choice.mangled}(${parts.join(", ")})`, traitMayGen);
     }
 
     const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
@@ -1707,7 +1855,12 @@ export class Codegen {
     const args = rightLead > 0
       ? [`...${restVar}`, ...provided, ...suffix].join(", ")
       : [...provided, `...${restVar}`, ...suffix].join(", ");
-    return `((${fnVar}) => (...${restVar}) => ${fnVar}(${args}))(${fnJs})`;
+    const call = `${fnVar}(${args})`;
+    const mayGen = this.typeHasAlgebraic(this.mod.info.get(e)?.ty);
+    if (mayGen) {
+      return `((${fnVar}) => function* (...${restVar}) { return yield* R.genCall(() => ${call}); })(${fnJs})`;
+    }
+    return `((${fnVar}) => (...${restVar}) => ${call})(${fnJs})`;
   }
 
   /** Emit a dictionary object for a trait instance, closing over inner
@@ -1742,12 +1895,20 @@ export class Codegen {
   private emitBinary(e: Expr & { k: "Binary" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     if (e.op === ">>=") {
       const bound = this.mod.boundChoices.get(e);
-      if (bound) {
-        return `${bound.dictName}.bind(${this.emitExpr(e.r, side, ctxHome, env)}, ${this.val(e.l, side, ctxHome, env)})`;
+      const choice = bound ? undefined : this.mod.implChoices.get(e);
+      if (!bound && !choice) this.fail("internal: '>>=' was not resolved to a Monad instance", e.span);
+      const k = this.emitExpr(e.r, side, ctxHome, env);
+      const value = this.val(e.l, side, ctxHome, env);
+      const js = bound
+        ? `${bound.dictName}.bind(${k}, ${value})`
+        : `${choice!.mangled}(${k}, ${value})`;
+      // bind may be a generator (its callback can perform effects). Drive it
+      // here, in the caller's generator/async context.
+      if (this.genMode) {
+        const v = `$g${++this.tmp}`;
+        return `(yield* (function* () { const ${v} = ${js}; return ${v} && typeof ${v}.next === "function" ? (yield* ${v}) : ${v}; })())`;
       }
-      const choice = this.mod.implChoices.get(e);
-      if (!choice) this.fail("internal: '>>=' was not resolved to a Monad instance", e.span);
-      return `${choice.mangled}(${this.emitExpr(e.r, side, ctxHome, env)}, ${this.val(e.l, side, ctxHome, env)})`;
+      return `R.run(${js})`;
     }
     const l = this.val(e.l, side, ctxHome, env);
     const r = this.val(e.r, side, ctxHome, env);
@@ -1897,13 +2058,9 @@ export class Codegen {
       case "Element": {
         const attrs = n.attrs.map((a) => {
           if (a.name.startsWith("on") && a.value.k === "expr") {
-            if (this.typeHasAlgebraic(this.mod.info.get(a.value.e)?.ty) || this.rowHasAlgebraic(this.effOf(a.value.e))) {
-              this.fail(
-                `the '${a.name}' listener cannot perform an algebraic effect: listeners run after the ` +
-                `handler's scope has ended. Handle the effect inside the listener instead.`,
-                n.span,
-              );
-            }
+            // The DOM listener drives generators with `R.runAsync`, so the
+            // listener can install its own handler or forward an effect from a
+            // cut to a handler in its lexical scope.
             return `${ev("on:" + a.name.slice(2).toLowerCase())}: ${this.emitExpr(a.value.e, side, ctxHome, env)}`;
           }
           if (a.value.k === "static") return `${ev(a.name)}: ${ev(a.value.v)}`;

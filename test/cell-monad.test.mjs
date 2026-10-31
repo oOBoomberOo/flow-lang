@@ -131,12 +131,12 @@ main = do
   assert.deepEqual(r.errors, []);
   assert.match(
     r.client,
-    /function \$impl_CellOps_\d+_get\(c\) \{ return R\.ffiCall\("__flow\.get", \[c\]\)/,
+    /function\*? \$impl_CellOps_\d+_get\(c\) \{ return .*R\.ffiCall\("__flow\.get", \[c\]\)/,
     "get receives the cell",
   );
   assert.match(
     r.client,
-    /function \$impl_CellOps_\d+_update\(c, f\) \{ return R\.ffiCall\("__flow\.set", \[c,/,
+    /function\*? \$impl_CellOps_\d+_update\(c, f\) \{ return .*R\.ffiCall\("__flow\.set", \[c,/,
     "update receives the cell",
   );
   assert.doesNotMatch(r.client, /__flow\.set", \[R\.v\(c\)/);
