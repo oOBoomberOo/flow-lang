@@ -1,27 +1,29 @@
--- Cell sugar and monads.
+-- Cells are monads.
 --
--- `c.value` reads a cell, `c := e` writes it, `c += n` / `-=` / `*=` update it
--- in place, and `>>=` (or `do` with `<-`) chains Option and List.
+-- A cell can be read in a do block with `<-`, written with `:=` / `+=`, and a
+-- block that ends in `pure` produces a new cell. There is no special syntax:
+-- the same `>>=` / `do` that works for Option and List works for Cell.
 import Monad (Monad)
+
+counter :: Cell Int
+counter = Client.state 1
+
+label :: Cell Str
+label = do
+  n <- counter
+  Cell.pure ("count: " + str n)
 
 main :: Html
 main = do
-  let c = Client.state 1
-  c := c.value + 1
-  c += 2
-  c -= 1
-  c *= 3
-  c := c.value / 2
-  c.update (\x -> x + 10)
-  let option = Some 2 >>= \x -> Some 3 >>= \y -> Some (x + y)
-  let list = [1, 2] >>= \x -> [10, 20] >>= \y -> [x + y]
-  let chained = do
-        v <- Some 1
-        Some (v * 10)
+  let total = do
+        a <- counter
+        b <- Cell.pure (a + 10)
+        Cell.pure (a + b)
+  counter += 2
   <div class="card">
-    <h1>Cells and monads</h1>
-    <p class="cell">{str c.value}</p>
-    <p class="option">{str option}</p>
-    <p class="list">{str list}</p>
-    <p class="chain">{str chained}</p>
+    <h1>Cells are monads</h1>
+    <p class="cell">{label}</p>
+    <p class="total">{str total.value}</p>
+    <p class="option">{str (do x <- Option.Some 2; y <- Option.Some 3; Option.Some (x + y))}</p>
+    <p class="list">{str (do x <- [1, 2]; y <- [10, 20]; [x + y])}</p>
   </div>

@@ -3,12 +3,6 @@
 effect Audit where
   record :: Str -> ()
 
-effect Server @ server where
-  log :: Str -> ()
-
-effect Client @ client where
-  state :: a -> Cell a
-
 -- Provided on the server (its body uses Server.log), so every Audit.record call
 -- is placed on the server even though it is written inside a client handler.
 -- Because it sits inside an event handler, the compiler emits a request/response

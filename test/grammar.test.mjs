@@ -132,9 +132,7 @@ test("declarations: class context is a bound", () => {
 });
 
 test("declarations: effect, provide and foreign", () => {
-  const p = D(`effect Server @ server where
-  secret :: Str -> Str
-
+  const p = D(`
 provide Server where
   secret k = k
 

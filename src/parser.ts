@@ -920,9 +920,23 @@ export class Parser {
     if (this.atOp("=>")) {
       this.next();
       const bounds = this.contextBounds(first);
-      return { type: this.parseType(), bounds };
+      return { type: this.placed(this.parseType()), bounds };
     }
-    return { type: first, bounds: {} };
+    return { type: this.placed(first), bounds: {} };
+  }
+
+  /** A signature-level placement annotation: `f :: Str -> () @client`. */
+  private placed(t: TypeExpr): TypeExpr {
+    if (!this.atOp("@")) return t;
+    this.next();
+    const p = this.next().value;
+    if (p !== "client" && p !== "server" && p !== "neutral") {
+      this.err(`unknown placement '${p}' (expected client|server|neutral)`);
+    }
+    if (p === "neutral") return t;
+    // `f :: Str -> () @client` annotates the function, which lives on `t.ret`
+    if (t.k === "TFun") return { ...t, ret: { k: "TPlaced", inner: t.ret, place: p as Place, span: t.ret.span } };
+    return { k: "TPlaced", inner: t, place: p as Place, span: t.span };
   }
 
   parseType(): TypeExpr {

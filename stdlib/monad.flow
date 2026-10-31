@@ -1,14 +1,24 @@
--- std::monad — a small Monad type class for Option and List.
+-- std::monad — the Monad class for Option, List and Cell.
 --
--- `>>=` and `do { x <- m; … }` desugar to `Monad.bind`, so importing this module
--- is enough to use the sugar:
+-- `>>=` and `do` notation desugar to `Monad.bind`, and `pure` lifts a value:
 --
---   use std::monad::{Monad}
---   Some(2) >>= fn(x) { Some(x + 1) }
---   do { x <- Some(2); y <- Some(3); Some(x + y) }
+--   import Monad (Monad)
+--   Option.Some 2 >>= (\x -> Option.Some (x + 1))
+--   do
+--     x <- Option.Some 2
+--     y <- Option.Some 3
+--     pure (x + y)
+--
+-- Cells are monads too, so a sequence of reads and writes is just a do block:
+--
+--   do
+--     n <- counter
+--     counter := n + 1
+--     pure n
 class Monad f where
   bind :: f a -> (a -> f b) -> f b
   map :: f a -> (a -> b) -> f b
+  pure :: a -> f a
 
 instance Monad Option where
   bind value k = case value of
@@ -17,19 +27,31 @@ instance Monad Option where
   map value mapper = case value of
     None -> None
     Some x -> Some (mapper x)
+  pure x = Some x
 
 instance Monad List where
-  bind value k = case value of
-    [] -> []
-    x : rest -> concat (k x) (bind rest k)
-  map value mapper = case value of
-    [] -> []
-    x : rest -> concat [mapper x] (map rest mapper)
+  bind value k = go value
+    where
+      go v = case v of
+        [] -> []
+        x : rest -> concat (k x) (go rest)
+  map value mapper = go value
+    where
+      go v = case v of
+        [] -> []
+        x : rest -> concat [mapper x] (go rest)
+  pure x = [x]
 
--- / `pure(value)` for an Option.
+-- `Cell` is neutral and reactive: binding reads the current value, `pure` makes
+-- a fresh cell, and the result is itself a cell that tracks its inputs.
+instance Monad Cell where
+  bind cell k = k (get cell)
+  map cell f = makeCell (f (get cell))
+  pure x = makeCell x
+
+-- `some(value)` is `pure` for an Option; `one(value)` for a List.
 some :: a -> Option a
 some value = Some value
 
--- / `pure(value)` for a List.
 one :: a -> List a
 one value = [value]

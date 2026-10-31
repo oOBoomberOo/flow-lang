@@ -94,19 +94,14 @@ function tmpFlow(src) {
 
 const uri = (file) => `file:///${path.resolve(file).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
-const GOOD = `effect Server @ server where
-  secret :: Str -> Str
-
-effect Client @ client where
-  state :: a -> Cell a
-
+const GOOD = `
 main :: Html
 main = do
   let n = Client.state 0
   <div>
     <button onClick={\\(e :: Event) -> n.set (n.get () + 1)}>{"+1"}</button>
     <p>{"count: "} {n.get ()}</p>
-    <p>{"secret: "} {Server.secret "k"}</p>
+    <p>{"secret: "} {str (Server.now ())}</p>
   </div>
 `;
 

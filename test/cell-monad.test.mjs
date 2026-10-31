@@ -206,5 +206,5 @@ main = do
   assert.deepEqual(r.errors, []);
   const uses = (r.client.match(/__flow\.(get|set)/g) ?? []).length;
   assert.ok(uses >= 5, "reads and writes are emitted");
-  assert.ok(r.client.includes('R.op("Client", "state")'), "the cell still comes from Client.state");
+  assert.ok(r.client.includes('__flow.host.cell'), "the cell comes from the neutral host primitive");
 });

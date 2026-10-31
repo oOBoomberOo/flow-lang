@@ -43,10 +43,11 @@ export function placeName(p: Place): string {
 }
 
 /** Types that can only exist in one place. Anything else is place-neutral. */
+// Html/Event are DOM values; Dom is a handle. A Cell is neutral: it may live on
+// either side and its value crosses the boundary as an ordinary cut.
 const PLACED_TYPES: Record<string, Place> = {
   Html: "client",
   Event: "client",
-  Cell: "client",
   Dom: "client",
 };
 export function typePlace(t: Type): Place {

@@ -125,14 +125,12 @@ test("a server cut answers a subscription over the real transport", async () => 
     await post(host, "s1", { t: "sub", id: "cut1", args: {} });
     const msg = await c.waitFor((m) => m.t === "val" && m.id === "cut1");
     c.close();
-    assert.equal(msg.value, "S3CRET");
+    assert.match(String(msg.value), /^[0-9]+$/, "the server clock answered");
   });
 });
 
 test("reactive cuts stream updates when their dependencies change", async () => {
-  const src = `effect Server @ server where
-  now :: () -> Int
-
+  const src = `
 main :: Html
 main = do
   let t = Server.now ()

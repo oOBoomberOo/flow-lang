@@ -287,9 +287,6 @@ test("ffi: a std wrapper follows the placement of its call site", () => {
   const { entry } = packageWith({
     "main.flow": `import Log (info)
 
-effect Server @ server where
-  now :: () -> Int
-
 stamp :: () -> Int
 stamp () = do
   info "stamping on the server"

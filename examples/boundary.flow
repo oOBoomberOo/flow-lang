@@ -1,10 +1,3 @@
-effect Server @ server where
-  secret :: Str -> Str
-  now :: () -> Int
-
-effect Client @ client where
-  state :: a -> Cell a
-  now :: () -> Int
 
 -- The `if` lives on the client (its branches produce Html, which is client-only).
 -- The then-branch contains a server computation, so the compiler cuts exactly
@@ -19,7 +12,7 @@ main = do
       {"toggle the secret"}
     </button>
     {if reveal.get ()
-      then <p class="secret">{"server says: "} {Server.secret "flag"}</p>
+      then <p class="secret">{"server says: "} {str (Server.now ())}</p>
       else <p class="hidden">{"nothing to see here"}</p>}
     <p class="skew">{"server/client clock skew: "} {Server.now () - Client.now ()}</p>
   </div>

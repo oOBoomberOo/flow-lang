@@ -164,9 +164,7 @@ main = <p>{Show.show [1, 2, 3]}</p>`);
 /* ------------------------- effects ------------------------- */
 
 test("declared effect row must cover inferred effects", () => {
-  bad(`effect Server @ server where
-  now :: () -> Int
-
+  bad(`
 f :: () -> Int ! {}
 f () = Server.now ()
 
@@ -205,9 +203,7 @@ main = <p>{"hi"}</p>`);
 });
 
 test("client state never crosses", () => {
-  const r = ok(`effect Client @ client where
-  state :: a -> Cell a
-
+  const r = ok(`
 main :: Html
 main = do
   let n = Client.state 0
@@ -216,11 +212,9 @@ main = do
 });
 
 test("server authority creates a server-side cut", () => {
-  const r = ok(`effect Server @ server where
-  secret :: Str -> Str
-
+  const r = ok(`
 main :: Html
-main = <p>{Server.secret "k"}</p>`);
+main = <p>{str (Server.now ())}</p>`);
   assert.equal(r.diagnostics.length, 1);
   assert.match(r.diagnostics[0], /server-side block/);
   assert.match(r.server, /R\.serve\("cut1"/);
@@ -228,16 +222,11 @@ main = <p>{Server.secret "k"}</p>`);
 });
 
 test("client code calling a server op inside an if keeps the if on the client", () => {
-  const r = ok(`effect Server @ server where
-  secret :: Str -> Str
-
-effect Client @ client where
-  state :: a -> Cell a
-
+  const r = ok(`
 main :: Html
 main = do
   let on = Client.state False
-  <div>{if on.get () then <p>{Server.secret "k"}</p> else <p>{"no"}</p>}</div>`);
+  <div>{if on.get () then <p>{str (Server.now ())}</p> else <p>{"no"}</p>}</div>`);
   assert.equal(r.diagnostics.length, 1, "exactly the secret is cut out");
   assert.match(r.client, /\$impl_CellOps_\d+_get/); // condition stays on the client
   assert.match(r.client, /__flow\.get/);            // Cell.get is std code over the FFI
@@ -245,12 +234,7 @@ main = do
 });
 
 test("server code can consume a client value (uplink)", () => {
-  const r = ok(`effect Server @ server where
-  now :: () -> Int
-
-effect Client @ client where
-  now :: () -> Int
-
+  const r = ok(`
 main :: Html
 main = <p>{Server.now () - Client.now ()}</p>`);
   assert.equal(r.diagnostics.length, 2);
@@ -260,9 +244,7 @@ main = <p>{Server.now () - Client.now ()}</p>`);
 });
 
 test("server value used in client arithmetic is cut only once", () => {
-  const r = ok(`effect Server @ server where
-  now :: () -> Int
-
+  const r = ok(`
 main :: Html
 main = do
   let t = Server.now ()
@@ -271,9 +253,7 @@ main = do
 });
 
 test("a non-serializable value cannot cross", () => {
-  bad(`effect Server @ server where
-  log :: Str -> ()
-
+  bad(`
 main :: Html
 main = do
   let f = \\(x :: Int) -> x
@@ -326,7 +306,7 @@ main :: Html
 main = do
   let c = Client.state "x"
   let a = needClient (c.get ())
-  let b = needServer (Server.secret "k")
+  let b = needServer (str (Server.now ()))
   let
     lit :: Str @client
     lit = "hi"

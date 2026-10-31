@@ -1,0 +1,21 @@
+module Cell (pure, new, read, write) where
+
+-- Cells are neutral reactive values, and they are monads (see std/monad), so a
+-- do block reads them with `<-`:
+--
+--   do
+--     n <- counter
+--     Cell.pure (n + 1)
+
+-- `pure` is the monadic return for Cell: a fresh cell holding the value.
+pure :: a -> Cell a
+pure x = makeCell x
+
+new :: a -> Cell a
+new x = makeCell x
+
+read :: Cell a -> a
+read c = get c
+
+write :: Cell a -> a -> ()
+write c x = set c x

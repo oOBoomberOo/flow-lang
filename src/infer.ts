@@ -82,6 +82,10 @@ export interface FnInfo {
   dicts?: DictParam[];
   /** native (JavaScript) implementation, for `unsafe extern` declarations */
   extern?: { target: "js"; implName: string };
+  /** placement of an FFI import, from its signature annotation */
+  place?: Place;
+  /** the placement inferred for this function's body */
+  bodyPlace?: Place;
   /** declaration span, for editor features */
   span?: { start: number; end: number; line: number; col: number; file?: string };
 }
@@ -271,6 +275,8 @@ export class Infer {
     const parts: string[] = [];
     for (const f of this.mod.fns.values()) {
       if (f.scheme.k === "fun") parts.push(f.name + ":" + [...f.scheme.eff.labels].sort().join("|"));
+      // a body's inferred side feeds its callers, so it participates in the fixpoint
+      if (f.bodyPlace) parts.push("bp:" + f.name + ":" + f.bodyPlace);
     }
     return parts.sort().join(";");
   }
@@ -315,6 +321,9 @@ export class Infer {
   varPlace(name: string): Place {
     if (this.env.has(name)) return "neutral";
     const fn = this.mod.fns.get(name);
+    // a function placed by its body (client/server modules, FFI annotations)
+    if (fn?.place) return fn.place;
+    if (fn?.bodyPlace && fn.bodyPlace !== 'neutral') return fn.bodyPlace;
     if (fn && fn.scheme.k === "fun") return placeFromEffects(fn.scheme.eff, this);
     const eop = this.findEffectOp(name);
     if (eop) { const e = this.mod.effects.get(eop.effect); return e ? e.place : "server"; }
@@ -827,6 +836,12 @@ export class Infer {
     return out;
   }
 
+  /** The placement written on a whole signature (`Str -> () @client`). */
+  private signaturePlace(sig: FnSig): Place | undefined {
+    const t = sig.ret;
+    return t && t.k === "TPlaced" ? t.place : undefined;
+  }
+
   declareFn(d: Decl & { k: "Fn" }) {
     const params = new Map<string, Type>();
     const dicts: DictParam[] = [];
@@ -869,9 +884,12 @@ export class Infer {
     }
     const ty = this.resolveSig(d.sig, params);
     markGeneric(ty);
+    // `f :: Str -> () @client`: the primitive only exists on one side
+    const place = d.sig.ret && d.sig.ret.k === "TPlaced" ? d.sig.ret.place : undefined;
     this.mod.fns.set(d.sig.name, {
       name: d.sig.name,
       scheme: ty,
+      place,
       params: d.sig.params,
       ret: d.sig.ret,
       eff: d.sig.eff,
@@ -996,6 +1014,8 @@ export class Infer {
     this.env = saved;
     this.typeParams = savedTypeParams;
     this.mod.info.set(body, r);
+    // a function runs where its body runs; callers inherit that placement
+    if (r.place !== 'neutral') info.bodyPlace = r.place;
   }
 
   /* ---------------------------------------------------------------- */

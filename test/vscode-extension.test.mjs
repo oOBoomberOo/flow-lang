@@ -154,18 +154,13 @@ function loadExtension(env) {
   return { ext, restore: () => { Module._load = origLoad; } };
 }
 
-const SRC = `effect Server @ server where
-  secret :: Str -> Str
-
-effect Client @ client where
-  state :: a -> Cell a
-
+const SRC = `
 main :: Html
 main = do
   let n = Client.state 0
   <div>
     <p>{"n = "} {n.get ()}</p>
-    <p>{"s = "} {Server.secret "k"}</p>
+    <p>{"s = "} {str (Server.now ())}</p>
   </div>
 `;
 

@@ -71,21 +71,16 @@ main = <p>{str (len [1, 2])} {trim " x "} {str (eq 1 1)} {str (sqrt 4.0)}</p>`,
 
 test("ffi: Server / Client / Store are declared and provided in std", () => {
   const { entry } = packageWith({
-    "main.flow": `effect Server @ server where
-  secret :: Str -> Str
-
-effect Client @ client where
-  state :: a -> Cell a
-
+    "main.flow": `
 main :: Html
-main = <p>{Server.secret "k"} {str (((Client.state 0).get) ())}</p>`,
+main = <p>{str (Server.now ())} {str (((Client.state 0).get) ())}</p>`,
   });
   const r = compileFile(entry);
-  assert.ok(r.server.includes('R.ffiCall("__flow.host.secret"'), "Server.secret is std over the host");
+  assert.ok(r.server.includes('R.ffiCall("__flow.host.log"'), "Server.log is std over the host");
   assert.ok(r.client.includes('R.ffiCall("__flow.host.cell"'), "Client.state is std over the host");
-  // The provider itself is compiled std code...
-  assert.ok(r.client.includes('R.provide("Client"'), "std provides Client");
+  // Both are ordinary std functions now, not provided effects.
   assert.ok(r.client.includes("makeCell"), "Client.state is a std function");
+  assert.ok(!r.client.includes('R.provide("Client"'), "Client is a module, not a capability");
   // ...while the runtime only exposes raw host primitives.
   const runtime = fs.readFileSync(new URL("../src/runtime/core.js", import.meta.url), "utf8");
   assert.ok(!runtime.includes('R.provide("Client"'), "the runtime does not implement Client");
@@ -103,9 +98,7 @@ main = <p>{str (Some 1)} {str None}</p>`,
 
 test("ffi: Cell.get / Cell.set dispatch to the std CellOps trait", () => {
   const { entry } = packageWith({
-    "main.flow": `effect Client @ client where
-  state :: a -> Cell a
-
+    "main.flow": `
 main :: Html
 main = <p>{str (((Client.state 0).get) ())}</p>`,
   });

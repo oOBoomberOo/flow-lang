@@ -1,4 +1,4 @@
-module Prelude (not, cons, Option(..), Server, Client, Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps) where
+module Prelude (not, cons, Option(..), Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, Cell(..)) where
 
 -- std::prelude — the language surface that used to be compiler-injected.
 --
@@ -16,18 +16,9 @@ module Prelude (not, cons, Option(..), Server, Client, Store, len, isEmpty, push
 data Option a = None | Some a
 
 -- ---------------------------------------------------------------- effects
--- Client/server authority is declared here, not injected by the compiler.
-effect Server @ server where
-  now :: () -> Int
-  secret :: Str -> Str
-  log :: Str -> ()
-  random :: () -> Float
-
-effect Client @ client where
-  now :: () -> Int
-  state :: a -> Cell a
-  log :: Str -> ()
-
+-- Store is a capability. Client and Server are ordinary modules (std/client,
+-- std/server) whose functions are placed by their bodies, so there is no
+-- special-cased "Client" or "Server" effect any more.
 effect Store @ server where
   get :: Str -> Option Str
   set :: Str -> Str -> ()
@@ -176,31 +167,18 @@ makeCell :: a -> Cell a
 makeCell init = host_cell init
 
 -- ---------------------------------------------------------------- cells
--- Cell.get / Cell.set are std trait methods over the host's reactive
--- primitives. The `Client` effect declares that they need client authority,
--- so placement follows the capability instead of a compiler special case.
+-- A Cell is neutral: it may live on either side, and its value crosses the
+-- boundary as an ordinary cut. Reading and writing go through the host's
+-- reactive primitives and carry no client authority of their own.
 class CellOps a where
-  get :: Cell a -> a ! Client
-  set :: Cell a -> a -> () ! Client
-  update :: Cell a -> (a -> a) -> () ! Client
+  get :: Cell a -> a
+  set :: Cell a -> a -> ()
+  update :: Cell a -> (a -> a) -> ()
 
 instance CellOps (Cell a) a where
   get c = host_get c
   set c value = host_set c value
   update c f = host_set c (f (host_get c))
-
-provide Server where
-  now () = host_now ()
-  secret name = host_secret name
-  log msg = host_log msg
-  random () = math_random ()
-
-provide Client where
-  now () = host_now ()
-  state = makeCell
-  log msg = do
-    console_log msg
-    ()
 
 provide Store where
   get key = host_store_get key
