@@ -355,6 +355,11 @@ label = do
   Cell.pure ("count: " + str n)
 ```
 
+`<-` reads the cell's current value, and the rest of the block must produce a
+`Cell` (usually `Cell.pure ...`). A write returns `()`, so it cannot be the tail
+of a `Cell` do block. In an event handler (which returns `()`), read with
+`let x = get cell` / `cell.value` and write with `cell := ...`.
+
 ### 5.2 Capabilities
 
 A capability is an effect with a provider. The provider decides where the calls

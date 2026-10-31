@@ -133,6 +133,22 @@ main = do
   );
 });
 
+test("cells: `<-` explains that the rest of the block must produce a Cell", () => {
+  assert.throws(
+    () => compileSource(`state :: Cell (List Int)
+state = pure []
+
+add :: Event -> ()
+add event = do
+  xs <- state
+  state := xs ++ [1]
+
+main :: Html
+main = <button onClick={add}>{"+"}</button>`, "cell-bind.flow"),
+    /Monad\.bind argument 1[\s\S]*reads a cell's current value[\s\S]*let x = get cell/,
+  );
+});
+
 test("monads: do blocks and >>= run for Option and List on the server", async () => {
   const source = `import Monad (Monad)
 import Http (get, Router, RequestObject, Response, textResponse)

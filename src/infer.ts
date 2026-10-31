@@ -2279,8 +2279,13 @@ export class Infer {
       for (const i of order) {
         const a = args[i]!;
         const slot = slots[i]!;
-        const r = this.inferArg(a, inst.params[slot]!);
-        this.unifyArg(r.ty, inst.params[slot]!, a.span, `${traitName}.${method} argument ${i + 1}`);
+        const want = inst.params[slot]!;
+        const r = this.inferArg(a, want);
+        const hint =
+          traitBase(traitName) === "Monad" && method === "bind" && i === 0
+            ? this.cellBindHint(r.ty, want)
+            : undefined;
+        this.unifyArg(r.ty, want, a.span, `${traitName}.${method} argument ${i + 1}`, hint);
         // A callback that performs an algebraic effect cannot be passed to a
         // parameter whose declared row does not admit it.
         const argFun = prune(r.ty);
@@ -2714,6 +2719,20 @@ export class Infer {
   }
 
   /** A `let x: T = value` annotation: report both types at the value. */
+  /** Explain `x <- cell` when the continuation ends in `()` instead of a cell. */
+  private cellBindHint(got: Type, want: Type): string | undefined {
+    const g = prune(got);
+    const w = prune(want);
+    if (g.k !== "fun" || w.k !== "fun") return undefined;
+    const gr = prune(g.ret);
+    const wr = prune(w.ret);
+    if (!(gr.k === "con" && gr.name === "Unit")) return undefined;
+    if (!(wr.k === "con" && wr.name === "Cell")) return undefined;
+    return "`<-` reads a cell's current value, and the rest of the do block must " +
+      "produce a Cell (usually `Cell.pure ...`). For an event handler that reads " +
+      "and then writes, use `let x = get cell` instead.";
+  }
+
   private checkAnnotation(got: Type, want: Type, name: string, span: { line: number; col: number; file?: string }) {
     const before = snapshotSubst();
     try {
