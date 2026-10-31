@@ -127,10 +127,11 @@ export function prune(t: Type): Type {
   if (t.k === "app") {
     const fn = prune(t.fn);
     const args = t.args.map((a) => prune(a));
-    // `List<Int>` is represented as a constructor application until the
-    // constructor is known; once it is, normalize to an ordinary TCon.
-    if (fn.k === "con" && fn.args.length === 0) {
-      return { k: "con", name: fn.name, args };
+    // A constructor application may be partially applied (`Result e`); applying
+    // it again completes the type. `List<Int>` therefore normalizes the same
+    // way whether the constructor was bare or already carried arguments.
+    if (fn.k === "con") {
+      return { k: "con", name: fn.name, args: [...fn.args, ...args] };
     }
     if (fn === t.fn && args.every((a, i) => a === t.args[i])) return t;
     return { k: "app", fn, args };
@@ -204,8 +205,25 @@ export function unify(a: Type, b: Type): void {
       const fn = prune(app.fn);
       if (fn.k === "var") {
         if (occurs(fn.id, con)) { const [a, b] = typeStrs([fn, con]); tErr(`infinite type: ${a} = ${b}`); }
-        bind(fn.id, { k: "con", name: con.name, args: [] });
-        return unify({ k: "con", name: con.name, args: app.args }, con);
+        const applied = app.args.length;
+        if (con.args.length < applied) {
+          const [a, b] = typeStrs([x, y]);
+          tErr(`type constructor arity mismatch: ${a} vs ${b}`);
+        }
+        if (con.args.length === applied) {
+          bind(fn.id, { k: "con", name: con.name, args: [] });
+          for (let i = 0; i < applied; i++) unify(app.args[i]!, con.args[i]!);
+          return;
+        }
+        // `f a` against `Result e a` (two arguments): the trait's constructor
+        // parameter is the partially applied `Result e`, and `a` fills the
+        // trailing slot. This is the standard higher-kinded application rule.
+        const fixed = con.args.slice(0, con.args.length - applied);
+        bind(fn.id, { k: "con", name: con.name, args: fixed });
+        for (let i = 0; i < applied; i++) {
+          unify(app.args[i]!, con.args[con.args.length - applied + i]!);
+        }
+        return;
       }
       if (fn.k === "con" && fn.args.length === 0) {
         return unify({ k: "con", name: fn.name, args: app.args }, con);

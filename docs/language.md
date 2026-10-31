@@ -133,12 +133,12 @@ class Applicative f => Monad f where
 Applicative and Functor dictionaries, so generic code can call `pure` and `map`.
 Instances are declared per class, exactly like the `Show`/`Ord` examples above.
 
-`Option`, `List` and `Cell` have Functor/Applicative/Monad instances; `Option` and
-`List` also have `Alternative` (`empty`/`orElse`). `Dict k` and `Set a` are aliases
-of `List`, so `map`/`empty` use the List instance (use `Dict.mapWithKey` /
-`Set.mapWith` when the key or a comparator is needed). `Result a e` keeps
-`Result.mapOk`/`andThen`: Flow type constructors are not partially applied, so a
-two-parameter `Result e` cannot be a Functor instance in this system.
+`Option`, `List`, `Cell` and `Result e` have Functor/Applicative/Monad
+instances; `Option` and `List` also have `Alternative` (`empty`/`orElse`).
+`Dict k` and `Set a` are aliases of `List`, so `map`/`empty` use the List
+instance (use `Dict.mapWithKey` / `Set.mapWith` when the key or a comparator is
+needed). `Result e` fixes the error type and is a monad over the success value,
+exactly like Haskell's `Either e`; `Result.mapOk`/`andThen` remain available.
 
 ## 3. Expressions
 
@@ -451,7 +451,7 @@ module claims them.
 | `Flow.Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `mapWith`, `filter`, `intSet`, `stringSet` |
 | `Flow.Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
 | `Flow.Option` | `Option`, `None`, `Some`, `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
-| `Flow.Result` | `Ok`/`Err` with `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
+| `Flow.Result` | `Result e a` with `Ok`/`Err`, `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr`; `Functor`/`Applicative`/`Monad` over the success value |
 | `Flow.String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
 | `Flow.Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
 | `Flow.Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |

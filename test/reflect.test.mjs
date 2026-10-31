@@ -106,7 +106,7 @@ main :: ()
 main = do
   let info = Reflect.meta user
   let encoded = Result.withDefault "ENCODE ERROR" (Serialize.encode user)
-  let decoded :: Result User Str = Serialize.decode encoded
+  let decoded :: Result Str User = Serialize.decode encoded
   let again = case decoded of
         Err why -> "DECODE ERROR: " + why
         Ok value -> Result.withDefault "RE-ENCODE ERROR" (Serialize.encode value)
@@ -131,9 +131,9 @@ main = do
   let strJson = Result.withDefault "ERR" (Serialize.encode ("a\\nb" :: Str))
   let unitJson = Result.withDefault "ERR" (Serialize.encode (()))
   let listJson = Result.withDefault "ERR" (Serialize.encode ([1, 2] :: List Int))
-  let intBack :: Result Int Str = Serialize.decode intJson
+  let intBack :: Result Str Int = Serialize.decode intJson
   let strBack :: Result Str Str = Serialize.decode strJson
-  let listBack :: Result (List Int) Str = Serialize.decode listJson
+  let listBack :: Result Str (List Int) = Serialize.decode listJson
   let showInt = case intBack of
         Ok value -> str value
         Err why -> why
@@ -161,7 +161,7 @@ import Fs (writeText)
 main :: ()
 main = do
   let encoded = Result.withDefault "ERR" (Serialize.encode (Some (None :: Option Int)))
-  let decoded :: Result (Option (Option Int)) Str = Serialize.decode encoded
+  let decoded :: Result Str (Option (Option Int)) = Serialize.decode encoded
   let again = case decoded of
         Err why -> "DECODE ERROR: " + why
         Ok value -> Result.withDefault "RE-ENCODE ERROR" (Serialize.encode value)
@@ -186,8 +186,8 @@ main = do
   let info = Reflect.meta user
   let encoded = Result.withDefault "ENCODE ERROR" (Serialize.encodeWith info user)
   let json = Result.withDefault JNull (Serialize.toJsonWith info user)
-  let decoded :: Result User Str = Serialize.fromJsonWith info json
-  let autoJson :: Result User Str = Serialize.fromJson json
+  let decoded :: Result Str User = Serialize.fromJsonWith info json
+  let autoJson :: Result Str User = Serialize.fromJson json
   let again = case decoded of
         Err why -> "DECODE ERROR: " + why
         Ok value -> case autoJson of
@@ -207,7 +207,7 @@ import Fs (writeText)
 
 ${USER}
 
-showError :: Result User Str -> Str
+showError :: Result Str User -> Str
 showError result = case result of
   Ok _ -> "unexpected OK"
   Err why -> why
@@ -252,7 +252,7 @@ main :: ()
 main = do
   let info = Reflect.meta tree
   let encoded = Result.withDefault "ENCODE ERROR" (Serialize.encode tree)
-  let decoded :: Result Tree Str = Serialize.decode encoded
+  let decoded :: Result Str Tree = Serialize.decode encoded
   let again = case decoded of
         Err why -> "DECODE ERROR: " + why
         Ok value -> Result.withDefault "RE-ENCODE ERROR" (Serialize.encode value)
@@ -277,7 +277,7 @@ scores = Dict.stringDict [("ada", 36), ("grace", 85)]
 main :: ()
 main = do
   let encoded = Result.withDefault "ENCODE ERROR" (Serialize.encode scores)
-  let decoded :: Result (Dict Str Int) Str = Serialize.decode encoded
+  let decoded :: Result Str (Dict Str Int) = Serialize.decode encoded
   let again = case decoded of
         Err why -> "DECODE ERROR: " + why
         Ok value -> Result.withDefault "RE-ENCODE ERROR" (Serialize.encode value)

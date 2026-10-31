@@ -28,7 +28,7 @@ roundTrip value = case Serialize.encode value of
   Err why -> "encode error: " + why
   Ok text ->
     case let
-      _ann1 :: Result User Str
+      _ann1 :: Result Str User
       _ann1 = Serialize.decode text
     in _ann1 of
       Err why -> "decode error: " + why

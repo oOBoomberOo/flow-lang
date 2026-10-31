@@ -8,7 +8,7 @@ module Flow.Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith,
 --     Ok text -> writeText "user.json" text
 --     Err why -> ...
 --
---   let loaded :: Result User Str = Serialize.decode text
+--   let loaded :: Result Str User = Serialize.decode text
 --
 -- When the type is not concrete (or you want to pass metadata around), use the
 -- `*With` forms with `Reflect.meta`:
@@ -68,7 +68,7 @@ foreign import js unsafe "__flow.host.reflectBool" {
   host_bool :: a -> Bool
 }
 
--- / Identity at runtime. Decoding has one `Result a Str` type, so each branch
+-- / Identity at runtime. Decoding has one `Result Str a` type, so each branch
 -- / proves its shape through the metadata and then produces `a` through here.
 foreign import js unsafe "__flow.host.reflectCast" {
   host_cast :: a -> b
@@ -86,15 +86,15 @@ foreign import js unsafe "__flow.serialize.encode" {
 }
 
 foreign import js unsafe "__flow.serialize.decode" {
-  decode :: Str -> Result a Str
+  decode :: Str -> Result Str a
 }
 
 foreign import js unsafe "__flow.serialize.toJson" {
-  toJson :: a -> Result Json Str
+  toJson :: a -> Result Str Json
 }
 
 foreign import js unsafe "__flow.serialize.fromJson" {
-  fromJson :: Json -> Result a Str
+  fromJson :: Json -> Result Str a
 }
 
 -- ---------------------------------------------------------------- explicit API
@@ -103,19 +103,19 @@ encodeWith reflected value = case toJsonWith reflected value of
   Ok json -> Ok (Json.encode json)
   Err why -> Err why
 
-decodeWith :: Reflected -> Str -> Result a Str
+decodeWith :: Reflected -> Str -> Result Str a
 decodeWith reflected text = case Json.decodeSafe text of
   Ok json -> fromJsonWith reflected json
   Err why -> Err why
 
-toJsonWith :: Reflected -> a -> Result Json Str
+toJsonWith :: Reflected -> a -> Result Str Json
 toJsonWith reflected value = encodeValue reflected (Reflect.root reflected) "" value
 
-fromJsonWith :: Reflected -> Json -> Result a Str
+fromJsonWith :: Reflected -> Json -> Result Str a
 fromJsonWith reflected json = decodeValue reflected (Reflect.root reflected) "" json
 
 -- ---------------------------------------------------------------- encode
-encodeValue :: Reflected -> TypeInfo -> Str -> a -> Result Json Str
+encodeValue :: Reflected -> TypeInfo -> Str -> a -> Result Str Json
 encodeValue reflected info path value = case info of
   TInt ->
     if host_finite (Math.toFloat (host_int value))
@@ -141,7 +141,7 @@ encodeValue reflected info path value = case info of
   TFun _ _ -> Err (atPath path "functions cannot be serialized")
   TUnknown why -> Err (atPath path ("cannot serialize " + why))
 
-encodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List a -> Result (List Json) Str
+encodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List a -> Result Str (List Json)
 encodeListAt reflected item path index values = case values of
   [] -> Ok []
   value : rest ->
@@ -152,7 +152,7 @@ encodeListAt reflected item path index values = case values of
           Err why -> Err why
           Ok jsons -> Ok (cons json jsons)
 
-encodeTuple :: Reflected -> List TypeInfo -> Str -> List a -> Result Json Str
+encodeTuple :: Reflected -> List TypeInfo -> Str -> List a -> Result Str Json
 encodeTuple reflected items path values =
   if len items /= len values
     then Err (atPath path ("expected " + str (len items) + " tuple value(s), got " + str (len values)))
@@ -161,12 +161,12 @@ encodeTuple reflected items path values =
       Err why -> Err why
       Ok jsons -> Ok (JList jsons)
 
-encodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> a -> Result Json Str
+encodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> a -> Result Str Json
 encodeRecord reflected fields path value = case Result.all (map (\(name, info) -> encodeValue reflected info (fieldPath path name) (host_field value name)) fields) of
   Err why -> Err why
   Ok values -> Ok (JObject (List.zip (map (\(name, _) -> name) fields) values))
 
-encodeVariant :: Reflected -> TypeDef -> Str -> a -> Result Json Str
+encodeVariant :: Reflected -> TypeDef -> Str -> a -> Result Str Json
 encodeVariant reflected definition path value = case findVariant definition.variants (host_ctor value) of
   None ->
     Err (atPath path ("unknown constructor '" + host_ctor value + "' for " + definition.name))
@@ -186,7 +186,7 @@ variantValue values = case values of
   _ -> JList values
 
 -- ---------------------------------------------------------------- decode
-decodeValue :: Reflected -> TypeInfo -> Str -> Json -> Result a Str
+decodeValue :: Reflected -> TypeInfo -> Str -> Json -> Result Str a
 decodeValue reflected info path json = case info of
   TInt ->
     case json of
@@ -227,7 +227,7 @@ decodeValue reflected info path json = case info of
   TFun _ _ -> Err (atPath path "functions cannot be deserialized")
   TUnknown why -> Err (atPath path ("cannot deserialize " + why))
 
-decodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List Json -> Result (List a) Str
+decodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List Json -> Result Str (List a)
 decodeListAt reflected item path index values = case values of
   [] -> Ok []
   json : rest ->
@@ -238,7 +238,7 @@ decodeListAt reflected item path index values = case values of
           Err why -> Err why
           Ok values -> Ok (cons value values)
 
-decodeTuple :: Reflected -> List TypeInfo -> Str -> Json -> Result a Str
+decodeTuple :: Reflected -> List TypeInfo -> Str -> Json -> Result Str a
 decodeTuple reflected items path json = case json of
   JList values ->
     if len items /= len values
@@ -249,7 +249,7 @@ decodeTuple reflected items path json = case json of
         Ok values -> Ok (host_cast (host_list values))
   _ -> Err (atPath path "expected an array for a tuple")
 
-decodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> Json -> Result a Str
+decodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> Json -> Result Str a
 decodeRecord reflected fields path json = case json of
   JObject pairs ->
     case Result.all (map (\(name, info) -> case lookupJson name pairs of
@@ -260,7 +260,7 @@ decodeRecord reflected fields path json = case json of
         Ok (host_make_record (List.zip (map (\(name, _) -> name) fields) values))
   _ -> Err (atPath path ("expected an object for " + Reflect.describe (TRecord fields)))
 
-decodeVariant :: Reflected -> TypeDef -> Str -> Json -> Result a Str
+decodeVariant :: Reflected -> TypeDef -> Str -> Json -> Result Str a
 decodeVariant reflected definition path json = case json of
   JObject pairs ->
     case pairs of
@@ -272,7 +272,7 @@ decodeVariant reflected definition path json = case json of
       _ -> Err (atPath path ("expected exactly one constructor key for " + definition.name))
   _ -> Err (atPath path ("expected an object for " + definition.name))
 
-decodeVariantArgs :: Reflected -> Str -> Variant -> Str -> Json -> Result a Str
+decodeVariantArgs :: Reflected -> Str -> Variant -> Str -> Json -> Result Str a
 decodeVariantArgs reflected constructor variant path value = case variant.args of
   [] ->
     case value of

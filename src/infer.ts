@@ -746,6 +746,37 @@ export class Infer {
       }
     }
 
+    // 3. Type variables that appear only in the target are implicitly quantified
+    //    per instance: `instance Functor (Result e)` has an error type `e`.
+    const collectTargetVars = (te: TypeExpr): void => {
+      switch (te.k) {
+        case "TVar":
+          if (te.name !== "_" && !implParams.has(te.name)) {
+            const v = fresh(0);
+            v.generic = true;
+            implParams.set(te.name, v);
+          }
+          return;
+        case "TCon":
+          for (const a of te.args) collectTargetVars(a);
+          return;
+        case "TFun":
+          for (const p of te.params) collectTargetVars(p);
+          collectTargetVars(te.ret);
+          return;
+        case "TRecord":
+          for (const f of te.fields) collectTargetVars(f.type);
+          return;
+        case "TTuple":
+          for (const item of te.items) collectTargetVars(item);
+          return;
+        case "TPlaced":
+          collectTargetVars(te.inner);
+          return;
+      }
+    };
+    collectTargetVars(d.target);
+
     const targetType = this.resolveType(d.target, implParams);
     for (const v of implParams.values()) if (v.k === "var") v.generic = true;
 
@@ -1267,7 +1298,7 @@ export class Infer {
           for (const f of d.fields) fields[f.name] = this.resolveType(f.type, inner);
           return { k: "rec", fields };
         }
-        if (def && def.kind === "adt" && te.args.length !== def.params.length && te.args.length !== 0) {
+        if (def && def.kind === "adt" && te.args.length > def.params.length) {
           this.fail(`${te.name} expects ${def.params.length} type argument(s)`);
         }
         if (!def && !BUILTIN_TYPES.has(te.name)) {
@@ -1883,12 +1914,17 @@ export class Infer {
           if (!f) this.fail(`record has no field '${p.name}'`, p.span);
           unify(p.ty, f);
         } else if (t.k === "con") {
-          const payload = this.recordPayload(t);
-          if (!payload) this.fail(`cannot project '.${p.name}' from ${typeStr(t)}`, p.span);
-          const f = payload.fields[p.name];
-          if (!f) this.fail(`${typeStr(t)} has no field '${p.name}'`, p.span);
-          unify(p.ty, f);
-          this.mod.adtProjections.add(p.node);
+          const domField = domFieldType(t.name, p.name);
+          if (domField) {
+            unify(p.ty, domField);
+          } else {
+            const payload = this.recordPayload(t);
+            if (!payload) this.fail(`cannot project '.${p.name}' from ${typeStr(t)}`, p.span);
+            const f = payload.fields[p.name];
+            if (!f) this.fail(`${typeStr(t)} has no field '${p.name}'`, p.span);
+            unify(p.ty, f);
+            this.mod.adtProjections.add(p.node);
+          }
         } else {
           this.fail(`cannot project '.${p.name}' from ${typeStr(t)}`, p.span);
         }
@@ -2260,7 +2296,12 @@ export class Infer {
     const di = this.dispatchIndex(trait, schemeTy);
     let target = prune(di >= 0 ? inst.params[di]! : inst.ret);
     if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
-      target = headConstructor(target);
+      const head = headConstructor(target);
+      // Keep the full applied type for concrete constructors: a partially
+      // applied instance (`Functor (Result e)`) matches its fixed prefix
+      // against the actual `Result e a`. A type variable still dispatches
+      // through its dictionary.
+      target = head.k === "con" ? target : head;
     }
     this.mod.info.set(node, { ty: resultTy, place, eff });
 
@@ -2341,7 +2382,16 @@ export class Infer {
       try {
         const trace = new Map<number, Type>();
         const inst = instantiate(im.targetType, 0, trace);
-        unify(inst, target);
+        const instType = prune(inst);
+        const actual = prune(target);
+        // A constructor instance may be partially applied (`Functor (Result e)`,
+        // `Functor Option`): match the fixed prefix and leave the rest open.
+        if (instType.k === "con" && actual.k === "con"
+          && instType.name === actual.name && instType.args.length <= actual.args.length) {
+          for (let i = 0; i < instType.args.length; i++) unify(instType.args[i]!, actual.args[i]!);
+        } else {
+          unify(instType, actual);
+        }
         const subst = new Map<number, Type>();
         for (const [oldId, freshVar] of trace) subst.set(oldId, prune(freshVar));
         return { impl: im, subst };

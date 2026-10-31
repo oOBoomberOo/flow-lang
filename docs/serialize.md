@@ -87,7 +87,7 @@ Helpers:
 * `List a`, tuples, structural records (field names and order)
 * data types (constructors, arity and argument types), including generic and
   recursive ones
-* `Option a`, `Result a e`, `Json` and user ADTs are normal data types
+* `Option a`, `Result e a`, `Json` and user ADTs are normal data types
 * `Cell`, `Html`, `Dom`, `Event` and other non-data types become `TUnknown`
 * functions become `TFun`
 
@@ -106,12 +106,12 @@ encodePair info value = Serialize.encodeWith info value
 ## The JSON standard
 
 `Serialize.encode` returns `Result Str Str`; `Serialize.decode` returns
-`Result a Str`:
+`Result Str a`:
 
 ```flow
 case Serialize.encode user of
   Err why -> ...
-  Ok text -> case (Serialize.decode text :: Result User Str) of
+  Ok text -> case (Serialize.decode text :: Result Str User) of
     Err why -> ...
     Ok loaded -> ...
 ```

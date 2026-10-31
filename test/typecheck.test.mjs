@@ -72,6 +72,16 @@ main = <p>{str (pi * 2.0)}</p>`);
   assert.match(r.client, /pi\(\)/, "the value is read once per reference");
 });
 
+test("a deferred DOM field resolves when the handler supplies Event", () => {
+  ok(`main :: Html
+main = <form onSubmit={submitForm}></form>
+  where
+    submitForm event = do
+      let title = event.target.value
+      let _ = title
+      ()`);
+});
+
 /* ------------------------- ADTs ------------------------- */
 
 test("exhaustive match on an ADT", () => {

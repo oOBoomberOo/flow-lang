@@ -100,6 +100,47 @@ test("monad family: map, pure, return, bind, empty and the instances", async () 
   });
 });
 
+test("monad family: Result e is a monad over the success value", async () => {
+  const source = `import Http (get, Router, RequestObject, textResponse)
+import Flow.Result (Result(..))
+
+safe :: Int -> Result Str Int
+safe n = if n >= 0 then Ok n else Err "negative"
+
+showResult :: Result Str Int -> Str
+showResult r = case r of
+  Ok n -> str n
+  Err e -> e
+
+chained :: Result Str Int
+chained = do
+  a <- safe 4
+  b <- safe 5
+  pure (a + b)
+
+failed :: Result Str Int
+failed = do
+  a <- safe 4
+  b <- safe (0 - 1)
+  pure (a + b)
+
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/result" (\\(_req :: RequestObject) ->
+    textResponse (showResult chained + "|" + showResult failed + "|" +
+      showResult (map (\\x -> x * 2) (safe 3)) + "|" +
+      showResult (ap (Ok (\\(x :: Int) -> x + 1)) (Ok 2)))) ]
+
+main :: Html
+main = <p>{"result"}</p>
+`;
+  await withHost(source, async (host) => {
+    const res = await fetch(host.url + "/result");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "9|negative|6|3");
+  });
+});
+
 test("monad family: a bound function passes superclass dictionaries", async () => {
   await withHost(`import Http (get, Router, RequestObject, textResponse)
 

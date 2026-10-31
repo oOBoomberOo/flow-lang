@@ -281,9 +281,11 @@ without the matching bound is rejected at the call site.
 
 Traits still dispatch on one parameter: the type after `for` is the dispatch key.
 A parameter may itself be a type constructor (`class Functor f`); `f a` is a
-higher-kinded application, normalized to `List<a>` / `Option<a>` after unification,
-and impls are written at the constructor (`impl Functor for List`). Dispatch uses
-the head constructor of the constructor-typed argument.
+higher-kinded application, normalized to `List a` / `Option a` / `Result e a`
+after unification. Impls are written at the constructor (`instance Functor List`)
+or with leading parameters fixed (`instance Functor (Result e)`, leaving the
+success type as the constructor parameter). Dispatch matches the head
+constructor and any fixed leading arguments.
 
 `class Functor f => Applicative f` records a superclass. A `Monad f` bound is
 expanded to `Monad`/`Applicative`/`Functor`, so a generic function receives a

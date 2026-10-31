@@ -103,5 +103,5 @@ foreign import js unsafe "__flow.host.jsonParseSafe" {
 decode :: Str -> Json
 decode text = host_parse text
 
-decodeSafe :: Str -> Result Json Str
+decodeSafe :: Str -> Result Str Json
 decodeSafe text = Result.fromOption "invalid JSON" (host_parse_safe text)

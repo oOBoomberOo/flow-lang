@@ -740,20 +740,21 @@ export class Codegen {
   private decodedType(e: Expr, span?: { line?: number; col?: number; file?: string }): Type {
     const t = this.mod.info.get(e)?.ty;
     const p = t ? prune(t) : null;
-    if (p && p.k === "con" && (p.name === "Result" || p.name.startsWith("Result$")) && p.args[0]) {
-      const target = prune(p.args[0]!);
+    if (p && p.k === "con" && (p.name === "Result" || p.name.startsWith("Result$")) && p.args.length >= 2) {
+      // `Result e a`: the success type is the last argument.
+      const target = prune(p.args[p.args.length - 1]!);
       if (target.k === "var") {
         this.fail(
           "cannot infer the target type of Serialize.decode: annotate the result, " +
-          "e.g. `let user :: Result User Str = Serialize.decode text`",
+          "e.g. `let user :: Result Str User = Serialize.decode text`",
           span ?? e.span,
         );
       }
       return target;
     }
     this.fail(
-      "Serialize.decode must produce `Result a Str`: annotate the result, " +
-      "e.g. `let user :: Result User Str = Serialize.decode text`",
+      "Serialize.decode must produce `Result Str a`: annotate the result, " +
+      "e.g. `let user :: Result Str User = Serialize.decode text`",
       span ?? e.span,
     );
   }

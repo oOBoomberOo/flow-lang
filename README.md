@@ -88,7 +88,7 @@ main :: Html
 main = do
   let info = Reflect.meta user
   let encoded = Result.withDefault "encode error" (Serialize.encode user)
-  let decoded :: Result User Str = Serialize.decode encoded
+  let decoded :: Result Str User = Serialize.decode encoded
   <div>
     <pre>{Reflect.describeAll info}</pre>
     <pre>{encoded}</pre>

@@ -1,9 +1,11 @@
 module Flow.Monad where
 
--- Flow.Monad — the Functor / Applicative / Monad / Alternative family.
+import Flow.Result (Result(..))
+
+-- Flow.Monad - the Functor / Applicative / Monad / Alternative family.
 --
 -- Functions take their operation first and the value last, so the same `map`
--- works for `List`, `Option` and `Cell` and pipes read left to right:
+-- works for `List`, `Option`, `Cell` and `Result e` and pipes read left to right:
 --
 --   map f xs
 --   xs |> map f
@@ -88,6 +90,24 @@ instance Applicative Cell where
 instance Monad Cell where
   bind k cell = k (get cell)
   return x = makeCell x
+
+-- ---------------------------------------------------------------- Result
+instance Functor (Result e) where
+  map f r = case r of
+    Ok a -> Ok (f a)
+    Err err -> Err err
+
+instance Applicative (Result e) where
+  pure a = Ok a
+  ap rf ra = case rf of
+    Ok f -> map f ra
+    Err err -> Err err
+
+instance Monad (Result e) where
+  bind k r = case r of
+    Ok a -> k a
+    Err err -> Err err
+  return a = Ok a
 
 -- `some(value)` is `pure` for an Option; `one(value)` for a List.
 some :: a -> Option a
