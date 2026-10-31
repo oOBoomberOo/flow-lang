@@ -1,10 +1,11 @@
 -- A multi-page app with the server-first entry model.
 --
 -- `main :: ()` runs exactly once on the server, before any request: that is
--- where server-side setup belongs. `serve handler` installs the client page
--- handler, so routing happens in the browser and pages can use cells, events
--- and the DOM. Server work (the visit counter) is an ordinary cut.
-import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam)
+-- where server-side setup belongs. `serve` takes one plain app object: `page`
+-- is the browser page handler and `routes` is the server response table.
+-- Routing pages happens in the browser; server work (the visit counter) is an
+-- ordinary cut.
+import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam, get, jsonResponse)
 import Prelude (Store)
 
 pages :: List PageRoute
@@ -60,14 +61,22 @@ countVisit () = do
   Store.set "visits" (str (current + 1))
   current + 1
 
+readVisits :: () -> Int
+readVisits () = case Store.get "visits" of
+  Some value -> int value
+  None -> 0
+
+pageHandler :: RequestObject -> Html
+pageHandler request = case matchPage pages request of
+  Some (matched, view) -> view matched
+  None ->
+    <div>
+      <h1>{"404"}</h1>
+      <p>{"No page for " + request.path}</p>
+      <a href="/">Home</a>
+    </div>
+
 main :: ()
 main = do
   Store.set "visits" "0"
-  serve (\request -> case matchPage pages request of
-    Some (matched, view) -> view matched
-    None ->
-      <div>
-        <h1>{"404"}</h1>
-        <p>{"No page for " + request.path}</p>
-        <a href="/">Home</a>
-      </div>)
+  serve { page = pageHandler, routes = [get "/api/visits" (\_ -> jsonResponse ("{\"visits\":" + str (readVisits ()) + "}"))] }

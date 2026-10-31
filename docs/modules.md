@@ -198,11 +198,11 @@ primitive operations (`#length`, `@concat`, `#index`, …) reach JavaScript.
 ## Web entry points
 
 `main :: ()` is the server startup hook: it runs once, before any request, so
-server-side state can be initialised there. `serve` installs a client page
-handler for multi-page apps:
+server-side state can be initialised there. `serve` takes a plain app object with
+a browser page handler and a server route list:
 
 ```flow
-import Http (RequestObject, serve, page, matchPage, PageRoute)
+import Http (RequestObject, serve, page, matchPage, PageRoute, get, jsonResponse)
 import Prelude (Store)
 
 pages :: List PageRoute
@@ -211,24 +211,16 @@ pages = [ page "/" (\_ -> <h1>{"Home"}</h1>) ]
 main :: ()
 main = do
   Store.set "ready" "yes"
-  serve (\req ->
-    case matchPage pages req of
-      Some (matched, view) -> view matched
-      None -> <h1>{"Not found"}</h1>)
+  serve
+    { page = \req ->
+        case matchPage pages req of
+          Some (matched, view) -> view matched
+          None -> <h1>{"Not found"}</h1>
+    , routes = [ get "/api/ready" (\_ -> jsonResponse "{\"ready\":true}") ]
+    }
 ```
 
-A server response API is still a `routes :: () -> ()` table:
-
-```flow
-import Http (get, Router, RequestObject, textResponse)
-
-routes :: () -> ()
-routes () =
-  Router.mount [
-    get "/hello" (\req -> textResponse ("hello " + req.path))
-  ]
-```
-
-The host calls `main ()` first, then `routes ()`, both once at startup. Server
-route handlers run on the server; `serve` pages run in the browser. `main :: Html`
+A legacy `routes :: () -> ()` table is still called after `main` for existing
+programs, and a bare `serve handler` remains the page-only form. Server route
+handlers run on the server; `serve` pages run in the browser. `main :: Html`
 remains the single-page client form. See [`http.md`](http.md).

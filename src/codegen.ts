@@ -74,8 +74,14 @@ export class Codegen {
   private algebraicEffects = new Set<string>();
   /** true while emitting the body of a JS generator function */
   private genMode = false;
-  /** the callback passed to `serve`, mounted in the browser at startup */
-  private serveHandler: Expr | null = null;
+  /** the `page` field passed to `serve`, mounted in the browser at startup */
+  private servePage: Expr | null = null;
+  /** the `routes` field passed to `serve`, registered on the server at startup */
+  private serveRoutes: Expr | null = null;
+  /** a top-level app-object constant consumed by `serve` (not emitted normally) */
+  private serveConfigName: string | null = null;
+  /** the declaration containing the serve call, for app-constant use checks */
+  private serveOwner: Decl | null = null;
   /** the `serve` call site, used for capture diagnostics */
   private serveSpan: { line?: number; col?: number } | null = null;
 
@@ -191,18 +197,19 @@ export class Codegen {
 
   collect(): void {
     for (const d of this.prog.decls) {
-      if (d.k === "Fn") this.walk(d.body, "neutral", false, d.body);
+      if (d.k === "Fn" && d.name !== this.serveConfigName) this.walk(d.body, "neutral", false, d.body);
       if (d.k === "Impl") for (const m of d.methods) this.walk(m.body, "neutral", false, m.body);
       if (d.k === "Provide") for (const o of d.ops) this.walk(o.fn, "neutral", false, o.fn);
     }
   }
 
   private walk(e: Expr, ctxHome: Side | "neutral", inHandler: boolean, top: Expr): void {
-    // `serve` is a build-time entry point: the handler belongs to the browser,
-    // so its cuts are collected with a client context, not the server's.
+    // `serve` is a build-time entry point: `page` belongs to the browser and
+    // `routes` to the server, so their cuts are collected with the matching
+    // context instead of the enclosing call's.
     if (this.isServeCall(e)) {
-      const handler = (e as Expr & { k: "App" }).args[0];
-      if (handler) this.walk(handler, "client", true, handler);
+      if (this.servePage) this.walk(this.servePage, "client", true, this.servePage);
+      if (this.serveRoutes) this.walk(this.serveRoutes, "server", true, this.serveRoutes);
       return;
     }
     const h = this.home(e);
@@ -342,20 +349,76 @@ export class Codegen {
    * does not close over server startup locals.
    */
   private findServe(): void {
+    let owner: Decl | null = null;
     const scan = (e: Expr, bound: Set<string>): void => {
       if (this.isServeCall(e)) {
-        if (this.serveHandler) {
+        if (this.serveSpan) {
           this.fail(
-            "`serve` can be called only once: put the routing in one handler " +
-            "(`case req.path of …`)",
+            "`serve` can be called only once: put the page and routes in one app object",
             e.span,
           );
         }
-        const handler = (e as Expr & { k: "App" }).args[0];
-        if (!handler) this.fail("`serve` expects a page function `Request -> Html`", e.span);
-        this.serveHandler = handler;
+        const arg = (e as Expr & { k: "App" }).args[0];
+        if (!arg) this.fail("`serve` expects a page handler or `{ page = …, routes = […] }`", e.span);
         this.serveSpan = e.span;
-        this.checkServeCapture(handler, bound);
+        this.serveOwner = owner;
+        const t = this.mod.info.get(arg)?.ty;
+        const p = t ? prune(t) : null;
+        if (p?.k === "fun" || arg.k === "Lam") {
+          // Backward-compatible page-only form: `serve \request -> …`.
+          this.servePage = arg;
+          this.checkServePageType(arg, e.span);
+          this.checkServeCapture(arg, bound);
+          return;
+        }
+
+        // A config may be inline or a top-level constant. The constant is
+        // consumed here and is not emitted as a normal value; both sides get
+        // their field only.
+        let config: (Expr & { k: "Record" }) | null = null;
+        if (arg.k === "Record") {
+          config = arg;
+        } else if (arg.k === "Var") {
+          const decl = this.prog.decls.find((d) =>
+            d.k === "Fn" && d.name === arg.name && d.params.length === 0 && d.body.k === "Record"
+          ) as (Decl & { k: "Fn"; body: Expr & { k: "Record" } }) | undefined;
+          if (decl) {
+            const otherUse = this.prog.decls.some((d) =>
+              d !== decl && d !== this.serveOwner && d.k === "Fn" &&
+              [d.body, ...allDescendants(d.body)].some((x) => x.k === "Var" && x.name === decl.name)
+            );
+            if (otherUse) {
+              this.fail(
+                `\`${decl.name}\` is consumed by serve and cannot also be used as a value; ` +
+                `inline the app object or use its fields directly`,
+                decl.span,
+              );
+            }
+            this.serveConfigName = decl.name;
+            config = decl.body;
+          }
+        }
+        if (!config) {
+          this.fail(
+            "`serve` expects a page handler or an app object `{ page = …, routes = […] }` " +
+            "(written inline or as a top-level constant)",
+            arg.span ?? e.span,
+          );
+        }
+        const page = config.fields.find((f) => f.name === "page")?.value;
+        const routes = config.fields.find((f) => f.name === "routes")?.value;
+        if (!page && !routes) {
+          this.fail("`serve` app needs a `page`, a `routes` list, or both", config.span);
+        }
+        if (page) {
+          this.servePage = page;
+          this.checkServePageType(page, config.span);
+          this.checkServeCapture(page, bound);
+        }
+        if (routes) {
+          this.serveRoutes = routes;
+          this.checkServeRoutesType(routes, config.span);
+        }
         return;
       }
       switch (e.k) {
@@ -401,12 +464,43 @@ export class Codegen {
       }
     };
     for (const d of this.prog.decls) {
+      owner = d;
       if (d.k === "Fn") scan(d.body, new Set(d.params.map((p) => p.name)));
       if (d.k === "Impl") for (const m of d.methods) scan(m.body, new Set(m.params.map((p) => p.name)));
       if (d.k === "Provide") for (const o of d.ops) scan(o.fn, new Set());
     }
   }
 
+  /** `serve.page` must be a client callback returning markup. */
+  private checkServePageType(page: Expr, span?: { line?: number; col?: number; file?: string }): void {
+    const ty = this.mod.info.get(page)?.ty;
+    if (!ty) return;
+    const p = prune(ty);
+    if (p.k === "var") return;
+    const ret = p.k === "fun" ? prune(p.ret) : null;
+    const isHtml = ret && ret.k === "con" && (ret.name === "Html" || ret.name.startsWith("Html$"));
+    if (p.k !== "fun" || !isHtml) {
+      this.fail("`serve.page` must be a client handler `RequestObject -> Html`", span ?? page.span);
+    }
+  }
+
+  /** `serve.routes` is a plain list of server response routes. */
+  private checkServeRoutesType(routes: Expr, span?: { line?: number; col?: number; file?: string }): void {
+    const ty = this.mod.info.get(routes)?.ty;
+    if (!ty) return;
+    const p = prune(ty);
+    if (p.k === "var") return;
+    if (p.k !== "con" || (p.name !== "List" && !p.name.startsWith("List$"))) {
+      this.fail("`serve.routes` must be a `List Route`", span ?? routes.span);
+    }
+    const item = p.args[0] ? prune(p.args[0]) : null;
+    if (!item || item.k === "var") return; // an empty list is fine
+    const isRoute = item.k === "rec" &&
+      Boolean(item.fields.method) && Boolean(item.fields.path) && Boolean(item.fields.handler);
+    if (!isRoute) {
+      this.fail("`serve.routes` must be a `List Route` (`get`, `post`, `route`, …)", span ?? routes.span);
+    }
+  }
   /** A page handler is emitted in the browser, so it cannot read local bindings. */
   private checkServeCapture(handler: Expr, bound: Set<string>): void {
     const free = freeVars(handler, new Set());
@@ -720,7 +814,7 @@ export class Codegen {
         main.body.span,
       );
     }
-    if (this.serveHandler && this.mainKind() === "page") {
+    if (this.servePage && this.mainKind() === "page") {
       this.fail(
         "`serve` needs `main :: ()`: a `main :: Html` program is already a single page. " +
         "Move the page into the serve handler and make main the server startup hook",
@@ -780,6 +874,7 @@ export class Codegen {
 
     for (const d of this.prog.decls) {
       if (d.k === "Fn") {
+        if (d.name === this.serveConfigName) continue;
         const h = this.home(d.body);
         const info = this.mod.fns.get(d.name);
         if (h === side || h === "neutral") out.push(this.emitFn(d.name, d.params, d.body, side, info?.dicts));
@@ -827,8 +922,8 @@ export class Codegen {
 
     // The page handler is a client value; emit it before the shim imports so
     // its shim references are included in the import check.
-    if (side === "client" && this.serveHandler) {
-      const handlerJs = this.emitExpr(this.serveHandler, "client", "client", new Set());
+    if (side === "client" && this.servePage) {
+      const handlerJs = this.emitExpr(this.servePage, "client", "client", new Set());
       out.push("");
       out.push(`const $serve = ${handlerJs};`);
     }
@@ -846,7 +941,7 @@ export class Codegen {
 
     if (side === "client") {
       out.push("");
-      if (this.serveHandler) {
+      if (this.servePage) {
         out.push(`export async function __flow_start(root, request) {`);
         out.push(`  const page = await R.run(() => $serve(request));`);
         out.push(`  R.mount(root, () => page);`);
@@ -863,9 +958,11 @@ export class Codegen {
         out.push("");
         out.push(`export { main as __flow_entry };`);
       }
-      if (this.serveHandler) {
+      if (this.servePage) {
         out.push(`export const __flow_serve = true;`);
       }
+      // Legacy entry point: new programs pass `routes` inside `serve`, which
+      // registers them during `main`. Keep `routes()` working for old apps.
       const routesFn = this.prog.decls.find((d) => d.k === "Fn" && d.name === "routes");
       if (routesFn && (this.home(routesFn.body) === "server" || this.home(routesFn.body) === "neutral")) {
         out.push("");
@@ -962,10 +1059,12 @@ export class Codegen {
         const info = this.mod.fns.get(e.name);
         const ext = info?.extern;
         if (ext && !env.has(e.name)) {
-          if (ext.implName.startsWith("__flow.reflect.") || ext.implName.startsWith("__flow.serialize.")) {
+          if (ext.implName.startsWith("__flow.reflect.") || ext.implName.startsWith("__flow.serialize.") || ext.implName === "__flow.serve") {
             this.fail(
-              `'${e.name}' is resolved from the static type at a call site and cannot be used as a value; ` +
-              `pass Reflect.meta or an explicit *With function instead`,
+              ext.implName === "__flow.serve"
+                ? "`serve` must be called directly with its app object: `serve { page = …, routes = […] }`"
+                : `'${e.name}' is resolved from the static type at a call site and cannot be used as a value; ` +
+                  `pass Reflect.meta or an explicit *With function instead`,
               e.span,
             );
           }
@@ -1207,8 +1306,15 @@ export class Codegen {
   }
 
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
-    // `serve` is a build-time entry point; the server performs no call.
-    if (this.isServeCall(e)) return "null";
+    // `serve` is a build-time entry point. The server registers the plain
+    // `routes` data at startup; the browser mounts the page (separately).
+    if (this.isServeCall(e)) {
+      if (side === "server" && this.serveRoutes) {
+        const routes = this.val(this.serveRoutes, "server", "server", env);
+        return `R.ffiCall("__flow.host.routes", [${routes}])`;
+      }
+      return "null";
+    }
 
     // Reflection and the auto serializers are resolved from the static type.
     const impl = this.implOf(e.fn);

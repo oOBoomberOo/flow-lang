@@ -34,12 +34,12 @@ that logs with `Server.log` stays in the browser; only the log statement is a se
 ## Server startup and pages
 
 `main :: ()` is the server hook: it runs **once**, before any request, so files,
-environment and the server store can be initialised there. `serve` installs the
-client page handler, a normal `Request -> Html` callback, so routing happens in
-the browser and pages can use cells, events and components.
+environment and the server store can be initialised there. `serve` takes one
+plain app object: `page` is the client `Request -> Html` handler, and `routes` is
+a plain list of server response routes.
 
 ```flow
-import Http (RequestObject, PageRoute, serve, page, matchPage)
+import Http (RequestObject, PageRoute, serve, page, matchPage, get, jsonResponse)
 import Prelude (Store)
 
 pages :: List PageRoute
@@ -51,15 +51,19 @@ pages =
 main :: ()
 main = do
   Store.set "started" "yes"                 -- server-side setup, once
-  serve (\request ->
-    case matchPage pages request of
-      Some (matched, view) -> view matched
-      None -> <h1>{"Not found"}</h1>)
+  serve
+    { page = \request ->
+        case matchPage pages request of
+          Some (matched, view) -> view matched
+          None -> <h1>{"Not found"}</h1>
+    , routes = [ get "/api/health" (\_ -> jsonResponse "{\"ok\":true}") ]
+    }
 ```
 
-`main :: Html` is still accepted as the single-page form. Server response routes
-(JSON, redirects, custom status) stay in `routes()` / `Router`; see
-[docs/http.md](docs/http.md).
+`main :: Html` is still accepted as the single-page form, and a bare
+`serve handler` still works for page-only apps. Legacy `routes()` / `Router`
+tables remain for existing programs; new code passes `routes` inside `serve`.
+See [docs/http.md](docs/http.md).
 
 ## Reflection and JSON
 
@@ -188,7 +192,7 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` - **287 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` - **294 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
@@ -196,9 +200,10 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
 
 * **One language, two tiers** - `Client` / `Server` effects decide placement; the compiler
   emits a browser bundle and a server bundle plus the wire between them
-* **Server startup and pages** - `main :: ()` runs once on the server; `serve` installs a
-  client-placed `Request -> Html` handler for multi-page routing, with `main :: Html` kept
-  as the single-page form
+* **Server startup and pages** - `main :: ()` runs once on the server; `serve` takes a plain
+  `{ page, routes }` app object: the page is a client `Request -> Html` handler, the routes are
+  server response handlers. No magic `routes()` entry point is needed; `main :: Html` stays
+  the single-page form
 * **Haskell-style syntax** — layout blocks, partial application, `\x -> e`, `if/then/else`,
   `case … of`, `let … in`, `where`, operator sections, `$` and `.`
 * **Full inference** — signatures are optional; unannotated functions are inferred callee-first

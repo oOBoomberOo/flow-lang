@@ -50,8 +50,9 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     }
   }
 
-  // A program can still export a `routes()` function for server-side responses
-  // (JSON, redirects, custom status). Page routing is `serve`.
+  // Legacy: old programs export a `routes()` function. New programs pass a
+  // plain `{ page, routes }` object to `serve`; its routes are registered
+  // during `main` and are already in R._routes() here.
   if (typeof serverModule.routes === "function") {
     try {
       const started = serverModule.routes();

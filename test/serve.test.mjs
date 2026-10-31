@@ -272,3 +272,133 @@ main = Router.mount [ get "/from-main" (\\_ -> textResponse "main") ]
     assert.equal((await fetch(host.url + "/page")).status, 404);
   });
 });
+
+test("serve: a plain app object supplies pages and server routes", async () => {
+  const entry = packageWith({
+    "main.flow": `import Http (RequestObject, serve, get, jsonResponse)
+
+main :: ()
+main = serve
+  { page = \\request -> <h1>{"page " + request.path}</h1>
+  , routes =
+      [ get "/api/health" (\\_ -> jsonResponse "{\\"ok\\":true}")
+      , get "/go" (\\_ -> redirect "/")
+      ]
+  }
+`,
+  });
+  await withHost(entry, async (host, result) => {
+    assert.ok(result.server.includes("__flow.host.routes"), "routes are registered from main");
+    assert.ok(!result.server.includes("as routes"), "no routes() export is needed");
+    assert.ok(result.client.includes("const $serve ="), "the page field is mounted in the browser");
+
+    const api = await fetch(host.url + "/api/health");
+    assert.equal(api.status, 200);
+    assert.equal(await api.text(), '{"ok":true}');
+
+    const go = await fetch(host.url + "/go", { redirect: "manual" });
+    assert.equal(go.status, 302);
+
+    const page = await fetch(host.url + "/some/page");
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /__flow_start/);
+  });
+});
+
+test("serve: a page-only app object is still a client app", async () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve)
+
+main :: ()
+main = serve { page = \\_ -> <h1>{"just a page"}</h1> }
+`,
+  });
+  await withHost(entry, async (host, result) => {
+    assert.ok(result.server.includes("export const __flow_serve = true"));
+    assert.ok(result.client.includes("const $serve ="));
+    assert.equal((await fetch(host.url + "/any/thing")).status, 200);
+  });
+});
+
+test("serve: an API-only app object registers routes without a client shell", async () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve, get, textResponse)
+
+main :: ()
+main = serve { routes = [ get "/api" (\\_ -> textResponse "ok") ] }
+`,
+  });
+  await withHost(entry, async (host, result) => {
+    assert.ok(!result.server.includes("__flow_serve"), "no page router is announced");
+    assert.equal(await (await fetch(host.url + "/api")).text(), "ok");
+    assert.equal((await fetch(host.url + "/page")).status, 404);
+  });
+});
+
+test("serve: routes in the app object may use server startup locals", async () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve, get, textResponse)
+
+main :: ()
+main = do
+  let secret = "from-main"
+  serve
+    { page = \\_ -> <p>{"page"}</p>
+    , routes = [ get "/api/secret" (\\_ -> textResponse secret) ]
+    }
+`,
+  });
+  await withHost(entry, async (host) => {
+    assert.equal(await (await fetch(host.url + "/api/secret")).text(), "from-main");
+  });
+});
+
+test("serve: the page field in an app object still cannot capture server locals", () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve)
+
+main :: ()
+main = do
+  let secret = "shh"
+  serve { page = \\_ -> <p>{secret}</p>, routes = [] }
+`,
+  });
+  assert.throws(() => compileFile(entry), /cannot capture server startup binding\(s\) 'secret'/);
+});
+
+test("serve: a top-level app constant works", async () => {
+  const entry = packageWith({
+    "main.flow": `import Http (serve, get, textResponse)
+
+app =
+  { page = \\request -> <h1>{"page " + request.path}</h1>
+  , routes = [ get "/api" (\\_ -> textResponse "ok") ]
+  }
+
+main :: ()
+main = serve app
+`,
+  });
+  await withHost(entry, async (host, result) => {
+    assert.ok(!result.server.includes("function app"), "the config constant is not emitted as a value");
+    assert.equal(await (await fetch(host.url + "/api")).text(), "ok");
+    assert.equal((await fetch(host.url + "/page")).status, 200);
+  });
+});
+
+test("serve: the app object fields are validated", () => {
+  const badPage = packageWith({
+    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { page = 1 }\n`,
+  });
+  assert.throws(() => compileFile(badPage), /serve\.page.*RequestObject -> Html/);
+
+  const badRoutes = packageWith({
+    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { routes = [1] }\n`,
+  });
+  assert.throws(() => compileFile(badRoutes), /serve\.routes.*List Route/);
+
+  const empty = packageWith({
+    "main.flow": `import Http (serve)\n\nmain :: ()\nmain = serve { }\n`,
+  });
+  assert.throws(() => compileFile(empty), /needs a `page`, a `routes` list, or both/);
+});

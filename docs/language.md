@@ -286,19 +286,24 @@ resumes aborts the handled body.
 
 ### 5.4 Entry points
 
-A program has a server startup hook and a browser page entry:
+A program has a server startup hook and one plain-data app object:
 
 ```flow
 main :: ()                   -- once, on the server, before any request
 main = do
   Store.set "visits" "0"
-  serve (\request -> <h1>{"Hello " + request.path}</h1>)
+  serve
+    { page = \request -> <h1>{"Hello " + request.path}</h1>
+    , routes = [ get "/api/visits" (\_ -> jsonResponse "{\"visits\":0}") ]
+    }
 ```
 
-`serve` takes a **client-placed** callback `RequestObject -> Html`. The host sends
-the shell for any page request and the callback renders it, so routing is just a
-`case` on `request.path` (or `matchPage` over a route list). Server data used by a
-page is a normal cut: put it behind a top-level server function.
+`serve` takes `{ page, routes }`: `page` is a **client-placed**
+`RequestObject -> Html` handler, and `routes` is a plain `List Route` of
+server response handlers. The host sends the shell for any page request and the
+page callback renders it, so page routing is just a `case` on `request.path`
+(or `matchPage` over a route list). Server data used by a page is a normal cut:
+put it behind a top-level server function.
 
 `main :: Html` is still a single client page:
 
