@@ -502,6 +502,9 @@ async function start(context) {
     return;
   }
   const cwd = (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath || path.dirname(serverPath);
+  try {
+    output?.appendLine(`[flow] extension ${require("./package.json").version} · server ${serverPath}`);
+  } catch { /* version is diagnostic only */ }
   client = new LspClient(serverPath, cwd);
   try {
     await client.request("initialize", {
