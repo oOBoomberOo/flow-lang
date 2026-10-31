@@ -401,7 +401,12 @@ function formatFile(file: string, pkg?: string): string {
       pending = [];
     } else if (/^\S/.test(text)) pending = [];
   });
-  const moduleName = path.basename(file).replace(/\.flow$/, "").replace(/^./, (c) => c.toUpperCase());
+  const parts = file.split(/[\\/]/);
+  const srcAt = parts.lastIndexOf("src");
+  const rel = srcAt >= 0 ? parts.slice(srcAt + 1) : [parts[parts.length - 1]!];
+  const moduleName = rel
+    .map((seg) => seg.replace(/\.flow$/, "").split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(""))
+    .join(".");
   return printProgram(program, { moduleName, comments });
 }
 
