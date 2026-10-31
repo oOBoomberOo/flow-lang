@@ -681,3 +681,49 @@ thing = 1
     assert.ok(mainSymbols.some((s) => s.name === "main"), "switching back reanalyses main.flow");
   } finally { c.proc.kill(); }
 });
+
+test("lsp: hover works on built-in types and primitives", async () => {
+  const { entry } = packageWith({
+    "main.flow": `import List (map)
+
+data Role = Admin | Member Str
+
+count :: Int
+count = 1
+
+role :: Role
+role = Admin
+
+main :: Html
+main = <p>{str count} {if True then "y" else "n"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const hoverAt = (needle, extra = 1, nth = 0) => c.request("textDocument/hover", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, needle, extra, nth),
+    });
+    const literal = await hoverAt("= 1", 2);
+    assert.ok(literal?.contents, "Int literal hover");
+    const preludeFn = await hoverAt("str", 1);
+    assert.ok(preludeFn?.contents, "prelude function hover");
+    const boolLiteral = await hoverAt("True", 1);
+    assert.ok(boolLiteral?.contents, "True hover");
+    const builtinType = await hoverAt("Int", 1);
+    assert.ok(builtinType?.contents, "Int hover");
+    assert.match(builtinType.contents.value, /Built-in type/);
+    assert.match(builtinType.contents.value, /Integer/);
+    const htmlType = await hoverAt("Html", 1);
+    assert.ok(htmlType?.contents, "Html hover");
+    assert.match(htmlType.contents.value, /Client-rendered/);
+    const userType = await hoverAt("Role", 1, 1);
+    assert.ok(userType?.contents, "user type hover");
+    assert.match(userType.contents.value, /data Role = Admin \| Member Str/);
+    const imported = await hoverAt("map", 1);
+    assert.ok(imported?.contents, "imported name hover");
+    assert.match(imported.contents.value, /List\.map/);
+  } finally { c.proc.kill(); }
+});

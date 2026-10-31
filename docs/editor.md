@@ -24,7 +24,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly**. `didChange` is debounced (150 ms) and bursts of keystrokes are coalesced; the analysis is compared against the previous input so identical text is not recompiled |
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
-| `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; works on `use` lines too |
+| `textDocument/hover` | inferred type, placement, effect row, and where a symbol is declared; type names in annotations show the built-in description or the `data`/`type`/`class`/`effect` definition; works on import lines too |
 | `textDocument/completion` | keywords, locals in scope, every symbol in the package, **a module's public members after `Module.` or `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |

@@ -19,7 +19,8 @@ const moduleNameOf = (m: { id: string }) => m.id.split("::").slice(1).map((s) =>
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
-import type { Decl, Expr, Program } from "../ast.ts";
+import type { Decl, Expr, FnSig, Program } from "../ast.ts";
+import { printType } from "../printer.ts";
 
 /* ------------------------------------------------------------------ */
 /* JSON-RPC framing                                                   */
@@ -248,18 +249,88 @@ function symbolForName(finalName: string): SymbolInfo | undefined {
   return lastAnalysis?.symbols.find((s) => s.finalName === finalName);
 }
 
-/** Resolve a name on a `use` line to its declaration (go-to-definition on imports). */
+/** Resolve a name on an `import` (or legacy `use`) line to its declaration. */
 function importTargetAt(file: string, pos: Position): SymbolInfo | null {
   const text = textOf(file);
   const line = (text.split("\n")[pos.line] ?? "");
-  if (!/^\s*use\s/.test(line)) return null;
+  const m = /^\s*(?:use|import)\s+([A-Za-z0-9_.:]+)/.exec(line);
+  if (!m) return null;
   const word = wordAt(text, offsetAt(text, pos)).word;
   if (!word) return null;
-  const m = /^\s*use\s+([A-Za-z0-9_:-]+)/.exec(line);
-  if (!m) return null;
-  const mods = [m[1]!, m[1]!.replace(/::[A-Za-z0-9_]+$/, "")];
+  const parts = m[1]!.split(/::|\./).filter(Boolean);
+  const moduleName = parts[parts.length - 1] ?? m[1]!;
   const cands = (lastAnalysis?.symbols ?? []).filter((s) => s.name === word);
-  return cands.find((s) => mods.some((p) => s.display.startsWith(p + "::"))) ?? cands[0] ?? null;
+  if (!cands.length) return null;
+  return cands.find((s) => s.display === `${moduleName}.${word}`)
+    ?? cands.find((s) => s.display.endsWith(`.${word}`) && s.display.includes(moduleName))
+    ?? cands[0]!;
+}
+
+const BUILTIN_TYPE_DOC: Record<string, string> = {
+  Html: "Client-rendered markup tree.",
+  Int: "Integer.",
+  Float: "Floating-point number.",
+  Str: "Text string.",
+  Bool: "`true` or `false`.",
+  Unit: "The empty value, written `()`.",
+  List: "A built-in list, written `List a`.",
+  Cell: "Client-local reactive state.",
+  Event: "A DOM event.",
+  Dom: "A DOM handle.",
+};
+
+/** `data Shape = …`, `type User = { … }`, etc. for hover. */
+function renderTypeDecl(d: Decl): string | null {
+  const params = (p: string[] | undefined) => (p && p.length ? " " + p.join(" ") : "");
+  const name = (n: string) => n.replace(/\$[A-Za-z0-9_$]+$/, "");
+  const sig = (s: FnSig) =>
+    `${s.name} :: ${s.params.map((p) => printType(p.type)).join(" -> ")}${s.ret ? " -> " + printType(s.ret) : ""}`;
+  switch (d.k) {
+    case "Adt":
+      return `data ${name(d.name)}${params(d.params)} = ` +
+        d.variants.map((v) => v.args.length ? `${v.name} ${v.args.map((t) => printType(t)).join(" ")}` : v.name).join(" | ");
+    case "RecordType":
+      return `type ${name(d.name)}${params(d.params)} = { ` +
+        d.fields.map((f) => `${f.name} :: ${printType(f.type)}`).join(", ") + " }";
+    case "Alias":
+      return `type ${name(d.name)}${params(d.params)} = ${printType(d.type)}`;
+    case "Trait":
+      return `class ${name(d.name)}${params(d.params)} where\n  ` +
+        d.methods.map(sig).join("\n  ");
+    case "Effect":
+      return `effect ${name(d.name)}${d.place ? ` @${d.place}` : ""} where\n  ` +
+        d.ops.map(sig).join("\n  ");
+    default:
+      return null;
+  }
+}
+
+/** Type names in annotations are not expression nodes; resolve them by word. */
+function typeHoverAt(file: string, pos: Position) {
+  const a = lastAnalysis;
+  if (!a) return null;
+  const text = textOf(file);
+  const word = wordAt(text, offsetAt(text, pos));
+  if (!word.word) return null;
+  const curUnit = (a.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
+  const typeKinds = new Set(["type", "record", "alias", "trait", "effect"]);
+  const cands = (a.symbols ?? []).filter((s) => s.name === word.word && typeKinds.has(s.kind));
+  if (!cands.length) return null;
+  const sym = cands.find((s) => s.unit === curUnit?.id) ?? cands.find((s) => s.public) ?? cands[0]!;
+  const decl = (a.program?.decls ?? []).find((d) =>
+    (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias" || d.k === "Trait" || d.k === "Effect") &&
+    d.name === sym.finalName
+  );
+  const code = decl ? renderTypeDecl(decl) : null;
+  const builtin = BUILTIN_TYPE_DOC[word.word];
+  if (!code && !builtin) return null;
+  const block = code ? `\`\`\`flow\n${code}\n\`\`\`\n\n` : "";
+  const note = builtin ? `${builtin}\n\n` : "";
+  const where = sym.unit === "" ? "Built-in type." : `Declared in \`${sym.display}\` (${sym.kind}).`;
+  return {
+    contents: { kind: "markdown", value: `**Type** \`${word.word}\`\n\n${block}${note}${where}` },
+    range: { start: offsetToPosition(text, word.start), end: offsetToPosition(text, word.end) },
+  };
 }
 
 function definition(file: string, pos: Position) {
@@ -1305,6 +1376,8 @@ reader.onMessage((msg) => {
       }
       const node = nodeAt(file, p.position as Position);
       if (!node) {
+        const typeInfo = typeHoverAt(file, p.position as Position);
+        if (typeInfo) { reply(id, typeInfo); return; }
         const imp = importTargetAt(file, p.position as Position);
         if (!imp) { reply(id, null); return; }
         const mod = imp.display.split("::").slice(0, -1).join("::");
