@@ -432,6 +432,39 @@ type Range = { start: Position; end: Position };
 
 interface Local { name: string; type: string; place: string; range: Range; declSpan: number }
 
+const cmpPosition = (a: Position, b: Position) => a.line - b.line || a.character - b.character;
+
+/** The typed node for the expression that starts at `span.start` (the widest one). */
+function nodeStartingAt(text: string, file: string, span: { start: number; end?: number; file?: string }): NodeInfo | null {
+  const start = offsetToPosition(text, span.start);
+  const end = span.end != null ? offsetToPosition(text, span.end) : null;
+  let best: NodeInfo | null = null;
+  for (const n of lastAnalysis?.nodes ?? []) {
+    if (path.resolve(n.file) !== path.resolve(file)) continue;
+    if (n.range.start.line !== start.line || n.range.start.character !== start.character) continue;
+    // An enclosing node can share a start offset when its span carries stale
+    // line/column data; the exact end pins down the expression itself.
+    if (end && n.range.end.line === end.line && n.range.end.character === end.character) return n;
+    if (!best || cmpPosition(n.range.end, best.range.end) > 0) best = n;
+  }
+  return best;
+}
+
+/** The typed node for the first reference to `name` inside `scope`. */
+function referenceInfo(text: string, file: string, name: string, scope: { start: number; end: number; file?: string }): NodeInfo | null {
+  if (!name) return null;
+  const from = offsetToPosition(text, scope.start);
+  const to = offsetToPosition(text, scope.end);
+  let best: NodeInfo | null = null;
+  for (const n of lastAnalysis?.nodes ?? []) {
+    if (n.ident !== name) continue;
+    if (path.resolve(n.file) !== path.resolve(file)) continue;
+    if (cmpPosition(n.range.start, from) < 0 || cmpPosition(n.range.start, to) > 0) continue;
+    if (!best || cmpPosition(n.range.start, best.range.start) < 0) best = n;
+  }
+  return best;
+}
+
 function collectLocal(d: unknown, out: Local[], file: string, text: string) {
   const push = (name: string, span: { start: number; end: number; line?: number; col?: number; file?: string }, type: string, place: string) => {
     if (span.file && path.resolve(span.file) !== path.resolve(file)) return;
@@ -443,20 +476,42 @@ function collectLocal(d: unknown, out: Local[], file: string, text: string) {
       range: { start: offsetToPosition(text, from), end: offsetToPosition(text, from + name.length) },
     });
   };
+  /** The inferred type of a binding's initializer. */
+  const fromValue = (span: { start: number; end?: number; file?: string }) => {
+    const n = nodeStartingAt(text, file, span);
+    return n?.type ? { type: n.type, place: n.place } : null;
+  };
+  /** The inferred type of a binding, read from its first use in scope. */
+  const fromRef = (name: string, scope: { start: number; end: number; file?: string }) => {
+    const n = referenceInfo(text, file, name, scope);
+    return n?.type ? { type: n.type, place: n.place } : null;
+  };
   const visit = (e: Expr) => {
     switch (e.k) {
-      case "Lam":
-        for (const p of e.params) push(p.name, e.span, typeText(p.type), "neutral");
+      case "Lam": {
+        const lam = nodeStartingAt(text, file, e.span);
+        e.params.forEach((p, i) => {
+          if (/^_[a-z]\d+$/.test(p.name) || /^_u\d+$/.test(p.name)) return;
+          const ref = fromRef(p.name, e.body.span);
+          const type = typeText(p.type) || lam?.params?.[i] || ref?.type || "";
+          push(p.name, p.span, type, ref?.place ?? "neutral");
+        });
         visit(e.body);
         return;
-      case "Let":
-        push(e.name, e.span, "", "neutral");
+      }
+      case "Let": {
+        const v = fromValue(e.value.span) ?? fromRef(e.name, e.body.span);
+        push(e.name, e.span, v?.type ?? "", v?.place ?? "neutral");
         visit(e.value); visit(e.body);
         return;
+      }
       case "Block":
         for (const s of e.stmts) {
-          if (s.k === "LetStmt") { push(s.name, s.span, "", "neutral"); visit(s.value); }
-          else visit(s.e);
+          if (s.k === "LetStmt") {
+            const v = fromValue(s.value.span) ?? fromRef(s.name, e.span);
+            push(s.name, s.span, v?.type ?? "", v?.place ?? "neutral");
+            visit(s.value);
+          } else visit(s.e);
         }
         if (e.value) visit(e.value);
         return;
@@ -465,11 +520,17 @@ function collectLocal(d: unknown, out: Local[], file: string, text: string) {
         for (const a of e.arms) {
           const walk = (p: unknown) => {
             const q = p as { k: string; name?: string; items?: unknown[]; args?: unknown[]; fields?: { pat: unknown }[]; rest?: string };
-            if (q.k === "PVar" && q.name) push(q.name, a.pat.span, "", "neutral");
+            if (q.k === "PVar" && q.name) {
+              const ref = fromRef(q.name, a.body.span);
+              push(q.name, a.pat.span, ref?.type ?? "", ref?.place ?? "neutral");
+            }
             if (q.items) q.items.forEach(walk);
             if (q.args) q.args.forEach(walk);
             if (q.fields) q.fields.forEach((f) => walk(f.pat));
-            if (q.rest) push(q.rest, a.pat.span, "", "neutral");
+            if (q.rest) {
+              const ref = fromRef(q.rest, a.body.span);
+              push(q.rest, a.pat.span, ref?.type ?? "", ref?.place ?? "neutral");
+            }
           };
           walk(a.pat);
           visit(a.body);
@@ -506,11 +567,20 @@ function htmlExprs(e: Expr): Expr[] {
 }
 
 function typeText(t: unknown): string {
-  const ty = t as { k: string; name?: string; args?: unknown[]; items?: unknown[] };
+  const ty = t as {
+    k: string; name?: string; args?: unknown[]; items?: unknown[]; params?: unknown[]; ret?: unknown;
+    fields?: { name: string; type: unknown }[]; inner?: unknown;
+  };
   if (!ty) return "";
-  if (ty.k === "TCon") return ty.args?.length ? `${ty.name}<${ty.args.map(typeText).join(", ")}>` : String(ty.name);
-  if (ty.k === "TVar") return ty.name && ty.name !== "_" ? String(ty.name) : "";
-  return "?";
+  switch (ty.k) {
+    case "TCon": return ty.args?.length ? `${ty.name}<${ty.args.map(typeText).join(", ")}>` : String(ty.name);
+    case "TVar": return ty.name && ty.name !== "_" ? String(ty.name) : "";
+    case "TFun": return [...(ty.params ?? []).map(typeText), typeText(ty.ret)].join(" -> ");
+    case "TTuple": return `(${(ty.items ?? []).map(typeText).join(", ")})`;
+    case "TRecord": return `{ ${(ty.fields ?? []).map((f) => `${f.name} :: ${typeText(f.type)}`).join(", ")} }`;
+    case "TPlaced": return typeText(ty.inner);
+    default: return "";
+  }
 }
 
 function declContaining(program: Program, file: string, offset: number): Decl | null {
@@ -530,20 +600,23 @@ function localsAt(file: string, pos: Position): Local[] {
   const decl = declContaining(a.program, file, off);
   if (!decl) return [];
   const locals: Local[] = [];
-  const params = (fn: { params: { name: string; type: unknown; span: { start: number; end: number; file?: string } }[] }) => {
-    for (const p of fn.params) {
-      if (/^_[a-z]\d+$/.test(p.name) || /^_u\d+$/.test(p.name)) continue;
+  const params = (fn: { name?: string; params: { name: string; type: unknown; span: { start: number; end: number; file?: string } }[]; body: Expr }, sigName?: string) => {
+    const sig = sigName ? a.signatures.get(sigName) : undefined;
+    fn.params.forEach((p, i) => {
+      if (/^_[a-z]\d+$/.test(p.name) || /^_u\d+$/.test(p.name)) return;
+      const ref = referenceInfo(text, file, p.name, fn.body.span);
       locals.push({
         name: p.name,
-        type: typeText(p.type),
-        place: "neutral",
+        type: typeText(p.type) || ref?.type || sig?.params[i]?.type || "",
+        place: ref?.place ?? "neutral",
         declSpan: p.span.start,
         range: spanRange(text, p.span as never),
       });
-    }
+    });
   };
   if (decl.k === "Fn") {
-    params(decl);
+    const sym = a.symbols.find((s) => path.resolve(s.file) === path.resolve(file) && s.name === decl.name);
+    params(decl, sym?.finalName);
     collectLocal(decl.body, locals, file, text);
   } else if (decl.k === "Impl") {
     for (const m of decl.methods) {
@@ -1920,14 +1993,14 @@ reader.onMessage((msg) => {
         reply(id, { contents: { kind: "markdown", value: lines.join("\n") }, range: b.range });
         return;
       }
+      const localInfo = localHoverAt(file, p.position as Position);
+      if (localInfo) { reply(id, localInfo); return; }
       const node = nodeAt(file, p.position as Position);
       if (!node) {
         const typeInfo = typeHoverAt(file, p.position as Position);
         if (typeInfo) { reply(id, typeInfo); return; }
         const declInfo = declarationHoverAt(file, p.position as Position);
         if (declInfo) { reply(id, declInfo); return; }
-        const localInfo = localHoverAt(file, p.position as Position);
-        if (localInfo) { reply(id, localInfo); return; }
         const imp = importTargetAt(file, p.position as Position);
         if (!imp) { reply(id, null); return; }
         const mod = imp.display.split("::").slice(0, -1).join("::");

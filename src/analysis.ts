@@ -66,6 +66,8 @@ export interface NodeInfo {
   fields?: string[];
   /** element type, when the node's type is Cell<a> */
   cellElem?: string;
+  /** parameter types, when the node is a lambda (inferred, not only as written) */
+  params?: string[];
   /** callable signature, when the node is a call */
   signature?: SignatureInfo;
 }
@@ -268,6 +270,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         if (fields) entry.fields = fields;
       }
       if (ty.k === "con" && ty.name === "Cell") entry.cellElem = typeStr(ty.args[0]!);
+      if (k === "Lam" && ty.k === "fun") entry.params = ty.params.map((p) => typeStr(prune(p)));
       nodes.push(entry);
     }
 

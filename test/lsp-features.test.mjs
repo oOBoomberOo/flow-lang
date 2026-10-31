@@ -894,6 +894,71 @@ main = do
     assert.match(declMain.contents.value, /main :: Html/);
     const declId = cases.find(([label]) => label === "decl id")[1];
     assert.match(declId.contents.value, /id :: a -> a/);
+    // locals and parameters report the resolved type, not "inferred"
+    const localX = cases.find(([label]) => label === "local x")[1];
+    assert.match(localX.contents.value, /\*\*Int\*\*/, localX.contents.value);
+    const localXDecl = cases.find(([label]) => label === "local x declaration")[1];
+    assert.match(localXDecl.contents.value, /\*\*local\*\* `x`[\s\S]*Type: `Int`/, localXDecl.contents.value);
+    const paramN = cases.find(([label]) => label === "param n declaration")[1];
+    assert.match(paramN.contents.value, /\*\*local\*\* `n`[\s\S]*Type: `Int`/, paramN.contents.value);
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: hover resolves inferred bindings, lambda parameters and pattern variables", async () => {
+  const { entry } = packageWith({
+    "main.flow": `apply :: (Int -> Int) -> Int
+apply f = f 1
+
+pick :: List Int -> Int
+pick xs = case xs of
+  [] -> 0
+  h : rest -> h
+
+main :: Html
+main = do
+  let items = [1, 2, 3]
+  let total = List.fold (\\acc x -> acc + x) 0 items
+  <p>{str (apply (\\y -> y + total))} {str (pick items)}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = (needle, extra = 1, nth = 0) => c.request("textDocument/hover", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, needle, extra, nth),
+    });
+    const cases = [
+      ["let items", await at("let items", 4)],
+      ["let total", await at("let total", 4)],
+      ["lambda acc", await at("acc +", 1)],
+      ["lambda x", await at("acc + x", 5)],
+      ["lambda y", await at("y + total", 1)],
+      ["param f", await at("apply f", 6)],
+      ["pattern head", await at("h : rest", 1)],
+      ["pattern head use", await at("-> h", 4)],
+    ];
+    for (const [label, res] of cases) {
+      assert.ok(res && res.contents, `${label} should hover`);
+      assert.doesNotMatch(res.contents.value, /Type: `inferred`/, `${label} should resolve: ${res.contents.value}`);
+    }
+    const expected = [
+      ["let items", "List Int"],
+      ["let total", "Int"],
+      ["lambda acc", "Int"],
+      ["lambda x", "Int"],
+      ["lambda y", "Int"],
+      ["param f", "Int -> Int"],
+      ["pattern head", "Int"],
+      ["pattern head use", "Int"],
+    ];
+    for (const [label, type] of expected) {
+      const res = cases.find(([l]) => l === label)[1];
+      const esc = type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const shown = new RegExp(`Type: \`${esc}\`|\\*\\*${esc}\\*\\*`);
+      assert.match(res.contents.value, shown, `${label}: ${res.contents.value}`);
+    }
   } finally { c.proc.kill(); }
 });
 
