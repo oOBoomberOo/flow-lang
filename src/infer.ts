@@ -1878,8 +1878,26 @@ export class Infer {
       this.unifyArg(elem, INT, e.span, `cell ${e.op} expects an Int cell`);
     } else {
       value = this.infer(e.value!);
-      if (e.op === "=") this.unifyArg(value.ty, elem, e.value!.span, "cell value");
-      else this.checkCompound(elem, value.ty, e.op, e.value!.span);
+      if (e.op === "=") {
+        // `state := pure x` is a common mistake: `:=` writes the element,
+        // while `pure` adds a functor layer (`pure x :: f x`).
+        const pureCall =
+          e.value!.k === "App" &&
+          e.value!.fn.k === "Var" &&
+          /(^|\.)pure$/.test(e.value!.fn.name);
+        const cellName = cellExpr.k === "Var" ? cellExpr.name : "the cell";
+        this.unifyArg(
+          value.ty,
+          elem,
+          e.value!.span,
+          "cell value",
+          pureCall
+            ? "':=' writes the cell's element directly. 'pure x' has type 'f x' and adds a " +
+              "functor layer; drop it unless the element is itself a cell " +
+              `('${cellName} := x').`
+            : undefined,
+        );
+      } else this.checkCompound(elem, value.ty, e.op, e.value!.span);
     }
 
     return {
@@ -2674,7 +2692,13 @@ export class Infer {
   }
 
   /** Unify an argument/value with an expected type, reporting at its span. */
-  private unifyArg(got: Type, want: Type, span: { line: number; col: number; file?: string }, what: string) {
+  private unifyArg(
+    got: Type,
+    want: Type,
+    span: { line: number; col: number; file?: string },
+    what: string,
+    hint?: string,
+  ) {
     const before = snapshotSubst();
     const gotText = typeStr(got);
     const wantText = typeStr(want);
@@ -2682,7 +2706,9 @@ export class Infer {
       unify(got, want);
     } catch (err) {
       restoreSubst(before);
-      if (err instanceof FlowError) this.fail(`${what}: expected ${wantText}, got ${gotText}`, span);
+      if (err instanceof FlowError) {
+        this.fail(`${what}: expected ${wantText}, got ${gotText}${hint ? `\n${hint}` : ""}`, span);
+      }
       throw err;
     }
   }

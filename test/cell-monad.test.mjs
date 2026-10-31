@@ -122,6 +122,17 @@ main = do
   );
 });
 
+test("cells: `state := pure x` explains the extra functor layer", () => {
+  assert.throws(
+    () => compileSource(`main :: Html
+main = do
+  let c = Client.state ([] :: List Int)
+  c := pure [1]
+  <p>{"x"}</p>`, "pure-cell.flow"),
+    /cell value: expected List Int, got a \(List Int\)[\s\S]*pure x[\s\S]*adds a functor layer/,
+  );
+});
+
 test("monads: do blocks and >>= run for Option and List on the server", async () => {
   const source = `import Monad (Monad)
 import Http (get, Router, RequestObject, Response, textResponse)

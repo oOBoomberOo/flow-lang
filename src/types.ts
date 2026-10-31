@@ -448,7 +448,10 @@ export function freeVars(t: Type, acc = new Set<number>()): Set<number> {
 function typeArg(t: Type, names: Map<number, string>, raw: boolean, showPlace: boolean): string {
   const p = prune(t);
   const s = typeStr(p, names, raw, showPlace);
-  return p.k === "fun" || p.k === "rec" ? `(${s})` : s;
+  // Parenthesize nested applications so `a (List Todo)` cannot be mistaken
+  // for `a List Todo` (different types that used to print alike).
+  const nested = (p.k === "con" && p.args.length > 0) || p.k === "app";
+  return p.k === "fun" || p.k === "rec" || nested ? `(${s})` : s;
 }
 
 /** `a`, `b`, ..., `z`, `a1`, `b1`, ... in first-seen order. */
