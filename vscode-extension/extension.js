@@ -19,6 +19,9 @@ let deco = null;
 let enabled = true;
 let extensionPath = null;
 let regionCache = new Map(); // uri -> {client:[], server:[], cut:[]}
+let devWatcher = null;
+let devRestartTimer = null;
+let startGeneration = 0;
 
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
@@ -482,32 +485,129 @@ function registerProviders(context) {
 /* activation                                                         */
 /* ------------------------------------------------------------------ */
 
+function workspaceRoots() {
+  return (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+}
+
+/** A Flow compiler checkout: the LSP source and the stdlib live side by side. */
+function isCompilerCheckout(root) {
+  return Boolean(root)
+    && fs.existsSync(path.join(root, "src", "lsp", "server.ts"))
+    && fs.existsSync(path.join(root, "stdlib", "http.flow"));
+}
+
+/**
+ * Which language server to run.
+ *
+ * A checkout of the compiler wins over the copy installed with the extension:
+ * while working on Flow itself, `src/` and `stdlib/` must be the code being
+ * edited, not the last packaged snapshot. Normal users have no checkout in
+ * their workspace, so they keep running the bundled `vendor/` server.
+ */
 function findServer(context) {
-  const cfg = vscode.workspace.getConfiguration("flow").get("serverPath");
-  if (cfg && fs.existsSync(cfg)) return cfg;
+  const cfg = vscode.workspace.getConfiguration("flow");
+  const explicit = cfg.get("serverPath");
+  if (explicit && fs.existsSync(explicit)) return { path: explicit, kind: "setting" };
+  if (cfg.get("useWorkspaceServer", true)) {
+    for (const root of workspaceRoots()) {
+      if (!isCompilerCheckout(root)) continue;
+      return { path: path.join(root, "src", "lsp", "server.ts"), kind: "workspace" };
+    }
+  }
   const bundled = path.join(context.extensionPath, "vendor", "src", "lsp", "server.ts");
-  if (fs.existsSync(bundled)) return bundled;
-  for (const root of (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath)) {
+  if (fs.existsSync(bundled)) return { path: bundled, kind: "bundled" };
+  for (const root of workspaceRoots()) {
     const candidate = path.join(root, "src", "lsp", "server.ts");
-    if (fs.existsSync(candidate)) return candidate;
+    if (fs.existsSync(candidate)) return { path: candidate, kind: "workspace" };
   }
   const sibling = path.join(context.extensionPath, "..", "src", "lsp", "server.ts");
-  return fs.existsSync(sibling) ? sibling : null;
+  return fs.existsSync(sibling) ? { path: sibling, kind: "checkout" } : null;
+}
+
+/** `<root>/src/lsp/server.ts` -> `<root>`; null when the path is not a checkout. */
+function compilerRoot(serverPath) {
+  if (!serverPath) return null;
+  const root = path.dirname(path.dirname(path.dirname(serverPath)));
+  return isCompilerCheckout(root) ? root : null;
+}
+
+function insideExtensionBundle(context, file) {
+  if (!context || !context.extensionPath) return false;
+  const vendor = path.resolve(context.extensionPath, "vendor") + path.sep;
+  return path.resolve(file).startsWith(vendor);
+}
+
+/** Watch the checkout's compiler and stdlib; restart after a short pause. */
+function startDevWatch(context, serverPath) {
+  devWatcher?.dispose();
+  devWatcher = null;
+  if (insideExtensionBundle(context, serverPath)) return;
+  const root = compilerRoot(serverPath);
+  if (!root) return;
+  if (!vscode.workspace.getConfiguration("flow").get("devWatch", true)) return;
+  if (typeof vscode.RelativePattern !== "function") return;
+
+  const watchers = ["src/**/*.ts", "stdlib/**/*.flow"].map((pattern) => {
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, pattern));
+    const changed = (uri) => scheduleDevRestart(context, uri);
+    watcher.onDidChange(changed);
+    watcher.onDidCreate(changed);
+    watcher.onDidDelete(changed);
+    return watcher;
+  });
+  devWatcher = {
+    root,
+    dispose() {
+      clearTimeout(devRestartTimer);
+      devRestartTimer = null;
+      for (const watcher of watchers) watcher.dispose();
+    },
+  };
+  output?.appendLine(`[flow] watching ${root} for compiler and stdlib changes`);
+}
+
+function scheduleDevRestart(context, uri) {
+  clearTimeout(devRestartTimer);
+  devRestartTimer = setTimeout(() => {
+    devRestartTimer = null;
+    const file = uri && uri.fsPath && devWatcher?.root
+      ? path.relative(devWatcher.root, uri.fsPath) || uri.fsPath
+      : "compiler source";
+    output?.appendLine(`[flow] ${file} changed; restarting the language server`);
+    vscode.window.setStatusBarMessage("Flow: restarting language server…", 2000);
+    void restart(context);
+  }, 300);
+  devRestartTimer.unref?.();
+}
+
+/** Stop the current server and start a fresh one against the resolved source. */
+async function restart(context) {
+  const old = client;
+  client = null;
+  old?.stop();
+  await start(context);
 }
 
 async function start(context) {
-  const serverPath = findServer(context);
-  if (!serverPath) {
+  const generation = ++startGeneration;
+  const found = findServer(context);
+  if (!found) {
     vscode.window.showWarningMessage("Flow: could not find src/lsp/server.ts. Set flow.serverPath.");
     return;
   }
+  const serverPath = found.path;
   const cwd = (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath || path.dirname(serverPath);
   try {
-    output?.appendLine(`[flow] extension ${require("./package.json").version} · server ${serverPath}`);
+    output?.appendLine(`[flow] extension ${require("./package.json").version} · server ${serverPath} (${found.kind})`);
+    if (found.kind === "workspace" || found.kind === "setting") {
+      output?.appendLine("[flow] using the compiler checkout; edits under src/ and stdlib/ restart it automatically");
+    }
   } catch { /* version is diagnostic only */ }
-  client = new LspClient(serverPath, cwd);
+  startDevWatch(context, serverPath);
+  const started = new LspClient(serverPath, cwd);
+  client = started;
   try {
-    await client.request("initialize", {
+    await started.request("initialize", {
       processId: process.pid,
       rootUri: vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null,
       capabilities: {
@@ -519,9 +619,19 @@ async function start(context) {
         workspace: { symbol: {} },
       },
     });
-    client.notify("initialized", {});
+    started.notify("initialized", {});
   } catch (e) {
+    if (client === started) client = null;
+    started.stop();
     vscode.window.showErrorMessage(`Flow language server failed: ${e.message}`);
+    return;
+  }
+  // A newer start (another save, or Restart) superseded this one while the
+  // handshake was in flight; its process must not survive.
+  if (generation !== startGeneration) {
+    if (client === started) client = null;
+    started.stop();
+    return;
   }
   for (const doc of vscode.workspace.textDocuments) if (doc.languageId === "flow") openDoc(doc);
   const active = vscode.window.activeTextEditor;
@@ -589,6 +699,13 @@ function activate(context) {
       makeDecorations();
       enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
       paintAll();
+      // The server source is chosen from settings; re-resolve and re-arm the
+      // watcher immediately instead of waiting for a window reload.
+      if (e.affectsConfiguration("flow.serverPath") ||
+          e.affectsConfiguration("flow.useWorkspaceServer") ||
+          e.affectsConfiguration("flow.devWatch")) {
+        void restart(context);
+      }
     }),
     vscode.commands.registerCommand("flow.explain", () => explainCurrent()),
     vscode.commands.registerCommand("flow.cutInfo", (name) => {
@@ -607,8 +724,8 @@ function activate(context) {
       vscode.window.setStatusBarMessage(`Flow boundary colouring ${enabled ? "on" : "off"}`, 2000);
     }),
     vscode.commands.registerCommand("flow.restart", async () => {
-      client?.stop();
-      await start(context);
+      output?.appendLine("[flow] restart requested");
+      await restart(context);
     }),
   );
 
@@ -656,6 +773,22 @@ function explainCurrent() {
   });
 }
 
-function deactivate() { client?.stop(); }
+function deactivate() {
+  clearTimeout(devRestartTimer);
+  devRestartTimer = null;
+  devWatcher?.dispose();
+  devWatcher = null;
+  client?.stop();
+  client = null;
+}
 
-module.exports = { activate, deactivate };
+module.exports = {
+  activate,
+  deactivate,
+  _internals: {
+    findServer,
+    compilerRoot,
+    isCompilerCheckout,
+    serverRunning: () => Boolean(client),
+  },
+};

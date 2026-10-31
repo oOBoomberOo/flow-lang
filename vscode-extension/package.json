@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and boundary colouring.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -36,7 +36,17 @@
         "flow.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to src/lsp/server.ts. Empty = auto-detect in the workspace."
+          "description": "Path to src/lsp/server.ts. Empty = auto-detect: a workspace compiler checkout first, then the bundled copy."
+        },
+        "flow.useWorkspaceServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the open folder is a Flow compiler checkout, run its src/lsp/server.ts (the code you are editing) instead of the server bundled with the extension."
+        },
+        "flow.devWatch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Restart the language server automatically when files under the checkout's src/**.ts or stdlib/**.flow change. Applies only when running a compiler checkout, not the bundled server."
         },
         "flow.clientColor": {
           "type": "string",

@@ -160,7 +160,9 @@ vscode-extension/
 ### Install (packaged, self-contained)
 
 ```bash
-npm run package:extension            # -> build/flow-language.vsix (bundles the compiler)
+npm run extension:install            # build -> build/flow-language.vsix, then install it
+# or, separately:
+npm run package:extension
 code --install-extension build/flow-language.vsix --force
 ```
 
@@ -173,8 +175,33 @@ code --list-extensions --show-versions --profile "Minecraft Development" | grep 
 
 The packaged extension carries `vendor/{src,stdlib,registry,bin}`, so it works in any
 workspace — the server, the formatter and `Flow: Explain Boundary` all run from the
-bundle. In a checkout it prefers `src/lsp/server.ts` from the workspace, so edits are
-picked up live.
+bundle.
+
+### Developing Flow itself (no rebuild loop)
+
+Open the Flow checkout in VS Code and the installed extension runs
+`<workspace>/src/lsp/server.ts` instead of its own bundled copy. Compiler and stdlib
+changes are therefore live without touching the VSIX:
+
+* resolution order is `flow.serverPath` → workspace compiler checkout → bundled vendor;
+* saving anything under `src/**/*.ts` or `stdlib/**/*.flow` restarts the language
+  server automatically (300 ms debounce) and re-opens the documents you have open;
+* `Flow: Restart Language Server` (command `flow.restart`) does the same restart on
+  demand; changing `flow.serverPath`, `flow.useWorkspaceServer` or `flow.devWatch`
+  restarts it too;
+* the **Flow** output channel prints the extension version, the server path and whether
+  it came from the workspace, a setting or the bundle, e.g.
+  `[flow] extension 0.3.3 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+
+Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
+watcher follows that checkout's `src/` and `stdlib/` instead. Turn
+`flow.useWorkspaceServer` off to compare against the packaged compiler, and
+`flow.devWatch` off to restart manually only.
+
+Changing the **client** (`extension.js`, `vscode-extension/package.json`, the grammar)
+still needs `npm run extension:install` and a window reload, because VS Code loads the
+extension host code once per window. Compiler/stdlib work does not.
+
 
 ### What you see
 
@@ -197,7 +224,9 @@ picked up live.
 | `flow.serverColor` | `rgba(255, 150, 60, 0.16)` | server background |
 | `flow.cutColor` | `rgba(190, 90, 255, 0.55)` | cut underline |
 | `flow.enableDecorations` | `true` | toggle colouring |
-| `flow.serverPath` | `""` | explicit server path |
+| `flow.serverPath` | `""` | explicit `src/lsp/server.ts`; overrides auto-detection |
+| `flow.useWorkspaceServer` | `true` | in a compiler checkout, run its server instead of the bundle |
+| `flow.devWatch` | `true` | restart the server when the checkout's compiler/stdlib changes |
 
 ### Commands
 
@@ -216,7 +245,7 @@ picked up live.
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
 | `test/lsp-features.test.mjs` | completion (3 kinds), definition, references, highlights, rename, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, code lens, multi-error reporting |
 | `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
-| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results |
+| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, and auto-restart on compiler saves |
 
 ```
 $ node --test test/lsp.test.mjs test/lsp-features.test.mjs test/vscode-extension.test.mjs

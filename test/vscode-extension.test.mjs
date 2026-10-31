@@ -21,6 +21,9 @@ function makeMock(workspaceRoot) {
   const statusBar = { text: "", tooltip: "", show() {}, dispose() {} };
   const decos = [];
   const commands = [];
+  const outputLines = [];
+  const statusMessages = [];
+  const watchers = [];
   let diagnosticsSets = 0;
 
   const d = () => ({ dispose() {} });
@@ -34,7 +37,13 @@ function makeMock(workspaceRoot) {
     crossingColor: "rgba(176, 176, 176, 0.7)",
     enableDecorations: true,
     serverPath: "",
+    useWorkspaceServer: true,
+    devWatch: true,
   };
+
+  class RelativePattern {
+    constructor(base, pattern) { this.base = typeof base === "string" ? base : base?.fsPath; this.pattern = pattern; }
+  }
 
   const mock = {
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -51,6 +60,7 @@ function makeMock(workspaceRoot) {
     CodeActionKind: { QuickFix: "quickfix", Refactor: "refactor", RefactorRewrite: "refactor.rewrite", Source: "source" },
     Range: class { constructor(a, b, c, e) { this.start = { line: a, character: b }; this.end = { line: c, character: e }; } },
     Position: class { constructor(line, character) { this.line = line; this.character = character; } },
+    RelativePattern,
     Uri: {
       parse: (s) => ({ toString: () => s, fsPath: s.replace(/^file:\/\/\//, "") }),
       file: (p) => ({ toString: () => `file:///${p.replace(/\\/g, "/").replace(/^\/+/, "")}`, fsPath: p }),
@@ -80,7 +90,7 @@ function makeMock(workspaceRoot) {
     DocumentLink: class { constructor(range, target) { this.range = range; this.target = target; } },
     WorkspaceEdit: class { constructor() { this.edits = []; } replace(uri, range, newText) { this.edits.push({ uri, range, newText }); } },
     window: {
-      createOutputChannel: () => ({ appendLine() {}, clear() {}, show() {}, dispose() {} }),
+      createOutputChannel: () => ({ appendLine: (line) => outputLines.push(line), clear() { outputLines.length = 0; }, show() {}, dispose() {} }),
       createStatusBarItem: () => statusBar,
       createTextEditorDecorationType: (opts) => { const t = { opts, dispose() {} }; decos.push(t); return t; },
       visibleTextEditors: [],
@@ -89,7 +99,7 @@ function makeMock(workspaceRoot) {
       showWarningMessage() {},
       showErrorMessage(msg) { handlers.lastError = msg; },
       showInformationMessage() {},
-      setStatusBarMessage() {},
+      setStatusBarMessage(msg) { statusMessages.push(msg); },
       activeTextEditor: undefined,
     },
     workspace: {
@@ -101,7 +111,19 @@ function makeMock(workspaceRoot) {
       onDidSaveTextDocument: (h) => { handlers.save = h; return d(); },
       onDidCloseTextDocument: (h) => { handlers.close = h; return d(); },
       onDidChangeConfiguration: (h) => { handlers.config = h; return d(); },
-      createFileSystemWatcher: () => ({ onDidChange: () => d(), onDidCreate: () => d(), onDidDelete: () => d(), dispose() {} }),
+      createFileSystemWatcher: (pattern) => {
+        const watcher = {
+          pattern,
+          handlers: { change: [], create: [], delete: [] },
+          onDidChange(h) { watcher.handlers.change.push(h); return d(); },
+          onDidCreate(h) { watcher.handlers.create.push(h); return d(); },
+          onDidDelete(h) { watcher.handlers.delete.push(h); return d(); },
+          dispose() { watcher.disposed = true; },
+          fire(type, uri) { for (const h of watcher.handlers[type]) h(uri); },
+        };
+        watchers.push(watcher);
+        return watcher;
+      },
     },
     languages: {
       createDiagnosticCollection: () => ({ set: () => { diagnosticsSets++; }, delete() {}, dispose() {} }),
@@ -127,7 +149,8 @@ function makeMock(workspaceRoot) {
   };
 
   return {
-    mock, handlers, applied, statusBar, decos, registered, commands,
+    mock, handlers, applied, statusBar, decos, registered, commands, watchers, outputLines, statusMessages,
+    config: mockConfig,
     get diagnosticsSets() { return diagnosticsSets; },
   };
 }
@@ -321,6 +344,11 @@ test("vscode: package.json and grammar are valid and complete", () => {
   assert.equal(pkg.contributes.languages[0].id, "flow");
   assert.deepEqual(pkg.contributes.languages[0].extensions, [".flow"]);
   assert.ok(fs.existsSync(path.join(REPO, "vscode-extension", pkg.contributes.grammars[0].path)));
+  for (const key of ["flow.serverPath", "flow.useWorkspaceServer", "flow.devWatch", "flow.enableDecorations"]) {
+    assert.ok(pkg.contributes.configuration.properties[key], `contributes ${key}`);
+  }
+  const restart = pkg.contributes.commands.find((c) => c.command === "flow.restart");
+  assert.ok(restart, "Flow: Restart Language Server is contributed");
 
   const grammar = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "syntaxes", "flow.tmLanguage.json"), "utf8"));
   assert.equal(grammar.scopeName, "source.flow");
@@ -458,6 +486,77 @@ main = <p>{"new"}</p>
     assert.match(hover.contents.value, /Integer/, "the server saw `Int`, not the stale `Html`");
   } finally {
     ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: server resolution prefers a compiler checkout over the bundle", () => {
+  const extDir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-ext-"));
+  const bundled = path.join(extDir, "vendor", "src", "lsp", "server.ts");
+  fs.mkdirSync(path.dirname(bundled), { recursive: true });
+  fs.writeFileSync(bundled, "");
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    const context = { extensionPath: extDir };
+    const found = ext._internals.findServer(context);
+    assert.equal(found.kind, "workspace", "a checkout beats the installed bundle");
+    assert.equal(path.resolve(found.path), path.resolve(path.join(REPO, "src", "lsp", "server.ts")));
+    assert.equal(path.resolve(ext._internals.compilerRoot(found.path)), path.resolve(REPO));
+
+    env.config.useWorkspaceServer = false;
+    const fallback = ext._internals.findServer(context);
+    assert.equal(fallback.kind, "bundled", "opting out uses the packaged server");
+    assert.equal(path.resolve(fallback.path), path.resolve(bundled));
+
+    env.config.useWorkspaceServer = true;
+    env.config.serverPath = bundled;
+    assert.equal(ext._internals.findServer(context).kind, "setting", "an explicit path wins");
+  } finally {
+    restore();
+  }
+});
+
+test("vscode: compiler saves restart the language server without reinstalling", async () => {
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    await waitUntil(() => env.outputLines.some((l) => l.includes("(workspace)")), 5000, "workspace server selected");
+    assert.ok(env.outputLines.some((l) => l.includes("watching") && l.includes(REPO)), "watches the checkout");
+
+    const devWatches = env.watchers.filter((w) => w.pattern instanceof env.mock.RelativePattern);
+    assert.deepEqual(
+      devWatches.map((w) => w.pattern.pattern).sort(),
+      ["src/**/*.ts", "stdlib/**/*.flow"],
+      "compiler and stdlib are watched",
+    );
+
+    const src = devWatches.find((w) => w.pattern.pattern === "src/**/*.ts");
+    const before = env.outputLines.filter((l) => l.includes("restarting the language server")).length;
+    const uri = env.mock.Uri.file(path.join(REPO, "src", "analysis.ts"));
+    src.fire("change", uri);
+    src.fire("change", uri); // a save burst must coalesce into one restart
+    await waitUntil(
+      () => env.outputLines.filter((l) => l.includes("restarting the language server")).length > before,
+      5000,
+      "auto restart",
+    );
+    await new Promise((r) => setTimeout(r, 800));
+
+    assert.equal(
+      env.outputLines.filter((l) => l.includes("restarting the language server")).length,
+      before + 1,
+      "a burst restarts the server once",
+    );
+    assert.ok(env.outputLines.some((l) => l.includes("analysis.ts changed")), "the changed file is named");
+    assert.ok(env.statusMessages.some((m) => /restarting language server/.test(m)), "restart is visible in the status bar");
+    assert.ok(ext._internals.serverRunning(), "a server runs after the restart");
+    assert.ok(src.disposed, "the pre-restart watcher is replaced");
+  } finally {
+    ext.deactivate();
+    assert.equal(ext._internals.serverRunning(), false, "deactivate stops the server");
     restore();
   }
 });
