@@ -79,20 +79,14 @@ encodePair :: (Str, Json) -> Str
 encodePair pair = case pair of
   (k, v) -> encodeString k + ":" + encode v
 
+-- `JSON.stringify` gives correct escaping for every control character and
+-- surrogate; the rest of the encoder stays in Flow so the shape is explicit.
+foreign import js unsafe "__flow.host.jsonString" {
+  host_json_string :: Str -> Str
+}
+
 encodeString :: Str -> Str
-encodeString s = "\"" + escape s + "\""
-
-escape :: Str -> Str
-escape s = List.fold (chars s) "" (\acc c -> acc + escapeChar c)
-
-escapeChar :: Str -> Str
-escapeChar c =
-  if c == "\"" then "\\\""
-  else if c == "\\" then "\\\\"
-  else if c == "\n" then "\\n"
-  else if c == "\t" then "\\t"
-  else if c == "\r" then "\\r"
-  else c
+encodeString s = host_json_string s
 
 -- ---------------------------------------------------------------- decoding
 foreign import js unsafe "__flow.host.jsonParse" {

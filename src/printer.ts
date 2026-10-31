@@ -183,7 +183,23 @@ class Printer {
       case "Ctor":
         return x.args.length ? `${x.name} ${x.args.map((a) => this.e(a, ind, ARG)).join(" ")}` : x.name;
       case "Lam": {
-        const ps = x.params.map((p) => this.lamParam(p)).join(" ");
+        // Pattern lambdas are desugared to `\_aN -> case _aN of pat -> body`.
+        // Print the source shape back when it is the only parameter and arm.
+        const param = x.params[0];
+        if (
+          x.params.length === 1 &&
+          param &&
+          /^_[a-z]\d+$/.test(param.name) &&
+          x.body.k === "Match" &&
+          x.body.scrut.k === "Var" &&
+          x.body.scrut.name === param.name &&
+          x.body.arms.length === 1 &&
+          !x.body.arms[0]!.guard &&
+          !x.ret && !x.eff
+        ) {
+          return `\\${printPattern(x.body.arms[0]!.pat)} -> ${this.e(x.body.arms[0]!.body, ind, 0)}`;
+        }
+        const ps = x.params.map((p) => this.lamParam(p, x.body)).join(" ");
         return `\\${ps} -> ${this.e(x.body, ind, 0)}`;
       }
       case "App": {
@@ -235,10 +251,13 @@ class Printer {
     }
   }
 
-  private lamParam(p: Param): string {
+  private lamParam(p: Param, body: Expr): string {
     if (p.type.k === "TCon" && p.type.name === "Unit" && /^_u/.test(p.name)) return "()";
     if (!isWild(p.type)) return `(${p.name} :: ${printType(p.type)})`;
-    return /^_[a-z]\d+$/.test(p.name) ? "_" : p.name;
+    // Pattern lambdas are desugared to `\_aN -> case _aN of ...`; keep the
+    // generated name when the body uses it, otherwise print a plain wildcard.
+    if (/^_[a-z]\d+$/.test(p.name)) return exprMentions(body, p.name) ? p.name : "_";
+    return p.name;
   }
 
   private arm(a: MatchArm, ind: number): string {
@@ -430,15 +449,18 @@ function printDecl(d: Decl, pr: Printer): string {
       const head = `provide ${d.effect}${d.target ? ` for ${printType(d.target, 2)}` : ""} where`;
       return `${head}\n${d.ops.map((o) => `  ${pr.clause(o.name, o.fn, 2)}`).join("\n")}`;
     }
-    case "Extern":
-      return `foreign import js unsafe ${JSON.stringify(d.implName)} ${printSig(d.sig)}`;
+    case "Extern": {
+      const source = d.modulePath ?? d.implName;
+      const typeText = sigType(d.sig.params, d.sig.ret, d.sig.eff, d.sig.span as TypeExpr["span"]);
+      return `foreign import js unsafe ${JSON.stringify(source)} {\n  ${d.sig.name} :: ${typeText}\n}`;
+    }
     case "Fn": {
       const lines: string[] = [];
       const hasSig = d.ret !== undefined;
       if (hasSig) lines.push(`${d.name} :: ${context(d.paramBounds)}${sigType(d.params, d.ret, d.eff, d.span as TypeExpr["span"])}`);
       const params = d.params.map((p) => {
         if (p.type.k === "TCon" && p.type.name === "Unit" && /^_u/.test(p.name)) return "()";
-        if (/^_[a-z]\d+$/.test(p.name)) return "_";
+        if (/^_[a-z]\d+$/.test(p.name)) return exprMentions(d.body, p.name) ? p.name : "_";
         if (!hasSig && !isWild(p.type)) return `(${p.name} :: ${printType(p.type)})`;
         return p.name;
       });
@@ -450,4 +472,43 @@ function printDecl(d: Decl, pr: Printer): string {
 
 function printSig(s: FnSig): string {
   return `${s.name} :: ${context(s.paramBounds)}${sigType(s.params, s.ret, s.eff, s.span as TypeExpr["span"])}`;
+}
+
+/** Does an expression mention `name`? Used to keep synthetic pattern-lambda
+ *  parameters (`_a1`) when the desugared case body refers to them. */
+function exprMentions(e: Expr, name: string): boolean {
+  switch (e.k) {
+    case "Lit": return false;
+    case "Var": return e.name === name;
+    case "Lam": return exprMentions(e.body, name);
+    case "App": return exprMentions(e.fn, name) || e.args.some((a) => exprMentions(a, name));
+    case "If": return exprMentions(e.cond, name) || exprMentions(e.then, name) || exprMentions(e.else, name);
+    case "Match":
+      return exprMentions(e.scrut, name) ||
+        e.arms.some((a) => (a.guard ? exprMentions(a.guard, name) : false) || exprMentions(a.body, name));
+    case "Let": return exprMentions(e.value, name) || exprMentions(e.body, name);
+    case "Record": return e.fields.some((f) => exprMentions(f.value, name));
+    case "Field": return exprMentions(e.target, name);
+    case "Tuple": case "List": return e.items.some((i) => exprMentions(i, name));
+    case "Ctor": return e.args.some((a) => exprMentions(a, name));
+    case "Binary": return exprMentions(e.l, name) || exprMentions(e.r, name);
+    case "Unary": return exprMentions(e.e, name);
+    case "Html": return htmlMentions(e.nodes, name);
+    case "Handle": return e.ops.some((o) => exprMentions(o.fn, name)) || exprMentions(e.body, name);
+    case "Assign": return exprMentions(e.target, name) || (e.value ? exprMentions(e.value, name) : false);
+    case "Block":
+      return e.stmts.some((s) => exprMentions(s.k === "LetStmt" ? s.value : s.e, name)) ||
+        (e.value ? exprMentions(e.value, name) : false);
+  }
+}
+
+function htmlMentions(nodes: HtmlNode[], name: string): boolean {
+  for (const n of nodes) {
+    if (n.k === "Hole" && exprMentions(n.e, name)) return true;
+    if ((n.k === "Element" || n.k === "Component")) {
+      if (n.attrs.some((a) => a.value.k === "expr" && exprMentions(a.value.e, name))) return true;
+      if (htmlMentions(n.children, name)) return true;
+    }
+  }
+  return false;
 }

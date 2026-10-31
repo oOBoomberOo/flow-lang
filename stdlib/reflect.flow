@@ -1,0 +1,98 @@
+module Reflect (Variant, TypeDef, Reflected, TypeInfo(..), meta, root, defs, lookup, typeName, describe, describeAll) where
+
+-- std::reflect - metadata about a type.
+--
+--   import Reflect
+--   let info = Reflect.meta user
+--   Reflect.describe info.root        -- the record shape or type name
+--   Reflect.lookup "User" info        -- Some { name = "User", variants = ... }
+--
+-- `meta` is resolved by the compiler from the *static* type of its argument, so it
+-- has no runtime cost for the value itself and works for records, sum types,
+-- lists, tuples, options and results. `Reflect.meta` needs a concrete type: in a
+-- polymorphic function, pass a `Reflected` value in from the caller instead.
+--
+-- Named data types are referenced from `root` as `TRef "Name"`; the shape lives
+-- in `defs`, which keeps recursive types finite.
+type Variant = { name :: Str, args :: List TypeInfo }
+
+type TypeDef = { name :: Str, variants :: List Variant }
+
+type Reflected = { root :: TypeInfo, defs :: List (Str, TypeDef) }
+
+data TypeInfo
+  = TInt
+  | TFloat
+  | TStr
+  | TBool
+  | TUnit
+  | TList TypeInfo
+  | TTuple (List TypeInfo)
+  | TRecord (List (Str, TypeInfo))
+  | TRef Str
+  | TFun (List TypeInfo) TypeInfo
+  | TUnknown Str
+
+foreign import js unsafe "__flow.reflect.meta" {
+  meta :: a -> Reflected
+}
+
+root :: Reflected -> TypeInfo
+root info = info.root
+
+defs :: Reflected -> List (Str, TypeDef)
+defs info = info.defs
+
+lookup :: Str -> Reflected -> Option TypeDef
+lookup key info = findDef info.defs key
+
+findDef :: List (Str, TypeDef) -> Str -> Option TypeDef
+findDef pairs key = case pairs of
+  [] -> None
+  (name, definition) : rest -> if name == key then Some definition else findDef rest key
+
+typeName :: TypeInfo -> Option Str
+typeName info = case info of
+  TRef name -> Some name
+  _ -> None
+
+describe :: TypeInfo -> Str
+describe info = case info of
+  TInt -> "Int"
+  TFloat -> "Float"
+  TStr -> "Str"
+  TBool -> "Bool"
+  TUnit -> "()"
+  TList item -> "List " + describeArg item
+  TTuple items -> "(" + join (List.map items describe) ", " + ")"
+  TRecord fields ->
+    "{ " + join (List.map fields (\(name, field) -> name + " :: " + describe field)) ", " + " }"
+  TRef name -> name
+  TFun params result ->
+    if isEmpty params
+      then "() -> " + describe result
+      else join (List.map params describeArg) " -> " + " -> " + describe result
+  TUnknown why -> why
+
+-- / Describe the root and every referenced definition.
+describeAll :: Reflected -> Str
+describeAll info = "root: " + describe info.root + defsText info.defs
+
+defsText :: List (Str, TypeDef) -> Str
+defsText pairs = case pairs of
+  [] -> ""
+  _ -> "\n" + join (List.map pairs describeDef) "\n"
+
+describeDef :: (Str, TypeDef) -> Str
+describeDef pair = case pair of
+  (key, definition) ->
+    key + " = " + join (List.map definition.variants describeVariant) " | "
+
+describeVariant :: Variant -> Str
+describeVariant variant =
+  if isEmpty variant.args
+    then variant.name
+    else variant.name + " " + join (List.map variant.args describeArg) " "
+
+describeArg :: TypeInfo -> Str
+describeArg info = if contains (describe info) " " then "(" + describe info + ")" else describe info

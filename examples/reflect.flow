@@ -1,0 +1,55 @@
+-- Reflection and the JSON serialization standard.
+--
+-- `Reflect.meta value` is resolved from the static type, so it describes
+-- records, sum types, lists, tuples and options without any runtime registry.
+-- `Serialize.encode` / `decode` use that metadata, and the explicit `*With`
+-- functions let you pass metadata around.
+import Reflect
+import Serialize
+import Result
+
+data Role = Admin | Member Str
+
+data Tree = Leaf Str | Node Tree Tree
+
+type User = { name :: Str, role :: Role, tags :: List Str, pair :: (Int, Str), maybe :: Option Int }
+
+user :: User
+user =
+  { name = "Ada", role = Member "gold", tags = ["flow", "json"], pair = (1, "x"), maybe = Some 3 }
+
+tree :: Tree
+tree = Node (Leaf "a") (Leaf "b")
+
+roundTrip :: User -> Str
+roundTrip value = case Serialize.encode value of
+  Err why -> "encode error: " + why
+  Ok text ->
+    case let
+      _ann1 :: Result User Str
+      _ann1 = Serialize.decode text
+    in _ann1 of
+      Err why -> "decode error: " + why
+      Ok decoded ->
+        case Serialize.encode decoded of
+          Err why -> "re-encode error: " + why
+          Ok again -> again
+
+main :: Html
+main = do
+  let info = Reflect.meta user
+  let encoded = Result.withDefault "encode error" (Serialize.encode user)
+  let treeInfo = Reflect.meta tree
+  let treeJson = Result.withDefault "encode error" (Serialize.encode tree)
+  <div class="app">
+    <h1>{"Reflection & JSON"}</h1>
+    <h2>{"Metadata"}</h2>
+    <pre>{Reflect.describeAll info}</pre>
+    <h2>{"Encoded"}</h2>
+    <pre>{encoded}</pre>
+    <h2>{"Round trip"}</h2>
+    <pre>{roundTrip user}</pre>
+    <h2>{"A recursive type"}</h2>
+    <pre>{Reflect.describeAll treeInfo}</pre>
+    <pre>{treeJson}</pre>
+  </div>

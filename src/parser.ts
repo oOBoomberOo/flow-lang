@@ -956,6 +956,11 @@ export class Parser {
     if (t.kind === "id" && this.peekRaw().kind === "op" && this.peekRaw().value === "::") {
       this.next(); this.next();
       const { type } = this.parseSigType();
+      // A local binding may carry its signature inline: `let x :: Int = 1`.
+      if (this.atOp("=") || this.atOp("|")) {
+        const rhs = this.parseRhs("=");
+        return { name: t.value, pats: [], rhs, nameTok: t, ann: type };
+      }
       const b: Binding = { name: t.value, pats: [], rhs: { where: [] }, nameTok: t, ann: type, __sig: true } as Binding & { __sig: boolean };
       return b;
     }

@@ -10,6 +10,7 @@ docs/modules.md       modules, packages and namespacing
 docs/type-system.md   types, effects and placement inference
 docs/editor.md        the language server and the VS Code extension
 docs/http.md          startup, page routing and server responses
+docs/serialize.md     reflection and JSON serialization
 docs/grammar.ebnf     the grammar
 ```
 
@@ -361,6 +362,8 @@ The standard library is meant to be a one-stop toolkit: reach for it before the 
 | `String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
 | `Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
 | `Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |
+| `Reflect` | `meta`, `root`, `defs`, `lookup`, `typeName`, `describe`, `describeAll`; `TypeInfo` metadata for primitives, containers, records and data types |
+| `Serialize` | `encode`/`decode` (static type) and `encodeWith`/`decodeWith`/`toJsonWith`/`fromJsonWith` (explicit `Reflected`): reflection-driven JSON with `Result` errors and field paths |
 | `Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
 | `Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
 | `Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
@@ -372,6 +375,8 @@ The standard library is meant to be a one-stop toolkit: reach for it before the 
 
 Containers are ordinary values, so they work on both sides of the boundary:
 `Dict.stringLookup "k" d` in a render function reads a server-built map through a cut.
+Reflection (`Reflect.meta`) and the JSON serialization standard built on it are
+described in [`serialize.md`](serialize.md).
 
 ```flow
 import Dict

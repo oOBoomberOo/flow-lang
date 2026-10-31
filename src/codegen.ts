@@ -423,6 +423,267 @@ export class Codegen {
     }
   }
 
+  /** The JS target of a compiler-recognized extern call, if any. */
+  private implOf(fn: Expr): string | null {
+    if (fn.k !== "Var") return null;
+    return this.mod.fns.get(fn.name)?.extern?.implName ?? null;
+  }
+
+  /** The linker's final constructor name for a reflection ADT variant. */
+  private metaCtor(variant: string): string {
+    for (const [final, info] of this.mod.ctors) {
+      if (info.variant === variant && info.typeName === "TypeInfo") return final;
+    }
+    for (const [final, info] of this.mod.ctors) {
+      if (
+        info.typeName.startsWith("TypeInfo") &&
+        (info.variant === variant || info.variant.startsWith(variant + "$"))
+      ) return final;
+    }
+    return variant;
+  }
+
+  /** A stdlib function referenced by generated code (tolerates a rename). */
+  private stdlibFn(fileSuffix: string, simple: string): string {
+    for (const [final, info] of this.mod.fns) {
+      const file = (info.span?.file ?? "").replace(/\\/g, "/");
+      if (file.endsWith(fileSuffix) && (final === simple || final.startsWith(simple + "$"))) return final;
+    }
+    this.fail(`internal: ${fileSuffix} is not linked`);
+  }
+
+  /** A canonical key for a reflected data type, unambiguous for nested args. */
+  private reflectKey(t: Type): string {
+    const p = prune(t);
+    switch (p.k) {
+      case "con":
+        if (!p.args.length) return p.name;
+        return `${p.name} ${p.args.map((arg) => {
+          const q = prune(arg);
+          const text = this.reflectKey(q);
+          return q.k === "con" && q.args.length ? `(${text})` : text;
+        }).join(" ")}`;
+      case "tuple": return `(${p.items.map((item) => this.reflectKey(item)).join(", ")})`;
+      case "rec":
+        return `{ ${Object.entries(p.fields).map(([name, field]) => `${name} :: ${this.reflectKey(field)}`).join(", ")} }`;
+      case "fun":
+        return `${p.params.map((param) => this.reflectKey(param)).join(" -> ")} -> ${this.reflectKey(p.ret)}`;
+      case "var": case "app": return typeStr(p);
+    }
+  }
+
+  /** Build the `Reflected` value for a static type. */
+  private reflectJs(t: Type, span?: { line?: number; col?: number; file?: string }): string {
+    const defs = new Map<string, string>();
+    const root = this.reflectNode(t, defs, span);
+    const entries = [...defs].map(([key, def]) => `[${ev(key)}, ${def || "null"}]`).join(", ");
+    return `{ "root": ${root}, "defs": [${entries}] }`;
+  }
+
+  /**
+   * Auto serialization rejects a static type that has no JSON data shape.
+   * Explicit `*With` calls still report this at runtime, because their metadata
+   * can be built dynamically.
+   */
+  private assertSerializable(
+    t: Type,
+    what: string,
+    span?: { line?: number; col?: number; file?: string },
+    visited = new Set<string>(),
+  ): void {
+    const p = prune(t);
+    switch (p.k) {
+      case "con": {
+        const name = p.name;
+        if (["Int", "Float", "Str", "Bool", "Unit"].some((n) => name === n || name.startsWith(n + "$"))) return;
+        if (name === "List") {
+          if (p.args[0]) this.assertSerializable(p.args[0], what, span, visited);
+          return;
+        }
+        const def = this.mod.typeDefs.get(name);
+        if (def?.kind === "adt") {
+          const key = this.reflectKey(p);
+          if (visited.has(key)) return;
+          visited.add(key);
+          const d = def.decl as Decl & { k: "Adt" };
+          const params = new Map<string, Type>();
+          d.params.forEach((param, i) => {
+            const arg = p.args[i];
+            if (arg) params.set(param, arg);
+          });
+          for (const variant of d.variants) {
+            for (const te of variant.args) {
+              this.assertSerializable(this.inf.resolveType(te, new Map(params)), what, span, visited);
+            }
+          }
+          return;
+        }
+        this.fail(`${what} cannot handle ${typeStr(p)}: only data types have a JSON shape`, span);
+      }
+      case "rec":
+        for (const field of Object.values(p.fields)) this.assertSerializable(field, what, span, visited);
+        return;
+      case "tuple":
+        for (const item of p.items) this.assertSerializable(item, what, span, visited);
+        return;
+      case "fun":
+        this.fail(`${what} cannot handle ` + typeStr(p) + ": functions are not data", span);
+      case "var":
+        this.fail(`${what} needs a concrete type (got \`${typeStr(p)}\`)`, span);
+      case "app":
+        this.fail(`${what} cannot handle ${typeStr(p)}`, span);
+    }
+  }
+
+  /**
+   * Translate a semantic type into TypeInfo constructor calls.
+   * Named data types become `TRef key` and their shape is collected in `defs`,
+   * which is what keeps recursive types finite.
+   */
+  private reflectNode(
+    t: Type,
+    defs: Map<string, string>,
+    span?: { line?: number; col?: number; file?: string },
+  ): string {
+    const p = prune(t);
+    const meta = (variant: string, args: string): string =>
+      `R.ctor(${ev(this.metaCtor(variant))}, [${args}])`;
+    switch (p.k) {
+      case "con": {
+        const name = p.name;
+        if (name === "Int" || name.startsWith("Int$")) return meta("TInt", "");
+        if (name === "Float" || name.startsWith("Float$")) return meta("TFloat", "");
+        if (name === "Str" || name.startsWith("Str$")) return meta("TStr", "");
+        if (name === "Bool" || name.startsWith("Bool$")) return meta("TBool", "");
+        if (name === "Unit") return meta("TUnit", "");
+        if (name === "List") {
+          if (!p.args[0]) return meta("TUnknown", ev(typeStr(p)));
+          return meta("TList", this.reflectNode(p.args[0], defs, span));
+        }
+        const def = this.mod.typeDefs.get(name);
+        if (def && def.kind === "adt") {
+          const key = this.reflectKey(p);
+          if (!defs.has(key)) {
+            // Mark the key before walking the fields so recursion becomes a ref.
+            defs.set(key, "");
+            const d = def.decl as Decl & { k: "Adt" };
+            const params = new Map<string, Type>();
+            d.params.forEach((param, i) => {
+              const arg = p.args[i];
+              if (arg) params.set(param, arg);
+            });
+            const variants = d.variants.map((v) => {
+              const args = v.args.map((te) => this.inf.resolveType(te, new Map(params)));
+              const infos = args.map((arg) => this.reflectNode(arg, defs, span));
+              return `{ "name": ${ev(v.name)}, "args": [${infos.join(", ")}] }`;
+            });
+            defs.set(key, `{ "name": ${ev(name)}, "variants": [${variants.join(", ")}] }`);
+          }
+          return meta("TRef", ev(key));
+        }
+        return meta("TUnknown", ev(typeStr(p)));
+      }
+      case "rec": {
+        const fields = Object.entries(p.fields).map(
+          ([name, field]) => `[${ev(name)}, ${this.reflectNode(field, defs, span)}]`,
+        );
+        return meta("TRecord", `[${fields.join(", ")}]`);
+      }
+      case "tuple":
+        return meta("TTuple", `[${p.items.map((item) => this.reflectNode(item, defs, span)).join(", ")}]`);
+      case "fun":
+        return meta(
+          "TFun",
+          `[${p.params.map((param) => this.reflectNode(param, defs, span)).join(", ")}], ` +
+          this.reflectNode(p.ret, defs, span),
+        );
+      case "app":
+        return meta("TUnknown", ev(typeStr(p)));
+      case "var":
+        this.fail(
+          `cannot reflect \`${typeStr(p)}\`: the type is still polymorphic. ` +
+          `Annotate the value, or pass a Reflected value in from the caller`,
+          span,
+        );
+    }
+  }
+
+  /** The static type of an auto-reflected value. */
+  private staticType(arg: Expr, span?: { line?: number; col?: number; file?: string }): Type {
+    const t = this.mod.info.get(arg)?.ty;
+    if (!t) this.fail("cannot determine the type of this reflection argument", span ?? arg.span);
+    return t;
+  }
+
+  /** The `a` in the `Result a Str` a decode call produces. */
+  private decodedType(e: Expr, span?: { line?: number; col?: number; file?: string }): Type {
+    const t = this.mod.info.get(e)?.ty;
+    const p = t ? prune(t) : null;
+    if (p && p.k === "con" && (p.name === "Result" || p.name.startsWith("Result$")) && p.args[0]) {
+      const target = prune(p.args[0]!);
+      if (target.k === "var") {
+        this.fail(
+          "cannot infer the target type of Serialize.decode: annotate the result, " +
+          "e.g. `let user :: Result User Str = Serialize.decode text`",
+          span ?? e.span,
+        );
+      }
+      return target;
+    }
+    this.fail(
+      "Serialize.decode must produce `Result a Str`: annotate the result, " +
+      "e.g. `let user :: Result User Str = Serialize.decode text`",
+      span ?? e.span,
+    );
+  }
+
+  /** `Reflect.meta`, `Serialize.encode/decode/...` are resolved from the static type. */
+  private emitAutoReflection(
+    e: Expr & { k: "App" },
+    impl: string,
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string | null {
+    if (impl === "__flow.reflect.meta") {
+      const value = e.args[0];
+      if (!value) this.fail("Reflect.meta expects a value", e.span);
+      return this.reflectJs(this.staticType(value, e.span), e.span);
+    }
+    if (!impl.startsWith("__flow.serialize.")) return null;
+    const value = e.args[0];
+    if (!value) {
+      this.fail(
+        `${impl.slice("__flow.serialize.".length)} is resolved from the static type and must be called with its argument; ` +
+        `use the *With forms to pass a Reflected value`,
+        e.span,
+      );
+    }
+    const argument = this.val(value!, side, ctxHome, env);
+    const encodeType = () => {
+      const t = this.staticType(value!, e.span);
+      this.assertSerializable(t, "Serialize.encode", e.span);
+      return this.reflectJs(t, e.span);
+    };
+    const decodeType = () => {
+      const t = this.decodedType(e, e.span);
+      this.assertSerializable(t, "Serialize.decode", e.span);
+      return this.reflectJs(t, e.span);
+    };
+    switch (impl) {
+      case "__flow.serialize.encode":
+        return `${this.stdlibFn("serialize.flow", "encodeWith")}(${encodeType()}, ${argument})`;
+      case "__flow.serialize.toJson":
+        return `${this.stdlibFn("serialize.flow", "toJsonWith")}(${encodeType()}, ${argument})`;
+      case "__flow.serialize.decode":
+        return `${this.stdlibFn("serialize.flow", "decodeWith")}(${decodeType()}, ${argument})`;
+      case "__flow.serialize.fromJson":
+        return `${this.stdlibFn("serialize.flow", "fromJsonWith")}(${decodeType()}, ${argument})`;
+      default:
+        this.fail(`internal: unknown serialization intrinsic ${impl}`, e.span);
+    }
+  }
+
   /** `main :: Html` is a single client page; `main :: ()` is server startup. */
   private mainKind(): "page" | "server" | null {
     const main = this.mod.fns.get("main");
@@ -701,6 +962,13 @@ export class Codegen {
         const info = this.mod.fns.get(e.name);
         const ext = info?.extern;
         if (ext && !env.has(e.name)) {
+          if (ext.implName.startsWith("__flow.reflect.") || ext.implName.startsWith("__flow.serialize.")) {
+            this.fail(
+              `'${e.name}' is resolved from the static type at a call site and cannot be used as a value; ` +
+              `pass Reflect.meta or an explicit *With function instead`,
+              e.span,
+            );
+          }
           if (ext.modulePath && ext.exportName) {
             return this.shimRef(info!.span?.file, ext.modulePath, ext.exportName, side);
           }
@@ -941,6 +1209,13 @@ export class Codegen {
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     // `serve` is a build-time entry point; the server performs no call.
     if (this.isServeCall(e)) return "null";
+
+    // Reflection and the auto serializers are resolved from the static type.
+    const impl = this.implOf(e.fn);
+    if (impl) {
+      const auto = this.emitAutoReflection(e, impl, side, ctxHome, env);
+      if (auto !== null) return auto;
+    }
 
     // `resume(v)` inside an algebraic operation handler: the continuation.
     if (e.fn.k === "Var" && this.mod.resumeVars.has(e.fn)) {

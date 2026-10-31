@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "../src/parser.ts";
+import { printProgram } from "../src/printer.ts";
 import { lex } from "../src/lexer.ts";
 
 /* ------------------------------------------------------------------ */
@@ -300,6 +301,31 @@ test("expressions: do with bind, let and a result", () => {
   const e = E("do\n  x <- action\n  let y = x\n  pure y");
   assert.equal(e.k, "Binary");
   assert.equal(e.op, ">>=");
+});
+
+test("printer: FFI keeps the unified block form", () => {
+  const p = D('foreign import js unsafe "Math.floor" {\n  floor :: Float -> Int\n}');
+  const text = printProgram(p);
+  assert.match(text, /foreign import js unsafe "Math\.floor" \{\n  floor :: Float -> Int\n\}/);
+  assert.equal(D(text).decls[0].k, "Extern", "the printed FFI parses again");
+});
+
+test("printer: a pattern lambda is restored and round-trips", () => {
+  const p = D("f = map fields (\\(name, field) -> name)");
+  const text = printProgram(p);
+  assert.match(text, /\\\(name, field\) -> name/, "the tuple pattern is printed back");
+  const again = D(text);
+  assert.equal(again.decls[0].k, "Fn", "the printed program parses again");
+});
+
+test("expressions: a local binding can carry its signature inline", () => {
+  const e = E("do\n  let x :: Int = 1\n  pure x");
+  assert.ok(e, "the annotated let parses as a do statement");
+  const p = D("f a = b\n  where\n    b :: Int = a");
+  assert.equal(p.decls[0].k, "Fn");
+  assert.equal(p.decls[0].body.k, "Let");
+  assert.equal(p.decls[0].body.name, "b");
+  assert.equal(p.decls[0].body.ann.k, "TCon");
 });
 
 test("expressions: records use = and can elide the field name", () => {

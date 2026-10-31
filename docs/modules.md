@@ -187,7 +187,7 @@ flow add tool git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0
 available unqualified (`str`, `len`, `Some`, `None`, `True`, `False`, `not`, `concat`, `push`, …)
 and through the `Option` / `List` namespaces. A unit's own declarations and imports win.
 
-The standard library ships as modules: `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `Math`, `Random`, `String`, `Html`, `Log`, `Time`, `Path`, `Env`, `Http`, `Net`, `Fs`, `State`, `Exn`, `Ref`, `Cell`, `Client`, `Server`, `Monad`, `Fn` and `Json`. The full catalogue is in [`language.md`](language.md) § 7.1.
+The standard library ships as modules: `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `Math`, `Random`, `String`, `Html`, `Log`, `Time`, `Path`, `Env`, `Http`, `Net`, `Fs`, `State`, `Exn`, `Ref`, `Cell`, `Client`, `Server`, `Monad`, `Fn`, `Json`, `Reflect` and `Serialize`. The full catalogue is in [`language.md`](language.md) § 7.1; reflection and JSON are in [`serialize.md`](serialize.md).
 
 ## Everything is ordinary Flow
 

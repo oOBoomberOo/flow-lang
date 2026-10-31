@@ -424,6 +424,25 @@ export function createRuntime() {
       now: () => Date.now(),
       cell: (v) => R.cell(v),
       ctor: (tag, args) => R.ctor(tag, args),
+      // Dynamic access used by std::serialize. The compile-time TypeInfo is the
+      // authority; these helpers only read/write the runtime representation.
+      reflectField: (value, name) => (value == null ? undefined : value[String(name)]),
+      reflectCtor: (value) => (value && typeof value === "object" && value.$ !== undefined ? String(value.$) : ""),
+      reflectArgs: (value) => (value && typeof value === "object" && Array.isArray(value.args) ? value.args : []),
+      reflectMake: (tag, args) => R.ctor(String(tag), args ?? []),
+      reflectRecord: (pairs) => {
+        const out = {};
+        for (const pair of pairs ?? []) out[String(pair[0])] = pair[1];
+        return out;
+      },
+      reflectList: (value) => (Array.isArray(value) ? value : []),
+      reflectInt: (value) => value,
+      reflectFloat: (value) => value,
+      reflectStr: (value) => value,
+      reflectBool: (value) => value,
+      reflectCast: (value) => value,
+      reflectFinite: (value) => Number.isFinite(value),
+      jsonString: (value) => JSON.stringify(String(value)),
       /** Mutable box used by `std::ref` (neutral: works on client and server). */
       refNew: (init) => {
         let value = init;

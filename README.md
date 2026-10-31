@@ -61,6 +61,38 @@ main = do
 (JSON, redirects, custom status) stay in `routes()` / `Router`; see
 [docs/http.md](docs/http.md).
 
+## Reflection and JSON
+
+`Reflect.meta value` returns `TypeInfo` metadata resolved from the static type:
+records, data constructors, lists, tuples, options, generics and recursive types.
+`std::serialize` uses that metadata for a JSON standard with paths in its errors.
+
+```flow
+import Reflect
+import Serialize
+import Result
+
+type User = { name :: Str, tags :: List Str }
+
+user = { name = "Ada", tags = ["flow", "json"] }
+
+main :: Html
+main = do
+  let info = Reflect.meta user
+  let encoded = Result.withDefault "encode error" (Serialize.encode user)
+  let decoded :: Result User Str = Serialize.decode encoded
+  <div>
+    <pre>{Reflect.describeAll info}</pre>
+    <pre>{encoded}</pre>
+    <pre>{case decoded of
+      Ok value -> Result.withDefault "re-encode error" (Serialize.encode value)
+      Err why -> why}</pre>
+  </div>
+```
+
+See [docs/serialize.md](docs/serialize.md) for the metadata model and the JSON
+shape (tagged constructors, tuples, dictionaries, error paths and limits).
+
 ## The syntax in one screen
 
 ```flow
@@ -143,6 +175,7 @@ examples/algebraic.flow  algebraic effects, resume, handlers
 examples/fp.flow         currying, sections, composition, partial application
 examples/modules.flow    local modules, imports and namespacing
 examples/web.flow        server startup, multi-page routing with serve
+examples/reflect.flow    type metadata and reflection-driven JSON round trips
 examples/http.flow       server response routes, request capabilities
 examples/bounds.flow     trait bounds
 examples/hkt.flow        higher-kinded type parameters
@@ -155,7 +188,7 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` - **264 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` - **278 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
@@ -178,6 +211,7 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
 * **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
   `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
   iteration, JSON, dates and paths ship in the language
+* **Reflection and JSON** - `Reflect.meta` describes records, data constructors, containers and\n  recursive types; `Serialize.encode`/`decode` use that metadata for a JSON standard with\n  tagged constructors, tuple/list support and path-qualified errors
 * **FFI for libraries** - bind globals (`Math.floor`), methods (`@trim`) and your own JS/TS
   modules with `foreign import js unsafe "./shim.js" { … }`; shims are copied into the build and
   served to the browser, so one file runs on both tiers

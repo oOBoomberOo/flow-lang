@@ -1,0 +1,323 @@
+module Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith, toJsonWith, fromJsonWith) where
+
+-- std::serialize - a reflection-driven JSON standard.
+--
+-- The auto helpers take their TypeInfo from the *static* type at the call site:
+--
+--   case Serialize.encode user of
+--     Ok text -> writeText "user.json" text
+--     Err why -> ...
+--
+--   let loaded :: Result User Str = Serialize.decode text
+--
+-- When the type is not concrete (or you want to pass metadata around), use the
+-- `*With` forms with `Reflect.meta`:
+--
+--   Serialize.encodeWith (Reflect.meta user) user
+--
+-- Shape of the JSON:
+--   * records            -> objects keyed by field name
+--   * lists and tuples   -> arrays
+--   * unit               -> null
+--   * data constructors  -> { "Ctor": ... } where a nullary Ctor has `null`, a
+--                           single field has that value, and 2+ fields use an
+--                           array. This is unambiguous for nested options.
+--   * Int                -> an integer JSON number (decoding rejects fractions)
+import Reflect (Reflected, TypeInfo, TypeDef, Variant)
+import Json (Json)
+import Result
+
+-- ---------------------------------------------------------------- reflection runtime
+foreign import js unsafe "__flow.host.reflectField" {
+  host_field :: a -> Str -> b
+}
+
+foreign import js unsafe "__flow.host.reflectCtor" {
+  host_ctor :: a -> Str
+}
+
+foreign import js unsafe "__flow.host.reflectArgs" {
+  host_args :: a -> List b
+}
+
+foreign import js unsafe "__flow.host.reflectMake" {
+  host_make_ctor :: Str -> List a -> b
+}
+
+foreign import js unsafe "__flow.host.reflectRecord" {
+  host_make_record :: List (Str, a) -> b
+}
+
+foreign import js unsafe "__flow.host.reflectList" {
+  host_list :: a -> List b
+}
+
+foreign import js unsafe "__flow.host.reflectInt" {
+  host_int :: a -> Int
+}
+
+foreign import js unsafe "__flow.host.reflectFloat" {
+  host_float :: a -> Float
+}
+
+foreign import js unsafe "__flow.host.reflectStr" {
+  host_str :: a -> Str
+}
+
+foreign import js unsafe "__flow.host.reflectBool" {
+  host_bool :: a -> Bool
+}
+
+-- / Identity at runtime. Decoding has one `Result a Str` type, so each branch
+-- / proves its shape through the metadata and then produces `a` through here.
+foreign import js unsafe "__flow.host.reflectCast" {
+  host_cast :: a -> b
+}
+
+foreign import js unsafe "__flow.host.reflectFinite" {
+  host_finite :: Float -> Bool
+}
+
+-- ---------------------------------------------------------------- auto entry points
+-- These are resolved by the compiler from the static type of the value. Using
+-- them as first-class values is rejected: pass a Reflected value to *With.
+foreign import js unsafe "__flow.serialize.encode" {
+  encode :: a -> Result Str Str
+}
+
+foreign import js unsafe "__flow.serialize.decode" {
+  decode :: Str -> Result a Str
+}
+
+foreign import js unsafe "__flow.serialize.toJson" {
+  toJson :: a -> Result Json Str
+}
+
+foreign import js unsafe "__flow.serialize.fromJson" {
+  fromJson :: Json -> Result a Str
+}
+
+-- ---------------------------------------------------------------- explicit API
+encodeWith :: Reflected -> a -> Result Str Str
+encodeWith reflected value = case toJsonWith reflected value of
+  Ok json -> Ok (Json.encode json)
+  Err why -> Err why
+
+decodeWith :: Reflected -> Str -> Result a Str
+decodeWith reflected text = case Json.decodeSafe text of
+  Ok json -> fromJsonWith reflected json
+  Err why -> Err why
+
+toJsonWith :: Reflected -> a -> Result Json Str
+toJsonWith reflected value = encodeValue reflected (Reflect.root reflected) "" value
+
+fromJsonWith :: Reflected -> Json -> Result a Str
+fromJsonWith reflected json = decodeValue reflected (Reflect.root reflected) "" json
+
+-- ---------------------------------------------------------------- encode
+encodeValue :: Reflected -> TypeInfo -> Str -> a -> Result Json Str
+encodeValue reflected info path value = case info of
+  TInt ->
+    if host_finite (Math.toFloat (host_int value))
+      then Ok (JNum (Math.toFloat (host_int value)))
+      else Err (atPath path "non-finite number cannot be encoded as JSON")
+  TFloat ->
+    if host_finite (host_float value)
+      then Ok (JNum (host_float value))
+      else Err (atPath path "non-finite number cannot be encoded as JSON")
+  TStr -> Ok (JStr (host_str value))
+  TBool -> Ok (JBool (host_bool value))
+  TUnit -> Ok JNull
+  TList item ->
+    case encodeListAt reflected item path 0 (host_list value) of
+      Ok values -> Ok (JList values)
+      Err why -> Err why
+  TTuple items -> encodeTuple reflected items path (host_list value)
+  TRecord fields -> encodeRecord reflected fields path value
+  TRef key ->
+    case Reflect.lookup key reflected of
+      None -> Err (atPath path ("unknown type reference '" + key + "'"))
+      Some definition -> encodeVariant reflected definition path value
+  TFun _ _ -> Err (atPath path "functions cannot be serialized")
+  TUnknown why -> Err (atPath path ("cannot serialize " + why))
+
+encodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List a -> Result (List Json) Str
+encodeListAt reflected item path index values = case values of
+  [] -> Ok []
+  value : rest ->
+    case encodeValue reflected item (indexPath path index) value of
+      Err why -> Err why
+      Ok json ->
+        case encodeListAt reflected item path (index + 1) rest of
+          Err why -> Err why
+          Ok jsons -> Ok (cons json jsons)
+
+encodeTuple :: Reflected -> List TypeInfo -> Str -> List a -> Result Json Str
+encodeTuple reflected items path values =
+  if len items /= len values
+    then Err (atPath path ("expected " + str (len items) + " tuple value(s), got " + str (len values)))
+    else case Result.all (List.map (List.zip items (Iter.enumerate values)) (\(item, pair) -> case pair of
+      (index, value) -> encodeValue reflected item (indexPath path index) value)) of
+      Err why -> Err why
+      Ok jsons -> Ok (JList jsons)
+
+encodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> a -> Result Json Str
+encodeRecord reflected fields path value = case Result.all (List.map fields (\(name, info) -> encodeValue reflected info (fieldPath path name) (host_field value name))) of
+  Err why -> Err why
+  Ok values -> Ok (JObject (List.zip (List.map fields (\(name, _) -> name)) values))
+
+encodeVariant :: Reflected -> TypeDef -> Str -> a -> Result Json Str
+encodeVariant reflected definition path value = case findVariant definition.variants (host_ctor value) of
+  None ->
+    Err (atPath path ("unknown constructor '" + host_ctor value + "' for " + definition.name))
+  Some variant ->
+    if len variant.args /= len (host_args value)
+      then Err (atPath path ("constructor " + host_ctor value + " expects " + str (len variant.args) + " value(s)"))
+      else case Result.all (List.map (List.zip variant.args (Iter.enumerate (host_args value))) (\(info, pair) -> case pair of
+        (index, arg) ->
+          encodeValue reflected info (variantArgPath path (host_ctor value) index (len variant.args)) arg)) of
+        Err why -> Err why
+        Ok jsons -> Ok (JObject [(host_ctor value, variantValue jsons)])
+
+variantValue :: List Json -> Json
+variantValue values = case values of
+  [] -> JNull
+  [only] -> only
+  _ -> JList values
+
+-- ---------------------------------------------------------------- decode
+decodeValue :: Reflected -> TypeInfo -> Str -> Json -> Result a Str
+decodeValue reflected info path json = case info of
+  TInt ->
+    case json of
+      JNum number ->
+        if Math.toFloat (Math.floor number) == number
+          then Ok (host_cast (Math.floor number))
+          else Err (atPath path ("expected an integer, got " + str number))
+      _ -> Err (atPath path "expected a number")
+  TFloat ->
+    case json of
+      JNum number -> Ok (host_cast number)
+      _ -> Err (atPath path "expected a number")
+  TStr ->
+    case json of
+      JStr text -> Ok (host_cast text)
+      _ -> Err (atPath path "expected a string")
+  TBool ->
+    case json of
+      JBool flag -> Ok (host_cast flag)
+      _ -> Err (atPath path "expected a boolean")
+  TUnit ->
+    case json of
+      JNull -> Ok (host_cast ())
+      _ -> Err (atPath path "expected null")
+  TList item ->
+    case json of
+      JList values ->
+        case decodeListAt reflected item path 0 values of
+          Ok decoded -> Ok (host_cast decoded)
+          Err why -> Err why
+      _ -> Err (atPath path "expected an array")
+  TTuple items -> decodeTuple reflected items path json
+  TRecord fields -> decodeRecord reflected fields path json
+  TRef key ->
+    case Reflect.lookup key reflected of
+      None -> Err (atPath path ("unknown type reference '" + key + "'"))
+      Some definition -> decodeVariant reflected definition path json
+  TFun _ _ -> Err (atPath path "functions cannot be deserialized")
+  TUnknown why -> Err (atPath path ("cannot deserialize " + why))
+
+decodeListAt :: Reflected -> TypeInfo -> Str -> Int -> List Json -> Result (List a) Str
+decodeListAt reflected item path index values = case values of
+  [] -> Ok []
+  json : rest ->
+    case decodeValue reflected item (indexPath path index) json of
+      Err why -> Err why
+      Ok value ->
+        case decodeListAt reflected item path (index + 1) rest of
+          Err why -> Err why
+          Ok values -> Ok (cons value values)
+
+decodeTuple :: Reflected -> List TypeInfo -> Str -> Json -> Result a Str
+decodeTuple reflected items path json = case json of
+  JList values ->
+    if len items /= len values
+      then Err (atPath path ("expected " + str (len items) + " tuple value(s), got " + str (len values)))
+      else case Result.all (List.map (List.zip items (Iter.enumerate values)) (\(item, pair) -> case pair of
+        (index, value) -> decodeValue reflected item (indexPath path index) value)) of
+        Err why -> Err why
+        Ok values -> Ok (host_cast (host_list values))
+  _ -> Err (atPath path "expected an array for a tuple")
+
+decodeRecord :: Reflected -> List (Str, TypeInfo) -> Str -> Json -> Result a Str
+decodeRecord reflected fields path json = case json of
+  JObject pairs ->
+    case Result.all (List.map fields (\(name, info) -> case lookupJson name pairs of
+      None -> Err (atPath (fieldPath path name) "missing field")
+      Some value -> decodeValue reflected info (fieldPath path name) value)) of
+      Err why -> Err why
+      Ok values ->
+        Ok (host_make_record (List.zip (List.map fields (\(name, _) -> name)) values))
+  _ -> Err (atPath path ("expected an object for " + Reflect.describe (TRecord fields)))
+
+decodeVariant :: Reflected -> TypeDef -> Str -> Json -> Result a Str
+decodeVariant reflected definition path json = case json of
+  JObject pairs ->
+    case pairs of
+      [(constructor, value)] ->
+        case findVariant definition.variants constructor of
+          None ->
+            Err (atPath path ("unknown constructor '" + constructor + "' for " + definition.name))
+          Some variant -> decodeVariantArgs reflected constructor variant path value
+      _ -> Err (atPath path ("expected exactly one constructor key for " + definition.name))
+  _ -> Err (atPath path ("expected an object for " + definition.name))
+
+decodeVariantArgs :: Reflected -> Str -> Variant -> Str -> Json -> Result a Str
+decodeVariantArgs reflected constructor variant path value = case variant.args of
+  [] ->
+    case value of
+      JNull -> Ok (host_make_ctor constructor [])
+      _ ->
+        Err (atPath (fieldPath path constructor) ("constructor " + constructor + " takes no values"))
+  [only] ->
+    case decodeValue reflected only (fieldPath path constructor) value of
+      Ok decoded -> Ok (host_make_ctor constructor [decoded])
+      Err why -> Err why
+  args ->
+    case value of
+      JList values ->
+        if len args /= len values
+          then Err (atPath (fieldPath path constructor) ("constructor " + constructor + " expects " + str (len args) + " value(s)"))
+          else case Result.all (List.map (List.zip args (Iter.enumerate values)) (\(info, pair) -> case pair of
+            (index, item) ->
+              decodeValue reflected info (indexPath (fieldPath path constructor) index) item)) of
+            Err why -> Err why
+            Ok values -> Ok (host_make_ctor constructor values)
+      _ ->
+        Err (atPath (fieldPath path constructor) ("expected an array for constructor " + constructor))
+
+-- ---------------------------------------------------------------- helpers
+findVariant :: List Variant -> Str -> Option Variant
+findVariant variants name = case variants of
+  [] -> None
+  variant : rest -> if variant.name == name then Some variant else findVariant rest name
+
+lookupJson :: Str -> List (Str, Json) -> Option Json
+lookupJson key pairs = case pairs of
+  [] -> None
+  (name, value) : rest -> if name == key then Some value else lookupJson key rest
+
+atPath :: Str -> Str -> Str
+atPath path message = if path == "" then message else path + ": " + message
+
+fieldPath :: Str -> Str -> Str
+fieldPath path name = if path == "" then name else path + "." + name
+
+indexPath :: Str -> Int -> Str
+indexPath path index = path + "[" + str index + "]"
+
+variantArgPath :: Str -> Str -> Int -> Int -> Str
+variantArgPath path constructor index arity =
+  if arity == 1
+    then fieldPath path constructor
+    else indexPath (fieldPath path constructor) index
