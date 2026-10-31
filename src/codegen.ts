@@ -20,6 +20,8 @@ import { implFnName } from "./infer.ts";
 import type { Place, Type } from "./types.ts";
 import { prune, typeStr, typePlace, sendable } from "./types.ts";
 import type { Eff } from "./types.ts";
+import fs from "node:fs";
+import path from "node:path";
 import { FlowError } from "./lexer.ts";
 
 export type Side = "client" | "server";
@@ -34,7 +36,18 @@ export interface CutInfo {
   file?: string;
 }
 
-export interface Compiled { client: string; server: string; cuts: CutInfo[]; diagnostics: string[] }
+export interface Compiled {
+  client: string;
+  server: string;
+  cuts: CutInfo[];
+  /** shim modules imported by the program: source file and bundled name */
+  modules: { file: string; name: string }[];
+  /** shim modules imported by the program: source file and bundled name */
+  modules: { file: string; name: string }[];
+  diagnostics: string[];
+  /** shim modules the program imports: source file and the bundled file name */
+  modules: { file: string; name: string }[];
+}
 
 const ev = (s: string) => JSON.stringify(s);
 
@@ -45,6 +58,10 @@ export class Codegen {
   homes = new Map<object, Side | "neutral">();
   /** local binding -> emitted name, when the binder shadows a top-level name */
   private localNames = new Map<string, string>();
+  /** shim file -> import alias, bundle name and where it is used */
+  private shims = new Map<string, { alias: string; name: string; ts: boolean; used: Set<Side> }>();
+  /** extern name -> shim alias */
+  private shimAlias = new Map<string, string>();
   cuts = new Map<object, CutInfo>();
   cutList: CutInfo[] = [];
   emitting = new Set<object>();
@@ -285,6 +302,7 @@ export class Codegen {
   /* ---------------------------------------------------------------- */
 
   compile(): Compiled {
+    this.collectShims();
     this.checkEntryEffects();
     this.collect();
     return {
@@ -292,6 +310,7 @@ export class Codegen {
       server: this.emitModule("server"),
       cuts: this.cutList,
       diagnostics: this.diagnostics,
+      modules: [...this.shims].map(([file, s]) => ({ file, name: s.name })),
     };
   }
 
@@ -307,6 +326,48 @@ export class Codegen {
         main.span,
       );
     }
+  }
+
+  /** Give every shim module an import alias; the import is emitted per side. */
+  private collectShims(): void {
+    let n = 0;
+    for (const [name, info] of this.mod.fns) {
+      const ext = info.extern;
+      if (!ext?.modulePath) continue;
+      const file = path.resolve(path.dirname(info.span?.file ?? this.mod.file), ext.modulePath);
+      if (!fs.existsSync(file)) {
+        this.fail(`shim module not found: "${ext.modulePath}" (looked for ${file})`, info.span);
+      }
+      let entry = this.shims.get(file);
+      if (!entry) {
+        const base = path.basename(file);
+        n += 1;
+        entry = { alias: `$shim${n}`, name: `${n}-${base}`, ts: /\.ts$/.test(base), used: new Set() };
+        this.shims.set(file, entry);
+      }
+      // the export must exist, otherwise the failure would only show at runtime
+      if (ext.exportName && !hasExport(fs.readFileSync(file, "utf8"), ext.exportName)) {
+        this.fail(
+          `"${ext.modulePath}" does not export '${ext.exportName}' — ` +
+          `add \`export function ${ext.exportName}\` (or \`export { ${ext.exportName} }\`) to the shim`,
+          info.span,
+        );
+      }
+      this.shimAlias.set(name, entry.alias);
+    }
+  }
+
+  /** The shim files a build must copy: [source file, bundled name]. */
+  shimModules(): [string, string][] {
+    return [...this.shims].map(([file, s]) => [file, s.name]);
+  }
+
+  /** Reference to a shim export, recording which side needs the import. */
+  private shimRef(declaring: string | undefined, modulePath: string, exportName: string, side: Side): string {
+    const file = path.resolve(path.dirname(declaring ?? this.mod.file), modulePath);
+    const entry = this.shims.get(file)!;
+    entry.used.add(side);
+    return `${entry.alias}.${exportName}`;
   }
 
   private emitModule(side: Side): string {
@@ -361,6 +422,17 @@ export class Codegen {
       const destructure = cut.deps.length ? `const { ${cut.deps.join(", ")} } = A;` : "";
       const asyncKw = this.hasCallCut(cut.node, true) ? "async " : "";
       out.push(`R.serve(${ev(cut.id)}, ${asyncKw}(A) => { ${destructure} return ${body}; });`);
+    }
+
+    for (const [file, shim] of this.shims) {
+      if (!shim.used.has(side)) continue;
+      if (shim.ts && side === "client") {
+        this.fail(
+          `the shim ${path.basename(file)} is TypeScript, which the browser cannot load; ` +
+          `annotate its bindings @server or compile it to .js`,
+        );
+      }
+      out.push(`import * as ${shim.alias} from "./modules/${shim.name}";`);
     }
 
     if (side === "client") {
@@ -461,8 +533,14 @@ export class Codegen {
             return `((...$ctorArgs) => R.ctor(${ev(e.name)}, $ctorArgs))`;
           }
         }
-        const ext = this.mod.fns.get(e.name)?.extern;
-        if (ext && !env.has(e.name)) return `R.ffiFn(${ev(ext.implName)})`;
+        const info = this.mod.fns.get(e.name);
+        const ext = info?.extern;
+        if (ext && !env.has(e.name)) {
+          if (ext.modulePath && ext.exportName) {
+            return this.shimRef(info!.span?.file, ext.modulePath, ext.exportName, side);
+          }
+          return `R.ffiFn(${ev(ext.implName)})`;
+        }
         // a top-level constant (`pi = 3.14`) is a nullary function: read its value
         if (!env.has(e.name) && this.mod.constRefs.has(e)) return `${e.name}()`;
         // a local that shadows a top-level name was renamed when it was bound
@@ -729,10 +807,14 @@ export class Codegen {
 
     const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
 
-    // `unsafe extern js fn` — call the host directly
+    // `unsafe extern js fn` — call the host directly, or a shim module export
     if (e.fn.k === "Var") {
-      const ext = this.mod.fns.get(e.fn.name)?.extern;
+      const info = this.mod.fns.get(e.fn.name);
+      const ext = info?.extern;
       if (ext && !env.has(e.fn.name)) {
+        if (ext.modulePath && ext.exportName) {
+          return `${this.shimRef(info!.span?.file, ext.modulePath, ext.exportName, side)}(${args})`;
+        }
         return `R.ffiCall(${ev(ext.implName)}, [${args}])`;
       }
     }
@@ -807,9 +889,12 @@ export class Codegen {
       suffix = (choice.dicts ?? []).map((d) => this.emitDict(d.trait, d.type));
       fnJs = choice.mangled;
     } else if (e.fn.k === "Var") {
-      const ext = this.mod.fns.get(e.fn.name)?.extern;
+      const info2 = this.mod.fns.get(e.fn.name);
+      const ext = info2?.extern;
       fnJs = ext && !env.has(e.fn.name)
-        ? `R.ffiFn(${ev(ext.implName)})`
+        ? (ext.modulePath && ext.exportName
+          ? this.shimRef(info2!.span?.file, ext.modulePath, ext.exportName, side)
+          : `R.ffiFn(${ev(ext.implName)})`)
         : this.calleeJs(e.fn, side, ctxHome, env);
       provided = e.args.map((a) => this.val(a, side, ctxHome, env));
     } else {
@@ -1042,6 +1127,19 @@ export class Codegen {
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+/** Whether a JS/TS module text exports `name` (a cheap but useful guard). */
+function hasExport(src: string, name: string): boolean {
+  const n = name.replace(/[^A-Za-z0-9_$]/g, "");
+  if (!n) return false;
+  const patterns = [
+    new RegExp(`export\\s+(?:async\\s+)?function\\s+${n}\\b`),
+    new RegExp(`export\\s+(?:const|let|var|class)\\s+${n}\\b`),
+    new RegExp(`export\\s*\\{[^}]*\\b${n}\\b`),
+    new RegExp(`export\\s+default\\s+${n}\\b`),
+  ];
+  return patterns.some((re) => re.test(src));
+}
 
 function litJs(l: { k: string; v?: unknown }): string {
   if (l.k === "Unit") return "null";

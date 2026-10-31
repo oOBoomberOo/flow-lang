@@ -56,6 +56,7 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const internal = url.pathname === "/app.js" ||
       url.pathname.startsWith("/runtime/") ||
+      url.pathname.startsWith("/modules/") ||
       url.pathname.startsWith("/__flow/");
 
     if (!internal) {
@@ -76,6 +77,17 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     if (req.method === "GET" && url.pathname === "/app.js") {
       res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
       res.end(clientBundle);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/modules/")) {
+      const name = url.pathname.slice("/modules/".length);
+      if (!/^[a-zA-Z0-9_.-]+$/.test(name)) { res.writeHead(400); res.end("bad path"); return; }
+      const file = path.join(opts.outDir, "modules", name);
+      if (!fs.existsSync(file)) { res.writeHead(404); res.end("not found"); return; }
+      const type = name.endsWith(".ts") ? "text/typescript; charset=utf-8" : "text/javascript; charset=utf-8";
+      res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+      res.end(fs.readFileSync(file));
       return;
     }
 

@@ -1,0 +1,35 @@
+-- FFI for library authors: bind a package's own JavaScript and wrap an
+-- existing library behind a typed Flow interface.
+
+import Http (get, Router, textResponse)
+
+-- (1) our own helper, written in JavaScript
+foreign import js module "./text.js" {
+  shout :: Str -> Str
+  slug :: Str -> Str
+}
+
+-- (2) a shim over a third-party module (here a tiny vendored renderer)
+foreign import js module "./tiny-chart.js" {
+  renderChart :: List Int -> (Int -> Str) -> Str
+}
+
+-- (3) TypeScript, on the server where Node can strip the types
+foreign import js module "./stats.ts" {
+  average :: List Float -> Float @server
+}
+
+bars :: List Int
+bars = [3, 5, 2]
+
+main :: Html
+main = do
+  let scores = [2.0, 4.0, 6.0]
+  let summary = str (average scores)
+  <div class="card">
+    <h1>FFI shims</h1>
+    <p class="shout">{shout "hello"}</p>
+    <p class="slug">{slug (shout "Hello From Flow")}</p>
+    <p class="chart">{renderChart bars (\n -> str n)}</p>
+    <p class="average">{"server average: " + summary}</p>
+  </div>

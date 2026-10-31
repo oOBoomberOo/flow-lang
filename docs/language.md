@@ -358,6 +358,8 @@ summary () =
 
 ## 8. FFI
 
+### Globals, methods and properties
+
 ```flow
 foreign import js unsafe "Math.sqrt" sqrt :: Float -> Float
 foreign import js unsafe "@toUpperCase" upper :: Str -> Str
@@ -365,8 +367,58 @@ foreign import js unsafe "#length" length :: List a -> Int
 ```
 
 `"Path"` calls a global (keeping its receiver), `"@name"` is a method on the first argument,
-`"#name"` a property, `"#index"` an element access. FFI is unsafe by construction and only the
-`js` target exists.
+`"#name"` a property, `"#index"` an element access. Plain FFI is `unsafe` by construction and
+only the `js` target exists.
+
+### Shimming your own module
+
+A library can ship JavaScript or TypeScript next to its `.flow` files and bind it as a module:
+
+```flow
+foreign import js module "./text.js" {
+  shout :: Str -> Str
+  slug :: Str -> Str
+}
+```
+
+The path is resolved relative to the declaring source. Every member is a normal Flow value, so
+it can be curried, passed to `map`, or used on either side of the boundary:
+
+```js
+// text.js
+export const shout = (s) => String(s).toUpperCase() + "!";
+export const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+```
+
+* The file is copied into the build (`modules/`) and **served to the browser** at
+  `/modules/<name>`, so the client can use it.
+* The server imports the same file, so one shim serves both tiers.
+* A missing file, or an export that the Flow declaration names but the module does not have,
+  is a **build error**.
+* TypeScript works on the server (Node strips the types). A client use of a `.ts` shim is a
+  build error — annotate those bindings `@server` (which turns calls into cuts) or ship `.js`.
+
+### Wrapping an existing library
+
+Declare the shape you need and keep the adapter in the shim, where the third-party API lives:
+
+```flow
+foreign import js module "./tiny-chart.js" {
+  renderChart :: List Int -> (Int -> Str) -> Str
+}
+```
+
+```js
+// tiny-chart.js — wraps a package with its own API
+import { Chart } from "tiny-chart";
+export function renderChart(values, format) {
+  return new Chart(values).render({ label: format });
+}
+```
+
+Flow lambdas cross into JS as ordinary functions, so callbacks such as `format` are just
+`a -> b` values. See `examples/ffi-shim` for one package using a hand-written helper, a wrapped
+library and a TypeScript shim.
 
 ## 9. Diagnostics
 

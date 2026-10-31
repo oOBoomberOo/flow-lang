@@ -346,7 +346,10 @@ export class Parser {
         }
         case "effect": return { k: "decl", decl: this.parseEffect(t, false) };
         case "provide": return { k: "decl", decl: this.parseProvide() };
-        case "foreign": return { k: "decl", decl: this.parseForeign() };
+        case "foreign": {
+          const d = this.parseForeign();
+          return Array.isArray(d) ? { k: "decls", decls: d } : { k: "decl", decl: d };
+        }
         default:
           this.err(`unexpected keyword ${JSON.stringify(t.value)} at the top level`, t);
       }
@@ -379,6 +382,7 @@ export class Parser {
     while (i < items.length) {
       const it = items[i]!;
       if (it.k === "decl") { decls.push(it.decl); i++; continue; }
+      if (it.k === "decls") { decls.push(...it.decls); i++; continue; }
       if (it.k === "sig") {
         if (sigs.has(it.name)) record(new FlowError(`duplicate type signature for '${it.name}'`, { file: this.file, line: it.sig.tok.line, col: it.sig.tok.col, code: "E_PARSE" }));
         sigs.set(it.name, it.sig);
@@ -581,18 +585,52 @@ export class Parser {
     return { k: "Provide", effect, target, ops, span: this.spanFrom(start) };
   }
 
-  private parseForeign(): Decl {
+  private parseForeign(): Decl | Decl[] {
     const start = this.expectKw("foreign");
     this.expectKw("import");
     const target = this.expect("id").value;
     if (target !== "js") this.err(`unsupported FFI target '${target}' (expected js)`);
-    if (!(this.tok.kind === "id" && this.tok.value === "unsafe")) {
-      this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
+    const unsafe = this.tok.kind === "id" && this.tok.value === "unsafe";
+    if (unsafe) this.next();
+    // `foreign import js module "./shim.js" { name :: T … }` binds a shim module
+    if (this.tok.kind === "kw" && this.tok.value === "module") {
+      this.next();
+      const moduleTok = this.expect("str");
+      const modulePath = moduleTok.value;
+      if (!/^\.{1,2}\/.*\.(js|mjs|ts|cjs)$/.test(modulePath)) {
+        this.err(`a shim module must be a relative path ending in .js, .mjs or .ts (got '${modulePath}')`, moduleTok);
+      }
+      const decls: Decl[] = [];
+      this.expectSym("{");
+      // the block is layout-sensitive: one member per line, like a class body
+      const opened = this.openBlock();
+      for (;;) {
+        while (this.isVSemi(this.tok) || this.atSym(";")) this.next();
+        if (this.atSym("}") || this.isVClose(this.tok)) break;
+        const nameTok = this.expect("id");
+        this.expectOp("::");
+        const { type, bounds } = this.parseSigType();
+        const sig = this.sigFromType(nameTok.value, type, bounds, nameTok);
+        decls.push({
+          k: "Extern", sig, target: "js", implName: nameTok.value,
+          modulePath, exportName: nameTok.value, unsafe: true, pub: true, span: this.spanFrom(nameTok),
+        } as Decl);
+      }
+      if (opened) {
+        if (this.isVClose(this.tok)) this.next();
+        else this.layout.pop();
+      }
+      // consume the raw `}`: at the top level the same line also starts a statement,
+      // so going through the virtual-token view would show a `;` instead
+      if (this.raw.kind === "sym" && this.raw.value === "}") this.pos++;
+      else this.err(`expected '}' to close the shim block`, this.raw);
+      if (!decls.length) this.err(`the shim ${modulePath} binds no names`, start);
+      return decls;
     }
-    this.next();
+    if (!unsafe) this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
     const implName = this.expect("str").value;
     if (!/^(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*|[@#][A-Za-z_$][A-Za-z0-9_$]*)$/.test(implName)) {
-      this.err(`invalid JavaScript FFI target '${implName}' (expected "Math.floor", "@method" or "#property")`, start);
+      this.err(`invalid JavaScript FFI target '${implName}' (expected "Math.floor", "@module", "#property" or 'module "./shim.js"')`, start);
     }
     const nameTok = this.expect("id");
     this.expectOp("::");
@@ -1830,6 +1868,7 @@ export class Parser {
 
 type TopItem =
   | { k: "decl"; decl: Decl }
+  | { k: "decls"; decls: Decl[] }
   | { k: "sig"; name: string; sig: Sig }
   | { k: "clause"; binding: Binding };
 

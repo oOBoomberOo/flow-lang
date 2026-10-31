@@ -689,6 +689,15 @@ function readManifestSafe(dir: string) {
   try { return readManifest(dir); } catch { return null; }
 }
 
+/** Copy the program's FFI shim modules next to the bundles. */
+function emitShims(result: ReturnType<typeof compileFile>, outDir: string): void {
+  const modules = result.codegen?.shimModules?.() ?? [];
+  if (!modules.length) return;
+  const dir = path.join(outDir, "modules");
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [file, name] of modules) fs.copyFileSync(file, path.join(dir, name));
+}
+
 function emit(result: ReturnType<typeof compileFile>, outDir: string): void {
   const rt = path.join(import.meta.dirname, "runtime");
   fs.mkdirSync(path.join(outDir, "runtime"), { recursive: true });
@@ -697,6 +706,7 @@ function emit(result: ReturnType<typeof compileFile>, outDir: string): void {
   for (const f of RUNTIME_FILES) {
     fs.copyFileSync(path.join(rt, f), path.join(outDir, "runtime", f));
   }
+  emitShims(result, outDir);
   fs.writeFileSync(
     path.join(outDir, "runtime", "server-runtime.js"),
     `import { createServerRuntime } from "./server.js";\n` +

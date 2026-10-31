@@ -81,7 +81,7 @@ export interface FnInfo {
   /** hidden dictionaries required by bounded type parameters */
   dicts?: DictParam[];
   /** native (JavaScript) implementation, for `unsafe extern` declarations */
-  extern?: { target: "js"; implName: string };
+  extern?: { target: "js"; implName: string; modulePath?: string; exportName?: string };
   /** placement of an FFI import, from its signature annotation */
   place?: Place;
   /** the placement inferred for this function's body */
@@ -896,7 +896,7 @@ export class Infer {
       pub: d.pub,
       paramPlaces: d.sig.params.map((p) => annotatedPlace(p.type)),
       retPlace: annotatedPlace(d.sig.ret),
-      extern: { target: d.target, implName: d.implName },
+      extern: { target: d.target, implName: d.implName, modulePath: (d as { modulePath?: string }).modulePath, exportName: (d as { exportName?: string }).exportName },
       span: d.span,
     });
   }
