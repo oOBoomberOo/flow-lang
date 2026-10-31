@@ -194,6 +194,12 @@ const FRESH_METHODS = new Set([
 
 function publishDiagnostics(uri: string, a: Analysis) {
   const file = path.resolve(uriToPath(uri));
+  const inAnalysis = (a.units ?? []).some((u) => path.resolve(u.file) === file);
+  const hasDiagnostics = a.diagnostics.some((d) => path.resolve(d.file) === file);
+  // Switching files analyses a new root. Do not clear another open file's
+  // diagnostics just because it is not part of this analysis root; the next
+  // analysis that includes it will replace them.
+  if (!inAnalysis && !hasDiagnostics) return;
   notify("textDocument/publishDiagnostics", {
     uri,
     diagnostics: a.diagnostics
