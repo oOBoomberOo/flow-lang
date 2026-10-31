@@ -122,6 +122,29 @@ main = <p>{"x"}</p>`);
   assert.match(r2.client, /\.args\[0\]\.id/, "the annotated local projection reads the payload");
 });
 
+test("++ appends strings and lists in the emitted JavaScript", () => {
+  const r = ok(`main :: Html
+main = <p>{str ([1] ++ [2])}{"a" ++ "b"}</p>`);
+  assert.match(r.client, /R\.ffiCall\("@concat", \[R\.v\(\[R\.v\(1\)\]\)/, "lists concatenate");
+  assert.match(r.client, /\(R\.v\("a"\) \+ R\.v\("b"\)\)/, "strings use +");
+  assert.doesNotMatch(r.client, /\+\+ R\.v/, "no JavaScript increment operator is emitted");
+});
+
+test("a record ADT keeps its identity through an if inside a lambda", () => {
+  const r = ok(`data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+toggleTodo :: Int -> List Todo -> List Todo
+toggleTodo todoId = map \\t ->
+  if t.id == todoId then
+    Todo { completed = not t.completed, id = t.id, title = t.title }
+  else
+    t
+
+main :: Html
+main = <p>{str (length (toggleTodo 1 []))}</p>`);
+  assert.match(r.client, /\.args\[0\]\.completed/, "both the projection and the branch use the payload");
+});
+
 test("a record pattern destructures a record ADT payload", () => {
   const r = ok(`data Todo = Todo { id :: Int, title :: Str }
 

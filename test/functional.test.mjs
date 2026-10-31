@@ -186,6 +186,35 @@ main = <p>{"ids"}</p>
   });
 });
 
+test("functional: a lambda keeps the record ADT type through an if", async () => {
+  const source = `import Http (get, Router, RequestObject, textResponse)
+
+data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+toggle :: Int -> List Todo -> List Todo
+toggle target = map \\t ->
+  if t.id == target then
+    Todo { completed = not t.completed, id = t.id, title = t.title }
+  else
+    t
+
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/toggle" (\\(_req :: RequestObject) ->
+    textResponse (join "," (map (\\t -> t.title ++ ":" ++ str t.completed)
+      (toggle 2 [ Todo { id = 1, title = "a", completed = True }
+                , Todo { id = 2, title = "b", completed = False } ])))) ]
+
+main :: Html
+main = <p>{"toggle"}</p>
+`;
+  await withHost(source, async (host) => {
+    const res = await fetch(host.url + "/toggle");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "a:True,b:True");
+  });
+});
+
 test("functional: inferred lambda parameters work in every position", () => {
   const src = `import List (filter, range)
 

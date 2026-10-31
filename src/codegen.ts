@@ -1556,6 +1556,13 @@ export class Codegen {
       if (t.k === "con" && t.name === "Int") return `R.ffiCall("__flow.divInt", [${l}, ${r}])`;
     }
     const op = e.op === "and" || e.op === "&&" ? "&&" : e.op === "or" || e.op === "||" ? "||" : e.op;
+    if (e.op === "++") {
+      // `++` is Flow's append. JavaScript has no such operator: str ++ str is
+      // `+`, and list ++ list concatenates arrays.
+      const t = prune(this.mod.info.get(e)?.ty ?? { k: "var", id: -1, level: 0 });
+      if (t.k === "con" && t.name === "Str") return `(${l} + ${r})`;
+      return `R.ffiCall("@concat", [${l}, ${r}])`;
+    }
     return `(${l} ${op} ${r})`;
   }
 
