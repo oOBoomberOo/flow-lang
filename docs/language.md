@@ -9,7 +9,7 @@ docs/language.md      this reference
 docs/modules.md       modules, packages and namespacing
 docs/type-system.md   types, effects and placement inference
 docs/editor.md        the language server and the VS Code extension
-docs/http.md          server-side routes
+docs/http.md          startup, page routing and server responses
 docs/grammar.ebnf     the grammar
 ```
 
@@ -212,11 +212,15 @@ log msg = server_write msg
 Calling one from the other side is a cut, exactly like any other crossing:
 
 ```flow
-main :: Html
+main :: ()
 main = do
-  let started = Server.now ()        -- one server round trip
-  let count = Client.state 0         -- a cell, created here
-  <p>{str started}{str count.value}</p>
+  Store.set "started" (str (Server.now ()))   -- server setup, once
+  serve (\_ ->                                -- rendered in the browser
+    let count = Client.state 0
+    <div>
+      <button onClick={\e -> count := count.value + 1}>{"+1"}</button>
+      <p>{str count.value}</p>
+    </div>)
 ```
 
 A function without an annotation inherits the placement of its body, so ordinary
@@ -279,6 +283,33 @@ run () = handle State with
 Operations suspend the body; the handler calls `resume` to continue it. A handler that never
 resumes aborts the handled body.
 
+### 5.4 Entry points
+
+A program has a server startup hook and a browser page entry:
+
+```flow
+main :: ()                   -- once, on the server, before any request
+main = do
+  Store.set "visits" "0"
+  serve (\request -> <h1>{"Hello " + request.path}</h1>)
+```
+
+`serve` takes a **client-placed** callback `RequestObject -> Html`. The host sends
+the shell for any page request and the callback renders it, so routing is just a
+`case` on `request.path` (or `matchPage` over a route list). Server data used by a
+page is a normal cut: put it behind a top-level server function.
+
+`main :: Html` is still a single client page:
+
+```flow
+main :: Html
+main = <p>{"one page"}</p>
+```
+
+The page handler cannot capture `main`'s locals: it is compiled into the browser
+bundle. It runs on every request; `main` runs once. See
+[docs/http.md](http.md) for routing, request fields and server responses.
+
 ## 6. Markup
 
 Markup is an expression. A lower-case tag is an element, an upper-case tag is a component (a
@@ -337,7 +368,7 @@ The standard library is meant to be a one-stop toolkit: reach for it before the 
 | `Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
 | `Client` / `Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
 | `State`, `Exn`, `Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
-| `Fs`, `Net`, `Http`, `Random`, `Store` | server file access, outbound HTTP, routing, randomness and key/value storage |
+| `Fs`, `Net`, `Http`, `Random`, `Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
 
 Containers are ordinary values, so they work on both sides of the boundary:
 `Dict.stringLookup "k" d` in a render function reads a server-built map through a cut.

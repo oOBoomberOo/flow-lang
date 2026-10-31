@@ -1,0 +1,73 @@
+-- A multi-page app with the server-first entry model.
+--
+-- `main :: ()` runs exactly once on the server, before any request: that is
+-- where server-side setup belongs. `serve handler` installs the client page
+-- handler, so routing happens in the browser and pages can use cells, events
+-- and the DOM. Server work (the visit counter) is an ordinary cut.
+import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam)
+import Prelude (Store)
+
+pages :: List PageRoute
+pages = [page "/" home, page "/about" about, page "/users/:id" user, page "/visits" visits]
+
+home :: RequestObject -> Html
+home _ =
+  <div class="app">
+    <h1>{"Flow Web"}</h1>
+    <nav>
+      <a href="/">Home</a>
+      {" · "}
+      <a href="/about">About</a>
+      {" · "}
+      <a href="/users/42">User 42</a>
+      {" · "}
+      <a href="/visits">Visits</a>
+    </nav>
+    <p>
+      {"Every link is a real URL; the server sends the shell and the page handler renders."}
+    </p>
+  </div>
+
+about :: RequestObject -> Html
+about _ =
+  <div>
+    <h1>{"About"}</h1>
+    <p>{"main ran once on the server; this page was routed in the browser."}</p>
+    <a href="/">Home</a>
+  </div>
+
+user :: RequestObject -> Html
+user request = case pathParam request "id" of
+  Some id ->
+    <div>
+      <h1>{"User " + id}</h1>
+      <a href="/">Home</a>
+    </div>
+  None -> <h1>{"Missing id"}</h1>
+
+visits :: RequestObject -> Html
+visits _ =
+  <div>
+    <h1>{"Visits: " + str (countVisit ())}</h1>
+    <a href="/">Home</a>
+  </div>
+
+countVisit :: () -> Int
+countVisit () = do
+  let current = case Store.get "visits" of
+        Some value -> int value
+        None -> 0
+  Store.set "visits" (str (current + 1))
+  current + 1
+
+main :: ()
+main = do
+  Store.set "visits" "0"
+  serve (\request -> case matchPage pages request of
+    Some (matched, view) -> view matched
+    None ->
+      <div>
+        <h1>{"404"}</h1>
+        <p>{"No page for " + request.path}</p>
+        <a href="/">Home</a>
+      </div>)

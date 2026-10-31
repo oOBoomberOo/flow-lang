@@ -34,7 +34,24 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   const hub = createHub();
   attachServerTransport(R, hub);
 
-  // A program opts into HTTP routing by exporting a `routes()` function.
+  // `main :: ()` is the server startup hook: it runs exactly once, before any
+  // request, so it can initialise server-side state.
+  if (typeof serverModule.__flow_entry === "function") {
+    try {
+      const started = (serverModule.__flow_entry as () => unknown)();
+      if (started && typeof (started as { next?: unknown }).next === "function") {
+        (R as { run: (value: unknown) => unknown }).run(started);
+      } else {
+        await started;
+      }
+    } catch (e) {
+      console.error("[flow] main() failed:", e);
+      throw e;
+    }
+  }
+
+  // A program can still export a `routes()` function for server-side responses
+  // (JSON, redirects, custom status). Page routing is `serve`.
   if (typeof serverModule.routes === "function") {
     try {
       const started = serverModule.routes();
@@ -49,6 +66,8 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   }
   const routes: HttpRoute[] = typeof R._routes === "function" ? R._routes() : [];
   const notFound: HttpHandler | null = typeof R._notFound === "function" ? R._notFound() : null;
+  /** the program called `serve`: every page request gets the shell */
+  const serve = serverModule.__flow_serve === true;
 
   const clientBundle = fs.readFileSync(path.join(opts.outDir, "app.js"), "utf8");
 
@@ -59,11 +78,23 @@ export async function createHost(opts: HostOptions): Promise<Host> {
       url.pathname.startsWith("/modules/") ||
       url.pathname.startsWith("/__flow/");
 
+    let requestBody = "";
     if (!internal) {
+      requestBody = await readBody(req);
       const match = matchRoute(routes, req.method ?? "GET", url.pathname);
       if (match) {
-        const body = await readBody(req);
-        await handleRoute(R, match.route, makeRequest(req, url, body, match.params), res);
+        await handleRoute(R, match.route, makeRequest(req, url, requestBody, match.params), res);
+        return;
+      }
+      if (serve) {
+        // The page app routes in the browser: serve the shell with this exact
+        // request, so the handler sees the method, path, query, body and headers.
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(shell(makeRequest(req, url, requestBody, [])));
+        return;
+      }
+      if (notFound) {
+        await handleRoute(R, { handler: notFound }, makeRequest(req, url, requestBody, []), res);
         return;
       }
     }
@@ -136,12 +167,6 @@ export async function createHost(opts: HostOptions): Promise<Host> {
     if (req.method === "GET" && url.pathname === "/__flow/cuts") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(R._stats()));
-      return;
-    }
-
-    if (!internal && notFound) {
-      const body = await readBody(req);
-      await handleRoute(R, { handler: notFound }, makeRequest(req, url, body, []), res);
       return;
     }
 
@@ -323,7 +348,8 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-function shell(): string {
+function shell(request?: HttpRequest): string {
+  const payload = request ? JSON.stringify(request).replace(/</g, "\\u003c") : "null";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -353,9 +379,10 @@ function shell(): string {
     el.textContent += "unhandled rejection: " + (e.reason && e.reason.stack ? e.reason.stack : e.reason) + "\\n";
   });
 </script>
+<script>window.__flow_request = ${payload};</script>
 <script type="module">
   import { __flow_start } from "/app.js";
-  __flow_start(document.getElementById("app"));
+  __flow_start(document.getElementById("app"), window.__flow_request);
 </script>
 </body>
 </html>`;

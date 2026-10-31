@@ -28,11 +28,22 @@ export function installDom(R) {
     return e;
   }
 
-  /** Run `compute` reactively; call `apply` with its value initially and on change. */
+  /**
+   * Run `compute` reactively; call `apply` with its value initially and on
+   * change. A hole that has to ask the other tier returns a Promise; DOM
+   * updates wait for it, so a server value can appear in markup.
+   */
   function reactive(compute, apply) {
+    const run = (v) => {
+      if (v && typeof v.then === "function") {
+        v.then(apply, (e) => console.error("[flow] async render failed", e));
+      } else {
+        apply(v);
+      }
+    };
     const n = new Node(compute);
-    n.watch((v) => apply(v));
-    apply(n.get());
+    n.watch(run);
+    run(n.get());
     return n;
   }
 

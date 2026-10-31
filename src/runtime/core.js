@@ -365,7 +365,13 @@ export function createRuntime() {
           if (!r) return;
           if (R.eq(r.state.value, msg.value)) return;
           r.state.value = msg.value;
-          r.node.invalidate();
+          // The value itself changed. Publish it on the subscription node and
+          // update dependents without invalidating the subscription, otherwise a
+          // value-producing server cut would re-subscribe forever (and re-run
+          // the server work on every reply).
+          r.node.value = msg.value;
+          for (const w of r.node.__watchers ?? []) w(msg.value);
+          for (const s of r.node.subs ?? []) s.invalidate();
           return;
         }
         case "call": {

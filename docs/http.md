@@ -1,18 +1,34 @@
-# HTTP capabilities and routing
+# Web apps: startup, pages and server responses
 
-`std::http` adds **effect capabilities** for the current request and for route
-registration. They are ordinary Flow effects with providers; the host only
-supplies the raw request and route primitives. This is why `Request` and
-`Router` are declared with `effect`, not as a special HTTP runtime type.
-
-## The request capability
+A Flow web program has two entry points, split by placement:
 
 ```flow
-effect Request @ server where
-  current :: () -> RequestObject
+main :: ()          -- runs once on the server, at startup
+serve handler       -- runs in the browser, once per request
 ```
 
-`RequestObject` is a record:
+`main` is where server-side setup belongs (files, environment, the store). `serve`
+takes a **client-placed** callback `Request -> Html`; the host sends the shell for
+every page request and the callback decides what to render. Server work inside a
+page is an ordinary cut.
+
+```flow
+import Http (RequestObject, serve)
+import Prelude (Store)
+
+main :: ()
+main = do
+  Store.set "visits" "0"
+  serve (\request -> <h1>{"Hello from " + request.path}</h1>)
+```
+
+`main :: Html` is still accepted as the single-page form: it mounts that page in
+the browser and does not run on the server. New programs use `main :: ()` plus
+`serve`.
+
+## The request
+
+The handler receives the real request:
 
 ```flow
 type RequestObject = {
@@ -25,70 +41,91 @@ type RequestObject = {
 }
 ```
 
-A handler receives the object as its argument, and `Request.current()` reaches
-the same object anywhere deeper in the server-side call stack:
+The host reads the body before serving the shell, so a `POST` page sees
+`request.method` and `request.body`. Helpers: `queryParam(req, name)`,
+`pathParam(req, name)` and `header(req, name)`. `pathParam` reads the captures
+that `matchPage` filled in.
+
+## Routing pages
+
+Pages are values, so a route table is an ordinary list:
 
 ```flow
-get("/whoami", fn(_req: RequestObject) -> Response {
-  let req = Request.current();
-  textResponse(req.method + " " + req.path)
-})
+import Http (RequestObject, PageRoute, serve, page, matchPage, pathParam)
+
+pages :: List PageRoute
+pages =
+  [ page "/" home
+  , page "/about" about
+  , page "/users/:id" user
+  ]
+
+home :: RequestObject -> Html
+home _ = <h1>{"Home"}</h1>
+
+about :: RequestObject -> Html
+about _ = <h1>{"About"}</h1>
+
+user :: RequestObject -> Html
+user request =
+  case pathParam request "id" of
+    Some id -> <h1>{"User " + id}</h1>
+    None -> <h1>{"Missing id"}</h1>
+
+main :: ()
+main = serve (\request ->
+  case matchPage pages request of
+    Some (matched, view) -> view matched
+    None -> <h1>{"Not found"}</h1>)
 ```
 
-Helpers: `queryParam(req, name)`, `pathParam(req, name)` and
-`header(req, name)`; `pathParam` reads the captures from a `:name` route.
+`page` is `GET`; `pagePost`, `pagePut`, `pagePatch` and `pageDelete` set the
+method. `matchPage` checks the method and the `:name` path captures, then returns
+the page with `request.params` filled in. `matchPath pattern path` is the pure
+matcher if you want to route by hand.
 
-## The routing capability
+The handler is a normal client callback, so it can use cells, events and
+components:
 
 ```flow
-effect Router @ server where
-  mount :: List Route -> ()
-  notFound :: Handler -> ()
+main :: ()
+main = serve (\_ ->
+  let count = Client.state 0
+  <div>
+    <button onClick={\e -> count := count.value + 1}>{"+1"}</button>
+    <p>{str count.value}</p>
+  </div>)
 ```
 
-```flow
-type Handler = RequestObject -> Response
-type Route = { method :: Str, path :: Str, handler :: Handler }
-```
+A handler cannot close over `main`'s local bindings: it is compiled into the
+browser bundle. Put server values behind a top-level server function or the
+`Store` capability and call it from the handler; that call becomes a cut.
 
-`Router.mount` and `Router.notFound` are effect operations. Their provider in
-`std::http` forwards the values to the host, which stores them for startup.
+## Server responses
 
-## Easy routing
-
-A program opts into HTTP routing by defining `routes :: () -> ()`.
-The host calls it once after loading the server bundle:
+`routes()` and the `Router` capability remain the server-side response table. Use
+them for JSON, redirects, custom status codes and APIs:
 
 ```flow
-import Http (
-  get, post, Router, Request, RequestObject, Response,
-  textResponse, htmlResponse, jsonResponse, queryParam, pathParam,
-  notFoundResponse)
+import Http (RequestObject, get, post, Router, jsonResponse, textResponse)
 
 routes :: () -> ()
 routes () =
-  Router.mount [
-    get "/" (\req ->
-      let who = case queryParam req "name" of
-            Some n -> n
-            None -> "world"
-      in htmlResponse ("<h1>Hello " + who + "</h1>")),
-    post "/echo" (\req -> textResponse req.body),
-    get "/users/:id" (\req ->
-      case pathParam req "id" of
-        Some id -> textResponse ("user " + id)
-        None -> notFoundResponse "missing id")
-  ]
+  Router.mount
+    [ get "/api/health" (\_ -> jsonResponse "{\"ok\":true}")
+    , post "/api/echo" (\request -> textResponse request.body)
+    ]
 
-main :: Html
-main = <p>{"client app"}</p>
+main :: ()
+main = do
+  -- server-side setup
+  serve (\request -> <h1>{"site"}</h1>)
 ```
 
-The route constructors are `get`, `post`, `put`, `patch`, `del` and the
-explicit `route(method, path, handler)`. Paths may contain `:name` captures;
-matching is method + path, with query/body/headers left to the handler.
+Routes are matched before the page shell. A path with no route falls through to
+the page handler, so `/api/...` and page URLs can live in the same program.
 
-## Responses
+`Response` is the raw server response:
 
 ```flow
 type Response = {
@@ -100,31 +137,21 @@ type Response = {
 ```
 
 Helpers: `textResponse`, `htmlResponse`, `jsonResponse`, `withStatus`,
-`withHeader`, `redirect` and `notFoundResponse`. The host sets the status,
-`content-type`, additional headers and body from this record.
-
-## The capability handler
-
-`std::http::dispatch(routes, request)` is a reusable, in-language dispatcher over
-a route list. It is the pure capability handler used for tests and for code that
-wants to dispatch a request value without the host:
-
-```flow
-let response = dispatch(routes, request);
-```
-
-The host uses the same `Route` values for real requests; it adds path captures
-and the request capability.
+`withHeader`, `redirect` and `notFoundResponse`. `dispatch(routes, request)` is
+the reusable in-language dispatcher.
 
 ## Host behavior
 
-* `routes()` is exported from the server bundle and called at startup.
-* Routes are checked before the app shell; a route for `/` overrides the shell.
-* `/app.js`, `/runtime/*` and `/__flow/*` remain reserved for the client bundle,
-  the runtime and the dataflow transport.
-* Unmatched requests go to the `notFound` handler when one is mounted; otherwise
-  the normal shell/static handling and a final `404` apply.
-* Route handlers are server-side: they return a `Response`, not `Html`.
+* `main :: ()` is exported as `__flow_entry` and called once, before the server
+  starts listening. If it throws, startup fails loudly.
+* `routes()` is called after `main`, so it can read state `main` initialised.
+* When a program calls `serve`, every non-reserved request gets the shell with
+  the real request payload; the browser renders the page. Page routes answer
+  `200 text/html`; use `routes()` when the status or `content-type` matters.
+* `/app.js`, `/runtime/*`, `/modules/*` and `/__flow/*` stay reserved.
+* `main :: Html` (no `serve`) keeps the old single-page behavior: only `/` and
+  `/index.html` get the shell, and unknown paths are `404`.
+* `serve` can be called once. Routing belongs inside its handler.
 
-See also [`examples/http.flow`](../examples/http.flow) and
-[`test/http.test.mjs`](../test/http.test.mjs).
+See [`examples/web.flow`](../examples/web.flow) for a multi-page app and
+[`examples/http.flow`](../examples/http.flow) for server response routes.

@@ -31,6 +31,36 @@ A function is a value, not a region: a callback is hosted by whoever invokes it,
 statements inside it cross individually when they need the other side. A client timer callback
 that logs with `Server.log` stays in the browser; only the log statement is a server call.
 
+## Server startup and pages
+
+`main :: ()` is the server hook: it runs **once**, before any request, so files,
+environment and the server store can be initialised there. `serve` installs the
+client page handler, a normal `Request -> Html` callback, so routing happens in
+the browser and pages can use cells, events and components.
+
+```flow
+import Http (RequestObject, PageRoute, serve, page, matchPage)
+import Prelude (Store)
+
+pages :: List PageRoute
+pages =
+  [ page "/" (\_ -> <h1>{"Home"}</h1>)
+  , page "/about" (\_ -> <h1>{"About"}</h1>)
+  ]
+
+main :: ()
+main = do
+  Store.set "started" "yes"                 -- server-side setup, once
+  serve (\request ->
+    case matchPage pages request of
+      Some (matched, view) -> view matched
+      None -> <h1>{"Not found"}</h1>)
+```
+
+`main :: Html` is still accepted as the single-page form. Server response routes
+(JSON, redirects, custom status) stay in `routes()` / `Router`; see
+[docs/http.md](docs/http.md).
+
 ## The syntax in one screen
 
 ```flow
@@ -112,7 +142,8 @@ examples/effects.flow    capabilities and providers
 examples/algebraic.flow  algebraic effects, resume, handlers
 examples/fp.flow         currying, sections, composition, partial application
 examples/modules.flow    local modules, imports and namespacing
-examples/http.flow       routes, request capabilities
+examples/web.flow        server startup, multi-page routing with serve
+examples/http.flow       server response routes, request capabilities
 examples/bounds.flow     trait bounds
 examples/hkt.flow        higher-kinded type parameters
 examples/traits.flow     user traits and instances
@@ -124,14 +155,17 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` — **256 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` - **264 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
 ## Feature list
 
-* **One language, two tiers** — `Client` / `Server` effects decide placement; the compiler
+* **One language, two tiers** - `Client` / `Server` effects decide placement; the compiler
   emits a browser bundle and a server bundle plus the wire between them
+* **Server startup and pages** - `main :: ()` runs once on the server; `serve` installs a
+  client-placed `Request -> Html` handler for multi-page routing, with `main :: Html` kept
+  as the single-page form
 * **Haskell-style syntax** — layout blocks, partial application, `\x -> e`, `if/then/else`,
   `case … of`, `let … in`, `where`, operator sections, `$` and `.`
 * **Full inference** — signatures are optional; unannotated functions are inferred callee-first

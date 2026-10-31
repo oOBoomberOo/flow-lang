@@ -6,7 +6,7 @@ A **package** is a directory with a `flow.json` manifest and a `src/` tree of `.
 ```
 flow.json
 src/
-  main.flow        -- the entry module (defines main or routes)
+  main.flow        -- the entry module (defines main, serve and/or routes)
   util.flow        -- module Util
   shapes/
     circle.flow    -- module Shapes.Circle
@@ -195,22 +195,40 @@ The prelude's primitives are `foreign import js unsafe` bindings to the host; th
 compiler intrinsics for values. `List.sortBy` is written in Flow over an FFI `@sort`; only the
 primitive operations (`#length`, `@concat`, `#index`, …) reach JavaScript.
 
-## Server routes
+## Web entry points
 
-A program opts into HTTP by defining `routes :: () -> ()`:
+`main :: ()` is the server startup hook: it runs once, before any request, so
+server-side state can be initialised there. `serve` installs a client page
+handler for multi-page apps:
 
 ```flow
-import Http (get, Router, RequestObject, Response, textResponse)
+import Http (RequestObject, serve, page, matchPage, PageRoute)
+import Prelude (Store)
+
+pages :: List PageRoute
+pages = [ page "/" (\_ -> <h1>{"Home"}</h1>) ]
+
+main :: ()
+main = do
+  Store.set "ready" "yes"
+  serve (\req ->
+    case matchPage pages req of
+      Some (matched, view) -> view matched
+      None -> <h1>{"Not found"}</h1>)
+```
+
+A server response API is still a `routes :: () -> ()` table:
+
+```flow
+import Http (get, Router, RequestObject, textResponse)
 
 routes :: () -> ()
 routes () =
   Router.mount [
     get "/hello" (\req -> textResponse ("hello " + req.path))
   ]
-
-main :: Html
-main = <p>{"client"}</p>
 ```
 
-The host calls `routes ()` once at startup. Request handlers run on the server; `main` still
-compiles into the client bundle.
+The host calls `main ()` first, then `routes ()`, both once at startup. Server
+route handlers run on the server; `serve` pages run in the browser. `main :: Html`
+remains the single-page client form. See [`http.md`](http.md).

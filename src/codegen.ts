@@ -74,6 +74,10 @@ export class Codegen {
   private algebraicEffects = new Set<string>();
   /** true while emitting the body of a JS generator function */
   private genMode = false;
+  /** the callback passed to `serve`, mounted in the browser at startup */
+  private serveHandler: Expr | null = null;
+  /** the `serve` call site, used for capture diagnostics */
+  private serveSpan: { line?: number; col?: number } | null = null;
 
   constructor(mod: Module, inf: Infer, prog: Program) {
     this.mod = mod;
@@ -194,6 +198,13 @@ export class Codegen {
   }
 
   private walk(e: Expr, ctxHome: Side | "neutral", inHandler: boolean, top: Expr): void {
+    // `serve` is a build-time entry point: the handler belongs to the browser,
+    // so its cuts are collected with a client context, not the server's.
+    if (this.isServeCall(e)) {
+      const handler = (e as Expr & { k: "App" }).args[0];
+      if (handler) this.walk(handler, "client", true, handler);
+      return;
+    }
     const h = this.home(e);
     if (h !== "neutral" && ctxHome !== "neutral" && h !== ctxHome) {
       if (this.rowHasAlgebraic(this.effOf(e))) {
@@ -303,8 +314,9 @@ export class Codegen {
 
   compile(): Compiled {
     this.collectShims();
-    this.checkEntryEffects();
+    this.findServe();
     this.collect();
+    this.checkEntryEffects();
     return {
       client: this.emitModule("client"),
       server: this.emitModule("server"),
@@ -312,6 +324,113 @@ export class Codegen {
       diagnostics: this.diagnostics,
       modules: [...this.shims].map(([file, s]) => ({ file, name: s.name })),
     };
+  }
+
+  /** True when `name` is the compiler-visible `serve` entry point. */
+  private isServeName(name: string): boolean {
+    return this.mod.fns.get(name)?.extern?.implName === "__flow.serve";
+  }
+
+  private isServeCall(e: Expr): boolean {
+    return e.k === "App" && e.fn.k === "Var" && this.isServeName(e.fn.name);
+  }
+
+  /**
+   * `serve handler` is a build-time entry point, not a server call: the handler
+   * is emitted in the browser bundle and the server only records that the
+   * program has a page router. Find the single call and check that the handler
+   * does not close over server startup locals.
+   */
+  private findServe(): void {
+    const scan = (e: Expr, bound: Set<string>): void => {
+      if (this.isServeCall(e)) {
+        if (this.serveHandler) {
+          this.fail(
+            "`serve` can be called only once: put the routing in one handler " +
+            "(`case req.path of …`)",
+            e.span,
+          );
+        }
+        const handler = (e as Expr & { k: "App" }).args[0];
+        if (!handler) this.fail("`serve` expects a page function `Request -> Html`", e.span);
+        this.serveHandler = handler;
+        this.serveSpan = e.span;
+        this.checkServeCapture(handler, bound);
+        return;
+      }
+      switch (e.k) {
+        case "Lam": {
+          const inner = new Set(bound);
+          for (const p of e.params) inner.add(p.name);
+          scan(e.body, inner);
+          return;
+        }
+        case "Let": {
+          scan(e.value, bound);
+          const inner = new Set(bound);
+          inner.add(e.name);
+          scan(e.body, inner);
+          return;
+        }
+        case "Match": {
+          scan(e.scrut, bound);
+          for (const arm of e.arms) {
+            const inner = new Set(bound);
+            bindPatternVars(arm.pat, inner);
+            if (arm.guard) scan(arm.guard, inner);
+            scan(arm.body, inner);
+          }
+          return;
+        }
+        case "Block": {
+          let cur = new Set(bound);
+          for (const s of e.stmts) {
+            if (s.k === "LetStmt") {
+              scan(s.value, cur);
+              cur = new Set(cur);
+              cur.add(s.name);
+            } else {
+              scan(s.e, cur);
+            }
+          }
+          if (e.value) scan(e.value, cur);
+          return;
+        }
+        default:
+          for (const c of childExprs(e)) scan(c, bound);
+      }
+    };
+    for (const d of this.prog.decls) {
+      if (d.k === "Fn") scan(d.body, new Set(d.params.map((p) => p.name)));
+      if (d.k === "Impl") for (const m of d.methods) scan(m.body, new Set(m.params.map((p) => p.name)));
+      if (d.k === "Provide") for (const o of d.ops) scan(o.fn, new Set());
+    }
+  }
+
+  /** A page handler is emitted in the browser, so it cannot read local bindings. */
+  private checkServeCapture(handler: Expr, bound: Set<string>): void {
+    const free = freeVars(handler, new Set());
+    const captured = [...free].filter((name) =>
+      bound.has(name) || (this.isRuntimeLocal(name) && !this.mod.fns.has(name) && !this.mod.ctors.has(name))
+    );
+    if (captured.length) {
+      this.fail(
+        `the page handler cannot capture server startup binding(s) ${captured.map((n) => `'${n}'`).join(", ")}: ` +
+        `it runs in the browser. Move the value to a top-level server function or a Cell, ` +
+        `and call it from the handler`,
+        handler.span ?? this.serveSpan ?? undefined,
+      );
+    }
+  }
+
+  /** `main :: Html` is a single client page; `main :: ()` is server startup. */
+  private mainKind(): "page" | "server" | null {
+    const main = this.mod.fns.get("main");
+    if (!main || main.scheme.k !== "fun") return null;
+    const ret = prune(main.scheme.ret);
+    if (ret.k === "con" && ret.name === "Html") return "page";
+    if (ret.k === "con" && ret.name === "Unit") return "server";
+    return null;
   }
 
   /** `main` is mounted by the renderer, outside any handler scope. */
@@ -324,6 +443,20 @@ export class Codegen {
         `main performs algebraic effect(s) {${unhandled.sort().join(", ")}} without handling them: ` +
         `wrap the work in 'handle ${unhandled[0]} with … in …'`,
         main.span,
+      );
+    }
+    if (this.mainKind() === "server" && main.body && this.home(main.body) === "client") {
+      this.fail(
+        "`main` returns () but only touches the browser; server startup must use a " +
+        "server capability (Fs, Server, …) or call `serve`, or return Html for a single page",
+        main.body.span,
+      );
+    }
+    if (this.mainKind() === "server" && main.body && this.hasCallCut(main.body)) {
+      this.fail(
+        "`main` runs once on the server at startup and cannot wait on the browser: " +
+        "move request-time work into the `serve` handler or a server function",
+        main.body.span,
       );
     }
   }
@@ -424,6 +557,14 @@ export class Codegen {
       out.push(`R.serve(${ev(cut.id)}, ${asyncKw}(A) => { ${destructure} return ${body}; });`);
     }
 
+    // The page handler is a client value; emit it before the shim imports so
+    // its shim references are included in the import check.
+    if (side === "client" && this.serveHandler) {
+      const handlerJs = this.emitExpr(this.serveHandler, "client", "client", new Set());
+      out.push("");
+      out.push(`const $serve = ${handlerJs};`);
+    }
+
     for (const [file, shim] of this.shims) {
       if (!shim.used.has(side)) continue;
       if (shim.ts && side === "client") {
@@ -437,9 +578,26 @@ export class Codegen {
 
     if (side === "client") {
       out.push("");
-      out.push(`export function __flow_start(root) { R.mount(root, () => R.v(R.run(() => main()))); }`);
+      if (this.serveHandler) {
+        out.push(`export async function __flow_start(root, request) {`);
+        out.push(`  const page = await R.run(() => $serve(request));`);
+        out.push(`  R.mount(root, () => page);`);
+        out.push(`}`);
+      } else if (this.mainKind() === "server") {
+        // An API-only program has no client page; the shell stays empty.
+        out.push(`export function __flow_start(root) { R.mount(root, () => null); }`);
+      } else {
+        out.push(`export function __flow_start(root) { R.mount(root, () => R.v(R.run(() => main()))); }`);
+      }
       out.push(`export { R };`);
     } else {
+      if (this.mainKind() === "server") {
+        out.push("");
+        out.push(`export { main as __flow_entry };`);
+      }
+      if (this.serveHandler) {
+        out.push(`export const __flow_serve = true;`);
+      }
       const routesFn = this.prog.decls.find((d) => d.k === "Fn" && d.name === "routes");
       if (routesFn && (this.home(routesFn.body) === "server" || this.home(routesFn.body) === "neutral")) {
         out.push("");
@@ -774,6 +932,9 @@ export class Codegen {
   }
 
   private emitApp(e: Expr & { k: "App" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
+    // `serve` is a build-time entry point; the server performs no call.
+    if (this.isServeCall(e)) return "null";
+
     // `resume(v)` inside an algebraic operation handler: the continuation.
     if (e.fn.k === "Var" && this.mod.resumeVars.has(e.fn)) {
       const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
@@ -1076,7 +1237,7 @@ export class Codegen {
             n.span,
           );
         }
-        return `R.hole(() => ${this.emitExpr(n.e, side, ctxHome, env)})`;
+        return `R.hole(${this.hasCallCut(n.e) ? "async " : ""}() => ${this.emitExpr(n.e, side, ctxHome, env)})`;
       case "Element": {
         const attrs = n.attrs.map((a) => {
           if (a.name.startsWith("on") && a.value.k === "expr") {
@@ -1097,7 +1258,7 @@ export class Codegen {
               n.span,
             );
           }
-          return `${ev(a.name)}: R.attr(() => ${this.emitExpr(a.value.e, side, ctxHome, env)})`;
+          return `${ev(a.name)}: R.attr(${this.hasCallCut(a.value.e) ? "async " : ""}() => ${this.emitExpr(a.value.e, side, ctxHome, env)})`;
         });
         const kids = n.children.map((c) => this.emitHtmlNode(c, side, ctxHome, env)).filter((x) => x !== "null");
         return `R.el(${ev(n.tag)}, { ${attrs.join(", ")} }, [${kids.join(", ")}])`;

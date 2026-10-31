@@ -1,4 +1,7 @@
-module Http (RequestObject, Response, Handler, Route, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch) where
+module Http (RequestObject, Response, Handler, Route, Page, PageRoute, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch, serve, page, pagePost, pagePut, pagePatch, pageDelete, matchPath, matchPage) where
+
+import List (filter, length)
+import String (startsWith)
 
 -- std::http — request/response data, request and routing capabilities, and
 -- easy route construction. Everything here is ordinary Flow over host
@@ -12,6 +15,13 @@ type Response = { status :: Int, contentType :: Str, headers :: List (Str, Str),
 type Handler = RequestObject -> Response
 
 type Route = { method :: Str, path :: Str, handler :: Handler }
+
+-- / A page is a client callback: it receives the request and returns markup.
+-- / `serve` installs it as the browser entry, so the whole app is routed in the
+-- / browser while `main` runs once on the server.
+type Page = RequestObject -> Html
+
+type PageRoute = { method :: Str, path :: Str, page :: Page }
 
 -- ---------------------------------------------------------------- capabilities
 -- / The current HTTP request, available anywhere in a server-side handler.
@@ -130,3 +140,65 @@ findRoute routes method path = case routes of
     if (route.method == "*" || upper route.method == upper method) && route.path == path
       then Some route
       else findRoute rest method path
+
+-- ---------------------------------------------------------------- pages
+-- / Install the client page handler. `main` runs once on the server; the
+-- / handler runs in the browser for every request and may route on `req.path`.
+foreign import js unsafe "__flow.serve" {
+  serve :: Page -> () @server
+}
+
+page :: Str -> Page -> PageRoute
+page path handler = { method = "GET", path = path, page = handler }
+
+pagePost :: Str -> Page -> PageRoute
+pagePost path handler = { method = "POST", path = path, page = handler }
+
+pagePut :: Str -> Page -> PageRoute
+pagePut path handler = { method = "PUT", path = path, page = handler }
+
+pagePatch :: Str -> Page -> PageRoute
+pagePatch path handler = { method = "PATCH", path = path, page = handler }
+
+pageDelete :: Str -> Page -> PageRoute
+pageDelete path handler = { method = "DELETE", path = path, page = handler }
+
+-- / Match a `:name` path pattern and return its captures.
+matchPath :: Str -> Str -> Option (List (Str, Str))
+matchPath pattern path =
+  if length (pathSegments pattern) == length (pathSegments path)
+    then matchSegments (pathSegments pattern) (pathSegments path) []
+    else None
+
+pathSegments :: Str -> List Str
+pathSegments path = filter (split path "/") (\s -> s /= "")
+
+matchSegments :: List Str -> List Str -> List (Str, Str) -> Option (List (Str, Str))
+matchSegments pats segs acc = case (pats, segs) of
+  ([], []) -> Some (reverse acc)
+  (p : ps, s : ss) ->
+    if startsWith p ":"
+      then matchSegments ps ss ((replace p ":" "", s) : acc)
+      else if p == s then matchSegments ps ss acc else None
+  _ -> None
+
+-- / The first page route matching this request, with `params` filled in.
+matchPage :: List PageRoute -> RequestObject -> Option (RequestObject, Page)
+matchPage routes request = case routes of
+  [] -> None
+  route : rest ->
+    if route.method == "*" || upper route.method == upper request.method
+      then case matchPath route.path request.path of
+        Some params -> Some (withParams request params, route.page)
+        None -> matchPage rest request
+      else matchPage rest request
+
+withParams :: RequestObject -> List (Str, Str) -> RequestObject
+withParams request params =
+  { method = request.method
+  , path = request.path
+  , query = request.query
+  , body = request.body
+  , headers = request.headers
+  , params = params
+  }
