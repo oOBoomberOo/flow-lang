@@ -17,7 +17,7 @@ import type {
 import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
-  cellOf, eventOf, typeStr, joinPlace, typePlace, hasGeneric,
+  cellOf, eventOf, typeStr, typeStrs, typeKey, joinPlace, typePlace, hasGeneric,
   snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
 } from "./types.ts";
 
@@ -116,6 +116,12 @@ export interface Module {
   genCalls: Set<object>;
   /** calls with fewer arguments than the function's arity (curried partials) */
   partialCalls: Set<object>;
+  /**
+   * Right sections: a partial call whose supplied arguments fill the trailing
+   * parameters, e.g. `Option.map f` for `map :: Option a -> (a -> b) -> Option b`.
+   * The number stored is how many leading parameters the result still takes.
+   */
+  rightPartials: Map<object, number>;
   /** `resume` references inside algebraic handler operations */
   resumeVars: Set<object>;
   /** references to top-level constants (`pi = 3.14`): evaluated by calling them */
@@ -173,6 +179,7 @@ export class Infer {
       errors: [],
       genCalls: new Set(),
       partialCalls: new Set(),
+      rightPartials: new Map(),
       constRefs: new Set(),
       resumeVars: new Set(),
     };
@@ -629,7 +636,7 @@ export class Infer {
     for (const v of implParams.values()) if (v.k === "var") v.generic = true;
 
     const clash = this.mod.impls.find((im) =>
-      im.trait === d.trait && im.targetType && typeStr(im.targetType) === typeStr(targetType));
+      im.trait === d.trait && im.targetType && typeKey(im.targetType) === typeKey(targetType));
     if (clash) {
       this.fail(`duplicate impl of ${d.trait} for ${typeStr(targetType)}`, d.span);
     }
@@ -990,8 +997,9 @@ export class Infer {
       this.env = saved;
       this.typeParams = savedTypeParams;
       if (e instanceof FlowError) {
+        const [wantText, gotText] = typeStrs([t.ret, r.ty]);
         this.fail(
-          `return type mismatch in fn ${name}: expected ${typeStr(t.ret)}, got ${typeStr(r.ty)}`,
+          `return type mismatch in fn ${name}: expected ${wantText}, got ${gotText}`,
           tailSpan(body),
         );
       }
@@ -1220,8 +1228,9 @@ export class Infer {
         catch (err) {
           restoreSubst(before);
           if (err instanceof FlowError) {
+            const [thenText, elseText] = typeStrs([t.ty, f.ty]);
             this.fail(
-              `if branches have different types: then is ${typeStr(t.ty)}, else is ${typeStr(f.ty)}`,
+              `if branches have different types: then is ${thenText}, else is ${elseText}`,
               tailSpan(e.else),
             );
           }
@@ -1667,6 +1676,54 @@ export class Infer {
     this.fail(`cell ${op} needs an Int or Float cell, got ${typeStr(elem)}`, span);
   }
 
+  /**
+   * Unify each supplied argument with one parameter slot. Slots are normally
+   * `0, 1, 2, ...`; a right section fills the trailing slots instead.
+   */
+  private inferCallArgs(
+    e: Expr & { k: "App" },
+    ft: Type & { k: "fun" },
+    callee: FnInfo | undefined,
+    slots: number[],
+    seed: Place,
+  ): { place: Place; argEff: Eff } {
+    let place = seed;
+    let argEff = emptyEff();
+    e.args.forEach((a, i) => {
+      const slot = slots[i]!;
+      const want = ft.params[slot]!;
+      const r = this.inferArg(a, want);
+      try { unify(r.ty, want); }
+      catch (err) {
+        if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
+        throw err;
+      }
+      // A function that performs an algebraic effect can only be passed to a
+      // parameter whose declared row admits it; otherwise the callee would call
+      // a generator and receive an iterator.
+      const argFun = prune(r.ty);
+      if (callee && argFun.k === "fun" && this.effHasAlgebraic(argFun.eff)) {
+        const declaredParam = callee.scheme.k === "fun" ? prune(callee.scheme.params[slot]!) : undefined;
+        if (declaredParam && declaredParam.k === "fun" && !this.effHasAlgebraic(declaredParam.eff)) {
+          const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
+          this.fail(
+            `cannot pass a function that performs {${labels.join(", ")}} to '${callee.name}': ` +
+            `argument ${i + 1} is declared ${typeStr(declaredParam)} without that effect row. ` +
+            `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
+            a.span,
+          );
+        }
+      }
+      const expected = callee?.paramPlaces?.[slot];
+      if (expected) {
+        this.checkPlacement(expected, this.exprPlace(a, r.place), a.span, `argument ${i + 1} to ${callee!.name}`);
+      }
+      place = joinPlace(place, r.place);
+      argEff = mergeEff(argEff, r.eff);
+    });
+    return { place, argEff };
+  }
+
   inferApp(e: Expr & { k: "App" }): ResInfo {
     // Method-call syntax: `receiver.method(args)` dispatches to a trait method
     // when the receiver is not a record with a field of that name. Cell.get /
@@ -1788,42 +1845,46 @@ export class Infer {
       }
     }
 
-    let place = joinPlace(fnInfo.place, typePlace(ft));
-    let argEff = emptyEff();
-    e.args.forEach((a, i) => {
-      const r = this.inferArg(a, ft.params[i]!);
-      try { unify(r.ty, ft.params[i]!); }
-      catch (err) {
-        if (err instanceof FlowError) this.fail(`${err.message}\n  in argument ${i + 1}`, a.span);
+    const seed = joinPlace(fnInfo.place, typePlace(ft));
+    let slots = e.args.map((_, i) => i);
+    let right = false;
+    let inferred: { place: Place; argEff: Eff };
+    const beforeArgs = snapshotSubst();
+    try {
+      inferred = this.inferCallArgs(e, ft, callee, slots, seed);
+    } catch (err) {
+      // The argument does not fit the next parameter. It may be a right section
+      // (`Option.map f` supplies the mapper; the option is still missing), so
+      // retry with the arguments in the trailing slots. If that also fails,
+      // keep the original error: it describes the call the user wrote.
+      if (!partial || e.args.length === 0 || !(err instanceof FlowError)) throw err;
+      restoreSubst(beforeArgs);
+      // The failed attempt may have marked nested calls (partials, algebraic
+      // generators); re-inference below decides those again.
+      for (const a of e.args) {
+        forEachExpr(a, (x) => {
+          this.mod.partialCalls.delete(x);
+          this.mod.rightPartials.delete(x);
+          this.mod.genCalls.delete(x);
+        });
+      }
+      slots = e.args.map((_, i) => ft.params.length - e.args.length + i);
+      right = true;
+      try {
+        inferred = this.inferCallArgs(e, ft, callee, slots, seed);
+      } catch {
+        restoreSubst(beforeArgs);
         throw err;
       }
-      // A function that performs an algebraic effect can only be passed to a
-      // parameter whose declared row admits it; otherwise the callee would call
-      // a generator and receive an iterator.
-      const argFun = prune(r.ty);
-      if (callee && argFun.k === "fun" && this.effHasAlgebraic(argFun.eff)) {
-        const declaredParam = callee.scheme.k === "fun" ? prune(callee.scheme.params[i]!) : undefined;
-        if (declaredParam && declaredParam.k === "fun" && !this.effHasAlgebraic(declaredParam.eff)) {
-          const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
-          this.fail(
-            `cannot pass a function that performs {${labels.join(", ")}} to '${callee.name}': ` +
-            `argument ${i + 1} is declared ${typeStr(declaredParam)} without that effect row. ` +
-            `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
-            a.span,
-          );
-        }
-      }
-      const expected = callee?.paramPlaces?.[i];
-      if (expected) {
-        this.checkPlacement(expected, this.exprPlace(a, r.place), a.span, `argument ${i + 1} to ${callee!.name}`);
-      }
-      place = joinPlace(place, r.place);
-      argEff = mergeEff(argEff, r.eff);
-    });
+    }
+    const { place, argEff } = inferred;
 
     if (partial) {
       this.mod.partialCalls.add(e);
-      const remaining = ft.params.slice(e.args.length).map((p) => p);
+      if (right) this.mod.rightPartials.set(e, ft.params.length - e.args.length);
+      const remaining = right
+        ? ft.params.slice(0, ft.params.length - e.args.length)
+        : ft.params.slice(e.args.length);
       const eff: Eff = { labels: new Set(ft.eff.labels) };
       return {
         ty: fnT(remaining, ft.ret, eff),
@@ -1964,8 +2025,9 @@ export class Infer {
       catch (err) {
         restoreSubst(beforeArm);
         if (err instanceof FlowError) {
+          const [armText, otherText] = typeStrs([b.ty, result]);
           this.fail(
-            `match arm returns ${typeStr(b.ty)}, but the other arms return ${typeStr(result)}`,
+            `match arm returns ${armText}, but the other arms return ${otherText}`,
             tailSpan(arm.body),
           );
         }
@@ -2197,7 +2259,8 @@ export class Infer {
     } catch (err) {
       restoreSubst(before);
       if (err instanceof FlowError) {
-        this.fail(`'${name}' is annotated ${typeStr(want)}, but its value is ${typeStr(got)}`, span);
+        const [wantText, gotText] = typeStrs([want, got]);
+        this.fail(`'${name}' is annotated ${wantText}, but its value is ${gotText}`, span);
       }
       throw err;
     }

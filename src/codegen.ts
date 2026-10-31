@@ -1478,7 +1478,10 @@ export class Codegen {
       provided = e.args.map((a) => this.val(a, side, ctxHome, env));
     }
 
-    const args = [...provided, `...${restVar}`, ...suffix].join(", ");
+    const rightLead = this.mod.rightPartials.get(e) ?? 0;
+    const args = rightLead > 0
+      ? [`...${restVar}`, ...provided, ...suffix].join(", ")
+      : [...provided, `...${restVar}`, ...suffix].join(", ");
     return `((${fnVar}) => (...${restVar}) => ${fnVar}(${args}))(${fnJs})`;
   }
 

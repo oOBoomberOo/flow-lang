@@ -165,7 +165,7 @@ main :: Html
 main = do
   let x = Some 1 >>= (\\(v :: Int) -> [v])
   <p>{str x}</p>`),
-    /Monad\.bind argument 2: expected Int -> Option t\d+, got Int -> List Int/,
+    /Monad\.bind argument 2: expected Int -> Option a, got Int -> List Int/,
   );
   assert.throws(
     () => compileInTemp(`import Monad (Monad)

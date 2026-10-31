@@ -126,13 +126,19 @@ instance Functor List where
 
 ```flow
 f x y = x + y          -- application by juxtaposition
-g = f 1                -- partial application
+g = f 1                -- partial application (fills from the left)
 h = f 1 2              -- fully applied
+byOption = Option.map f -- right section (fills the trailing parameter)
 ```
 
+A call may fill the **trailing** parameters instead of the leading ones; that is
+a right section, mirroring `(+ 1)`. `Option.map f` is a function waiting for the
+option, and `xs |> List.map f` is `List.map f xs`. The compiler prefers the
+normal left-filled partial when both readings type-check.
+
 Operators, from loosest to tightest: `$`, `<|`, `|>`, `>>=`, `||`, `&&`, comparisons, `:`,
-`++`, `+ -`, `* / %`, `.`. `x |> f` is `f x` (insert as first argument); `f <| x` and `f $ x`
-are `f x`. `.` composes: `(f . g) x = f (g x)`.
+`++`, `+ -`, `* / %`, `.`. `x |> f a` is `f a x` (insert as the next argument); `f <| x` and
+`f $ x` are `f x`. `.` composes: `(f . g) x = f (g x)`.
 
 Sections and operator values:
 

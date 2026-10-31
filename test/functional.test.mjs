@@ -87,6 +87,37 @@ main = <p>{"fp"}</p>
   });
 });
 
+test("functional: a right section fills the trailing parameters", async () => {
+  const source = `import List (map)
+import Option
+import Http (get, Router, RequestObject, textResponse)
+
+doubleAll :: List Int -> List Int
+doubleAll = map (\\x -> x * 2)
+
+incOption :: Option Int -> Option Int
+incOption = Option.map (\\x -> x + 1)
+
+addPair :: Option (Int, Int) -> Option Int
+addPair = Option.map \\(a, b) -> a + b
+
+routes :: () -> ()
+routes () =
+  Router.mount [ get "/rs" (\\(_req :: RequestObject) ->
+    textResponse (str (doubleAll [1, 2, 3]) + "|" + str (incOption (Some 4)) + "|" +
+      str (incOption None) + "|" + str (addPair (Some (2, 3))) + "|" +
+      str ([1, 2, 3] |> map (\\x -> x + 10)))) ]
+
+main :: Html
+main = <p>{"rs"}</p>
+`;
+  await withHost(source, async (host) => {
+    const res = await fetch(host.url + "/rs");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "[2, 4, 6]|Some(5)|None|Some(5)|[11, 12, 13]");
+  });
+});
+
 test("functional: inferred lambda parameters work in every position", () => {
   const src = `import List (map, filter, range)
 

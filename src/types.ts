@@ -174,7 +174,7 @@ export function unify(a: Type, b: Type): void {
   const x = prune(a), y = prune(b);
   if (x === y) return;
   if (x.k === "var") {
-    if (occurs(x.id, y)) tErr(`infinite type: ${typeStr(x)} = ${typeStr(y)}`);
+    if (occurs(x.id, y)) { const [a, b] = typeStrs([x, y]); tErr(`infinite type: ${a} = ${b}`); }
     // A bound survives unification with another type variable so the call site
     // can still find (or pass) a dictionary for it.
     if (y.k === "var" && x.bounds?.length) {
@@ -185,7 +185,7 @@ export function unify(a: Type, b: Type): void {
     return;
   }
   if (y.k === "var") {
-    if (occurs(y.id, x)) tErr(`infinite type: ${typeStr(x)} = ${typeStr(y)}`);
+    if (occurs(y.id, x)) { const [a, b] = typeStrs([x, y]); tErr(`infinite type: ${a} = ${b}`); }
     bind(y.id, x);
     return;
   }
@@ -193,7 +193,7 @@ export function unify(a: Type, b: Type): void {
     if (x.k === "app" && y.k === "app") {
       unify(x.fn, y.fn);
       if (x.args.length !== y.args.length) {
-        tErr(`type constructor arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+        { const [a, b] = typeStrs([x, y]); tErr(`type constructor arity mismatch: ${a} vs ${b}`); }
       }
       for (let i = 0; i < x.args.length; i++) unify(x.args[i]!, y.args[i]!);
       return;
@@ -203,7 +203,7 @@ export function unify(a: Type, b: Type): void {
     if (con) {
       const fn = prune(app.fn);
       if (fn.k === "var") {
-        if (occurs(fn.id, con)) tErr(`infinite type: ${typeStr(fn)} = ${typeStr(con)}`);
+        if (occurs(fn.id, con)) { const [a, b] = typeStrs([fn, con]); tErr(`infinite type: ${a} = ${b}`); }
         bind(fn.id, { k: "con", name: con.name, args: [] });
         return unify({ k: "con", name: con.name, args: app.args }, con);
       }
@@ -211,13 +211,13 @@ export function unify(a: Type, b: Type): void {
         return unify({ k: "con", name: fn.name, args: app.args }, con);
       }
     }
-    tErr(`type mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+    { const [a, b] = typeStrs([x, y]); tErr(`type mismatch: ${a} vs ${b}`); }
   }
   if (x.k === "fun" && y.k === "fun") {
     if (x.params.length !== y.params.length) {
       // a -> b -> c and a -> (b -> c) are the same curried function type
       const [short, long] = x.params.length < y.params.length ? [x, y] : [y, x];
-      if (short.params.length === 0) tErr(`function arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+      if (short.params.length === 0) { const [a, b] = typeStrs([x, y]); tErr(`function arity mismatch: ${a} vs ${b}`); }
       const n = short.params.length;
       for (let i = 0; i < n; i++) unify(short.params[i]!, long.params[i]!);
       unify(short.ret, { k: "fun", params: long.params.slice(n), ret: long.ret, eff: long.eff });
@@ -230,8 +230,8 @@ export function unify(a: Type, b: Type): void {
     return;
   }
   if (x.k === "con" && y.k === "con") {
-    if (x.name !== y.name) tErr(`type mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
-    if (x.args.length !== y.args.length) tErr(`type arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+    if (x.name !== y.name) { const [a, b] = typeStrs([x, y]); tErr(`type mismatch: ${a} vs ${b}`); }
+    if (x.args.length !== y.args.length) { const [a, b] = typeStrs([x, y]); tErr(`type arity mismatch: ${a} vs ${b}`); }
     for (let i = 0; i < x.args.length; i++) unify(x.args[i]!, y.args[i]!);
     return;
   }
@@ -278,11 +278,11 @@ export function unify(a: Type, b: Type): void {
     return;
   }
   if (x.k === "tuple" && y.k === "tuple") {
-    if (x.items.length !== y.items.length) tErr(`tuple arity mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+    if (x.items.length !== y.items.length) { const [a, b] = typeStrs([x, y]); tErr(`tuple arity mismatch: ${a} vs ${b}`); }
     for (let i = 0; i < x.items.length; i++) unify(x.items[i]!, y.items[i]!);
     return;
   }
-  tErr(`type mismatch: ${typeStr(x)} vs ${typeStr(y)}`);
+  { const [a, b] = typeStrs([x, y]); tErr(`type mismatch: ${a} vs ${b}`); }
 }
 
 function bind(id: number, t: Type) {
@@ -391,25 +391,64 @@ export function freeVars(t: Type, acc = new Set<number>()): Set<number> {
 /* ------------------------------------------------------------------ */
 
 /** A type argument needs parentheses when it is itself a function or a tuple. */
-function typeArg(t: Type): string {
+function typeArg(t: Type, names: Map<number, string>, raw: boolean): string {
   const p = prune(t);
-  const s = typeStr(p);
+  const s = typeStr(p, names, raw);
   return p.k === "fun" || p.k === "rec" ? `(${s})` : s;
 }
 
-export function typeStr(t: Type): string {
+/** `a`, `b`, ..., `z`, `a1`, `b1`, ... in first-seen order. */
+function typeVarName(index: number): string {
+  const letter = String.fromCharCode(97 + (index % 26));
+  const round = Math.floor(index / 26);
+  return round === 0 ? letter : `${letter}${round}`;
+}
+
+/**
+ * Render a type for humans. Unification variables are named `a`, `b`, ... in
+ * first-seen order instead of leaking compiler ids (`t429`). Pass a shared
+ * `names` map (or use `typeStrs`) when several types appear in one message, so
+ * variables keep distinct names across them.
+ *
+ * `raw` keeps the `t<id>` form for identity checks that compare printed types.
+ */
+export function typeStr(t: Type, names: Map<number, string> = new Map(), raw = false): string {
   const p = prune(t);
   switch (p.k) {
-    case "var": return `t${p.id}`;
-    case "con": return p.args.length ? `${p.name} ${p.args.map(typeArg).join(" ")}` : p.name;
-    case "app": return `${typeStr(p.fn)} ${p.args.map(typeArg).join(" ")}`;
+    case "var": {
+      if (raw) return `t${p.id}`;
+      let name = names.get(p.id);
+      if (!name) {
+        name = typeVarName(names.size);
+        names.set(p.id, name);
+      }
+      return name;
+    }
+    case "con": return p.args.length ? `${p.name} ${p.args.map((a) => typeArg(a, names, raw)).join(" ")}` : p.name;
+    case "app": return `${typeStr(p.fn, names, raw)} ${p.args.map((a) => typeArg(a, names, raw)).join(" ")}`;
     case "fun": {
       const eff = p.eff.labels.size ? ` ! {${[...p.eff.labels].join(", ")}}` : "";
-      return `${p.params.map(typeArg).join(" -> ")} -> ${typeStr(p.ret)}${eff}`;
+      return `${p.params.map((a) => typeArg(a, names, raw)).join(" -> ")} -> ${typeStr(p.ret, names, raw)}${eff}`;
     }
-    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k} :: ${typeStr(v)}`).join(", ")} }`;
-    case "tuple": return `(${p.items.map(typeStr).join(", ")})`;
+    case "rec": return `{ ${Object.entries(p.fields).map(([k, v]) => `${k} :: ${typeStr(v, names, raw)}`).join(", ")} }`;
+    case "tuple": return `(${p.items.map((i) => typeStr(i, names, raw)).join(", ")})`;
   }
+}
+
+/** Several types in one message, sharing one set of variable names. */
+export function typeStrs(types: Type[]): string[] {
+  const names = new Map<number, string>();
+  return types.map((t) => {
+    const p = prune(t);
+    const s = typeStr(p, names);
+    // `a -> b vs Option c` would read ambiguously; keep comparisons grouped.
+    return p.k === "fun" || p.k === "rec" ? `(${s})` : s;
+  });
+}
+
+/** A stable printed form for comparing two types; variables keep their ids. */
+export function typeKey(t: Type): string {
+  return typeStr(t, new Map(), true);
 }
 
 export function effStr(e: Eff): string {
