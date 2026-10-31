@@ -29,6 +29,8 @@ export type Side = "client" | "server";
 export interface CutInfo {
   id: string;
   node: Expr;
+  /** The server-side body, with duplicated pure local helpers folded in. */
+  serverNode?: Expr;
   home: Side;
   deps: string[];
   mode: "reactive" | "call";
@@ -68,6 +70,8 @@ export class Codegen {
   private shimAlias = new Map<string, string>();
   cuts = new Map<object, CutInfo>();
   cutList: CutInfo[] = [];
+  /** Local `let`/`where` bindings in scope, for duplicating pure helpers. */
+  private localDefs = new Map<string, Expr>();
   emitting = new Set<object>();
   diagnostics: string[] = [];
   private counter = 0;
@@ -153,13 +157,21 @@ export class Codegen {
 
   placeOf(e: object): Place { return this.mod.info.get(e)?.place ?? "neutral"; }
 
-  home(e: Expr): Side | "neutral" {
+  home(e: Expr | undefined): Side | "neutral" {
+    if (!e) return "neutral";
     const cached = this.homes.get(e);
     if (cached) return cached;
     const p = this.placeOf(e);
     let h: Side | "neutral";
-    if (p === "neutral") h = "neutral";
-    else if (p === "client") h = "client";
+    if (p === "neutral") {
+      // Inference can record a neutral place before a field or parameter type
+      // resolves (`event.target.value` while `event` is still a type variable).
+      // The resolved type is authoritative, and a neutral node with placed
+      // children belongs to their side.
+      const t = this.mod.info.get(e)?.ty;
+      const tp = t ? typePlace(t) : "neutral";
+      h = tp === "client" || tp === "server" ? tp : this.resolveCross(e);
+    } else if (p === "client") h = "client";
     else if (p === "server") h = "server";
     else h = this.resolveCross(e);
     this.homes.set(e, h);
@@ -178,7 +190,14 @@ export class Codegen {
     if (t) { const tp = typePlace(t); if (tp === "client" || tp === "server") return tp; }
 
     switch (e.k) {
-      case "App": { const f = this.home(e.fn); if (f !== "neutral") return f; break; }
+      // A function is a value; its body runs where it is invoked.
+      case "Lam": return "neutral";
+      case "App": {
+        // A neutral function is a value: it can run where the call is used, so
+        // its client/server arguments become the cuts instead of the whole call.
+        const f = this.home(e.fn);
+        return f === "neutral" ? "neutral" : f;
+      }
       case "Html": return "client";
       case "Match": { for (const a of e.arms) { const h = this.home(a.body); if (h !== "neutral") return h; } break; }
       case "If": {
@@ -220,6 +239,33 @@ export class Codegen {
       return;
     }
     const h = this.home(e);
+    // A let/block is a sequence of independently placed parts, not one region.
+    // Walk the binding(s) and the body separately so `let title = event.value`
+    // stays on the client while the server call in the body becomes the cut.
+    if (e.k === "Let" || e.k === "Block") {
+      if (ctxHome === "neutral" && h !== "neutral" && h !== "cross") ctxHome = h;
+      if (e.k === "Let") {
+        this.walk(e.value, ctxHome, inHandler, top);
+        const prev = this.localDefs.get(e.name);
+        this.localDefs.set(e.name, e.value);
+        this.walk(e.body, ctxHome, inHandler, top);
+        if (prev) this.localDefs.set(e.name, prev);
+        else this.localDefs.delete(e.name);
+        return;
+      }
+      const saved = new Map(this.localDefs);
+      for (const s of e.stmts) {
+        if (s.k === "LetStmt") {
+          this.walk(s.value, ctxHome, inHandler, top);
+          this.localDefs.set(s.name, s.value);
+        } else {
+          this.walk(s.e, ctxHome, inHandler, top);
+        }
+      }
+      if (e.value) this.walk(e.value, ctxHome, inHandler, top);
+      this.localDefs = saved;
+      return;
+    }
     if (h !== "neutral" && ctxHome !== "neutral" && h !== ctxHome) {
       if (this.rowHasAlgebraic(this.effOf(e))) {
         this.fail(
@@ -228,11 +274,14 @@ export class Codegen {
           e.span,
         );
       }
+      const deps = [...freeVars(e, new Set())].filter((n) => this.isRuntimeLocal(n));
+      const lifted = this.liftLocalDeps(e, deps, h);
       const cut: CutInfo = {
         id: `cut${++this.counter}`,
         node: e,
+        serverNode: lifted.node === e ? undefined : lifted.node,
         home: h,
-        deps: [...freeVars(e, new Set())].filter((n) => this.isRuntimeLocal(n)),
+        deps: lifted.wire,
         mode: inHandler ? "call" : "reactive",
         line: e.span.line,
         file: e.span.file,
@@ -278,9 +327,81 @@ export class Codegen {
     return parent.nodes.some(scan);
   }
 
+  /** A pure local helper that can be re-emitted on the cut's side. */
+  private canDuplicateLocal(name: string, side: Side, seen = new Set<string>()): boolean {
+    if (seen.has(name)) return true;
+    seen.add(name);
+    const def = this.localDefs.get(name);
+    if (!def) return false;
+    const t = this.mod.info.get(def)?.ty;
+    if (!t || prune(t).k !== "fun") return false;
+    if (this.home(def) !== "neutral") return false;
+    if (this.effOf(def)?.labels.size) return false;
+    // A lambda whose body belongs to the other tier (`event.target`, a client
+    // cell) cannot be emitted on this side. Neutral and same-side bodies can.
+    if (def.k === "Lam") {
+      const bodyHome = this.home(def.body);
+      if (bodyHome !== "neutral" && bodyHome !== side) return false;
+    }
+    for (const v of freeVars(def, new Set())) {
+      if (!this.localDefs.has(v)) continue;
+      // Captured values are sent as ordinary deps; only captured functions
+      // need to be duplicated recursively.
+      const vt = this.mod.info.get(this.localDefs.get(v)!)?.ty;
+      if (vt && prune(vt).k === "fun" && !this.canDuplicateLocal(v, side, seen)) return false;
+    }
+    return true;
+  }
+
+  /** Replace wire dependencies that are pure local helpers with local bindings. */
+  private liftLocalDeps(node: Expr, deps: string[], side: Side): { node: Expr; wire: string[] } {
+    const wire: string[] = [];
+    const lifted: string[] = [];
+    const seen = new Set<string>();
+    const add = (name: string) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const def = this.localDefs.get(name);
+      if (!def) return;
+      // Dependencies first; the reverse wrap below puts them outside the helper.
+      for (const v of freeVars(def, new Set())) {
+        if (!this.localDefs.has(v)) continue;
+        const vdef = this.localDefs.get(v)!;
+        const vt = this.mod.info.get(vdef)?.ty;
+        if (vt && prune(vt).k === "fun") add(v);
+        else if (!wire.includes(v)) wire.push(v);
+      }
+      lifted.push(name);
+    };
+    for (const d of deps) {
+      if (this.canDuplicateLocal(d, side)) add(d);
+      else wire.push(d);
+    }
+    // A duplicated helper may capture another local value; that value still
+    // has to cross the wire (it is not part of the original cut node).
+    const liftedSet = new Set(lifted);
+    for (const d of lifted) {
+      const def = this.localDefs.get(d)!;
+      for (const v of freeVars(def, new Set())) {
+        if (this.localDefs.has(v) && !liftedSet.has(v) && !wire.includes(v)) wire.push(v);
+      }
+    }
+    let out = node;
+    for (const d of lifted.reverse()) {
+      const def = this.localDefs.get(d)!;
+      const binding: Expr = { k: "Let", name: d, mut: false, value: def, body: out, span: node.span };
+      const info = this.mod.info.get(out);
+      if (info) this.mod.info.set(binding, info);
+      out = binding;
+    }
+    return { node: out, wire };
+  }
+
   private isRuntimeLocal(name: string): boolean {
     if (this.mod.fns.has(name) || this.mod.ctors.has(name)) return false;
     if (this.mod.effects.has(name) || this.mod.traits.has(name)) return false;
+    // Trait methods are dispatched at the call site, not captured as values.
+    if (this.mod.methodIndex.has(name)) return false;
     return true;
   }
 
@@ -319,6 +440,10 @@ export class Codegen {
         if (t) return t;
       }
     }
+    // A duplicated helper can reference a local that the cut node itself does
+    // not mention; its binding still tells us what crosses.
+    const def = this.localDefs.get(name);
+    if (def) return this.mod.info.get(def)?.ty ?? null;
     return null;
   }
 
@@ -946,7 +1071,7 @@ export class Codegen {
     for (const cut of this.cutList) {
       if (cut.home !== side) continue;
       this.emitting.add(cut.node);
-      const body = this.emitExpr(cut.node, side, side, new Set(cut.deps));
+      const body = this.emitExpr(cut.serverNode ?? cut.node, side, side, new Set(cut.deps));
       this.emitting.delete(cut.node);
       const destructure = cut.deps.length ? `const { ${cut.deps.join(", ")} } = A;` : "";
       const asyncKw = this.hasCallCut(cut.node, true) ? "async " : "";

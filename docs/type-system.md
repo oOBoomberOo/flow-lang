@@ -321,7 +321,7 @@ home(e) = resolve(e)           if p = cross
 | # | Rule | Rationale |
 |---|------|-----------|
 | 1 | If `typePlace(τ(e))` is one-sided, that side wins | an `Html` value cannot exist on the server |
-| 2 | `App`: the callee's home wins | compute where the function lives; arguments travel |
+| 2 | `App`: a placed callee's home wins; a neutral callee stays neutral | compute where the function lives; arguments travel |
 | 3 | `if`/`case`/blocks: the first non-neutral branch wins | follow the work |
 | 4 | first non-neutral operand | data flow direction |
 | 5 | otherwise **neutral** | no part of it needs a side; run it in the enclosing context |
@@ -337,6 +337,12 @@ Every cut gets a stable id. Its **free variables** become transport edges:
 ```
 deps(cut) = fv(cut.node) ∩ runtime-locals
 ```
+
+A `let` or block is split per part rather than cut as one region: a client-side
+binding such as `let title = event.target.value` stays on the client and
+`title` becomes a dep of the server cut. A pure local helper used by the cut
+(including a `where` function) is re-emitted on the cut's side and removed from
+the wire deps; its captured non-function values are sent normally.
 
 Two cut modes, chosen by *where the node sits*, not by a flag:
 

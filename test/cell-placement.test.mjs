@@ -150,6 +150,65 @@ test("cells: a server-bound cell is created once and read/written through cuts",
   assert.ok(!/function counter\(/.test(r.client), "the cell is not created in the browser");
 });
 
+test("cells: an event handler sends the field value, not the Event", () => {
+  const r = compileSource(`
+data Todo = Todo { id :: Int, title :: Str, completed :: Bool }
+
+addTodo :: Todo -> List Todo -> List Todo
+addTodo todo todos = todos ++ [todo]
+
+state :: Cell (List Todo)
+state = Server.state []
+
+homePage req =
+  <div>
+    <button onClick={addItem}>{"+"}</button>
+  </div>
+  where
+    addItem event =
+      let title = event.target.value in
+        state.update $
+          \\todos -> addTodo (Todo { id = getLastId todos + 1, title = title, completed = False }) todos
+            where
+              getLastId = List.fold Math.maxInt 0 . map \\t -> t.id
+
+main :: Html
+main = homePage ()`, "event-cut.flow");
+  assert.deepEqual(r.errors, []);
+  const cut = r.diagnostics.find((d) => /^cut \w+: call server-side/.test(d));
+  assert.ok(cut, "the update crosses as a call cut");
+  assert.match(cut, /deps=\[title\]/, "only the string crosses, not the Event");
+  assert.match(r.server, /const getLastId =/, "the pure local helper is duplicated on the server");
+  assert.doesNotMatch(r.server, /event\.target/, "the server never touches the Event");
+});
+
+test("cells: a pure local helper is duplicated and only its captured value crosses", () => {
+  const r = compileSource(`main :: Html
+main = do
+  let n = 1
+  let f = \\(x :: Int) -> x + n
+  <p>{Server.log (str (f 1))}</p>`, "helper-cut.flow");
+  assert.deepEqual(r.errors, []);
+  const cut = r.diagnostics.find((d) => /^cut \w+: reactive server-side/.test(d));
+  assert.ok(cut, "the log call crosses");
+  assert.match(cut, /deps=\[n\]/, "the captured value crosses, not the function");
+  assert.match(r.server, /const f =/, "the helper is re-emitted on the server");
+});
+
+test("cells: a right-section map reads the list on the server and renders on the client", () => {
+  const r = compileSource(`state :: Cell (List Int)
+state = Server.state []
+
+main :: Html
+main = <ul>{map (get state) $ \\n -> <li>{str n}</li>}</ul>`, "map-cut.flow");
+  assert.deepEqual(r.errors, []);
+  const cut = r.diagnostics.find((d) => /^cut \w+: reactive server-side/.test(d));
+  assert.ok(cut, "the list read is a reactive cut");
+  assert.match(cut, /type=List Int/, "the cut produces the list, not a function");
+  assert.doesNotMatch(cut, /->/, "no function value crosses");
+  assert.match(r.client, /map|Functor/, "the map runs in the browser");
+});
+
 test("cells: a server-bound cell cannot be created inside client code", () => {
   assert.throws(
     () => compileSource(`main :: Html

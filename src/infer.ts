@@ -18,7 +18,7 @@ import {
   type Type, type Eff, fresh, prune, unify, unifyEff, generalize, instantiate,
   freeVars, emptyEff, con, INT, FLOAT, STR, BOOL, UNIT, HTML, fnT, listOf,
   cellOf, eventOf, typeStr, typeStrs, typeKey, joinPlace, typePlace, withTypePlace, hasGeneric,
-  snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
+  sendable, snapshotSubst, restoreSubst, markGeneric, resetSubst, resetIds, occurs,
 } from "./types.ts";
 
 export interface ResInfo { ty: Type; place: Place; eff: Eff }
@@ -1120,7 +1120,8 @@ export class Infer {
     this.pendingTraitCalls = [];
     for (let i = 0; i < params.length; i++) {
       const p = params[i]!;
-      this.env.set(p.name, { ty: t.params[i]!, envVars: new Set(), place: "neutral" });
+      const pt = t.params[i]!;
+      this.env.set(p.name, { ty: pt, envVars: new Set(), place: typePlace(pt) });
     }
     let r: ResInfo;
     try {
@@ -1399,7 +1400,7 @@ export class Infer {
           seenParams.add(p.name);
           const useExpected = p.type.k === "TVar" && p.type.name === "_" && expFn?.k === "fun" && expFn.params.length === e.params.length;
           const t = useExpected ? expFn.params[pi]! : this.resolveType(p.type, this.typeParams);
-          this.env.set(p.name, { ty: t, envVars: new Set(), place: "neutral" });
+          this.env.set(p.name, { ty: t, envVars: new Set(), place: typePlace(t) });
           return t;
         });
         this.checkEffectRow(e.eff, e.span);
@@ -1440,10 +1441,11 @@ export class Infer {
       case "Match": return this.inferMatch(e);
 
       case "Let": {
-        const v = this.inferBinding(e.name, e.value);
-        if (e.ann) {
-          this.checkAnnotation(v.ty, this.resolveType(e.ann, this.typeParams), e.name, e.value.span);
-          this.checkPlacement(annotatedPlace(e.ann), v.place, e.ann.span, `'${e.name}'`);
+        const annTy = e.ann ? this.resolveType(e.ann, this.typeParams) : undefined;
+        const v = this.inferBinding(e.name, e.value, annTy);
+        if (annTy) {
+          this.checkAnnotation(v.ty, annTy, e.name, e.value.span);
+          this.checkPlacement(annotatedPlace(e.ann), v.place, e.ann!.span, `'${e.name}'`);
         }
         const envVars = new Set<number>();
         for (const s of this.env.values()) for (const x of freeVars(s.ty)) envVars.add(x);
@@ -1514,7 +1516,11 @@ export class Infer {
         if (tt.k === "con" && (tt.name === "Event" || tt.name === "Dom")) {
           const field = domFieldType(tt.name, e.name);
           if (!field) this.fail(`${tt.name} has no field '${e.name}'`, e.span);
-          return { ty: field, place: joinPlace(target.place, typePlace(field)), eff: target.eff };
+          return {
+            ty: field,
+            place: joinPlace(joinPlace(target.place, typePlace(tt)), typePlace(field)),
+            eff: target.eff,
+          };
         }
         const t = prune(target.ty);
         let ty: Type;
@@ -1626,10 +1632,11 @@ export class Infer {
         let eff = emptyEff();
         for (const s of e.stmts) {
           if (s.k === "LetStmt") {
-            const v = this.inferBinding(s.name, s.value);
-            if (s.ann) {
-              this.checkAnnotation(v.ty, this.resolveType(s.ann, this.typeParams), s.name, s.value.span);
-              this.checkPlacement(annotatedPlace(s.ann), v.place, s.ann.span, `'${s.name}'`);
+            const annTy = s.ann ? this.resolveType(s.ann, this.typeParams) : undefined;
+            const v = this.inferBinding(s.name, s.value, annTy);
+            if (annTy) {
+              this.checkAnnotation(v.ty, annTy, s.name, s.value.span);
+              this.checkPlacement(annotatedPlace(s.ann), v.place, s.ann!.span, `'${s.name}'`);
             }
             // local functions are polymorphic; other values stay monomorphic (value restriction)
             let ty = v.ty;
@@ -1665,7 +1672,7 @@ export class Infer {
    * The value of a `let`. A lambda may refer to its own name, so local helper
    * functions (`go acc xs = … go …`) recurse; everything else is inferred as is.
    */
-  private inferBinding(name: string, value: Expr): ResInfo {
+  private inferBinding(name: string, value: Expr, expected?: Type): ResInfo {
     // A binding of an explicitly placed value lives on that side even when the
     // producing expression is neutral: `let c = Server.state 0` binds a server
     // cell, and every later read/write is a server computation.
@@ -1673,13 +1680,15 @@ export class Infer {
       ...v,
       place: joinPlace(v.place, typePlace(v.ty)),
     });
-    if (value.k !== "Lam") return placed(this.infer(value));
+    if (value.k !== "Lam") {
+      return placed(expected ? this.inferArg(value, expected) : this.infer(value));
+    }
     const self = fresh(0);
     const saved = this.env;
     this.env = new Map(saved);
     this.env.set(name, { ty: self, envVars: new Set(), place: "neutral" });
     let v: ResInfo;
-    try { v = this.infer(value); }
+    try { v = expected ? this.inferArg(value, expected) : this.infer(value); }
     finally { this.env = saved; }
     try { unify(self, v.ty); }
     catch (err) {
@@ -2215,7 +2224,10 @@ export class Infer {
       const eff: Eff = { labels: new Set(ft.eff.labels) };
       return {
         ty: fnT(remaining, ft.ret, eff),
-        place: joinPlace(place, placeFromEffects(ft.eff, this)),
+        // A partial application is a function value: it runs where it is
+        // invoked, and its arguments are cut separately. Keep the callee's side
+        // (a server function stays server), not the argument's.
+        place: joinPlace(fnInfo.place, placeFromEffects(ft.eff, this)),
         eff: mergeEff(fnInfo.eff, argEff),
       };
     }
@@ -2336,6 +2348,15 @@ export class Infer {
 
     const trait = this.mod.traits.get(traitName)!;
     const di = this.dispatchIndex(trait, schemeTy);
+    // A partial call produces a function value. Its data arguments are cut
+    // separately, but a non-sendable receiver (a Cell, a DOM handle) pins the
+    // closure to that receiver's side.
+    const recvTy = di >= 0 && args[di] ? this.mod.info.get(args[di]!)?.ty : undefined;
+    const pinned = recvTy ? !sendable(recvTy).ok : false;
+    const recvPlace = pinned && args[di]
+      ? joinPlace(this.mod.info.get(args[di]!)?.place ?? "neutral", typePlace(recvTy!))
+      : "neutral";
+    const resultPlace = partial ? joinPlace(seed, recvPlace) : place;
     let target = prune(di >= 0 ? inst.params[di]! : inst.ret);
     if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
       const head = headConstructor(target);
@@ -2345,12 +2366,12 @@ export class Infer {
       // through its dictionary.
       target = head.k === "con" ? target : head;
     }
-    this.mod.info.set(node, { ty: resultTy, place, eff });
+    this.mod.info.set(node, { ty: resultTy, place: resultPlace, eff });
 
     if (target.k === "var") {
       if (target.bounds?.includes(traitName)) {
         this.bindTraitChoice(node, traitName, method, target);
-        return { ty: resultTy, place, eff };
+        return { ty: resultTy, place: resultPlace, eff };
       }
       // A return-position method (`pure`, `empty`, `return`) has no receiver to
       // dispatch on yet. Defer until the enclosing body has unified the result
@@ -2359,10 +2380,10 @@ export class Infer {
         node, trait: traitName, method, target, di,
         span: (node as { span?: { line?: number; col?: number; file?: string } }).span,
       });
-      return { ty: resultTy, place, eff };
+      return { ty: resultTy, place: resultPlace, eff };
     }
     this.bindTraitChoice(node, traitName, method, target);
-    return { ty: resultTy, place, eff };
+    return { ty: resultTy, place: resultPlace, eff };
   }
 
   /** Point a trait call at a dictionary parameter or a concrete impl. */

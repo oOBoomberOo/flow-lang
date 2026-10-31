@@ -159,12 +159,24 @@ test("a call inside an event handler crosses as a request/response cut", async (
     const ids = [...result.server.matchAll(/R\.serve\("(\w+)"/g)].map((m) => m[1]);
     const clientIds = [...result.client.matchAll(/R\.serve\("(\w+)"/g)].map((m) => m[1]);
     assert.deepEqual(ids, ["cut1"], "server serves the audit cut");
-    // Cells are neutral now, so the server needs no client subscription.
-    assert.deepEqual(clientIds, [], "no client-side cut is required");
+    // The client cell is explicitly client-bound, so the server asks the client
+    // for its current value inside the audit call.
+    assert.deepEqual(clientIds, ["cut2"], "the client serves the cell read");
 
     const c = await connect(host, "s2");
     void post(host, "s2", { t: "call", id: "cut1", args: {}, reqId: 99 });
-    const done = await c.waitFor((m) => m.t === "ret" && m.reqId === 99);
+    let done;
+    for (;;) {
+      const m = await c.waitFor(
+        (m) => (m.t === "call" && m.id === "cut2") || (m.t === "ret" && m.reqId === 99),
+      );
+      if (m.t === "call") {
+        await post(host, "s2", { t: "ret", reqId: m.reqId, value: 0 });
+        continue;
+      }
+      done = m;
+      break;
+    }
     c.close();
     assert.ok(done.value === undefined || done.value === null, "Audit.record returns Unit");
   });

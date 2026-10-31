@@ -512,8 +512,9 @@ test("a non-serializable value cannot cross", () => {
   bad(`
 main :: Html
 main = do
-  let f = \\(x :: Int) -> x
-  <p>{Server.log (str f)}</p>`, /cannot cross the boundary|functions are not serializable/);
+  let c = Client.state 0
+  let f = \\(x :: Int) -> x + c.value
+  <p>{Server.log (str (f 1))}</p>`, /cannot cross the boundary|functions are not serializable/);
 });
 
 /* ------------------------- html ------------------------- */
