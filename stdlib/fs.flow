@@ -20,27 +20,49 @@ effect Fs @ server where
   stat :: Str -> FileInfo
   tmpDir :: () -> Str
 
-foreign import js unsafe "__flow.host.fsReadText" host_read_text :: Str -> Str
+foreign import js unsafe "__flow.host.fsReadText" {
+  host_read_text :: Str -> Str
+}
 
-foreign import js unsafe "__flow.host.fsTryReadText" host_try_read_text :: Str -> Option Str
+foreign import js unsafe "__flow.host.fsTryReadText" {
+  host_try_read_text :: Str -> Option Str
+}
 
-foreign import js unsafe "__flow.host.fsWriteText" host_write_text :: Str -> Str -> ()
+foreign import js unsafe "__flow.host.fsWriteText" {
+  host_write_text :: Str -> Str -> ()
+}
 
-foreign import js unsafe "__flow.host.fsAppendText" host_append_text :: Str -> Str -> ()
+foreign import js unsafe "__flow.host.fsAppendText" {
+  host_append_text :: Str -> Str -> ()
+}
 
-foreign import js unsafe "__flow.host.fsExists" host_exists :: Str -> Bool
+foreign import js unsafe "__flow.host.fsExists" {
+  host_exists :: Str -> Bool
+}
 
-foreign import js unsafe "__flow.host.fsListDir" host_list_dir :: Str -> List Str
+foreign import js unsafe "__flow.host.fsListDir" {
+  host_list_dir :: Str -> List Str
+}
 
-foreign import js unsafe "__flow.host.fsMakeDir" host_make_dir :: Str -> ()
+foreign import js unsafe "__flow.host.fsMakeDir" {
+  host_make_dir :: Str -> ()
+}
 
-foreign import js unsafe "__flow.host.fsRemoveFile" host_remove_file :: Str -> ()
+foreign import js unsafe "__flow.host.fsRemoveFile" {
+  host_remove_file :: Str -> ()
+}
 
-foreign import js unsafe "__flow.host.fsRemoveDir" host_remove_dir :: Str -> ()
+foreign import js unsafe "__flow.host.fsRemoveDir" {
+  host_remove_dir :: Str -> ()
+}
 
-foreign import js unsafe "__flow.host.fsStat" host_stat :: Str -> FileInfo
+foreign import js unsafe "__flow.host.fsStat" {
+  host_stat :: Str -> FileInfo
+}
 
-foreign import js unsafe "__flow.host.fsTmpDir" host_tmp_dir :: () -> Str
+foreign import js unsafe "__flow.host.fsTmpDir" {
+  host_tmp_dir :: () -> Str
+}
 
 provide Fs where
   readText = host_read_text

@@ -63,7 +63,9 @@ a mistake — it is a boundary that the compiler will build.
 and an FFI leaf states its side:
 
 ```flow
-foreign import js unsafe "__flow.host.log" server_write :: Str -> () @server
+foreign import js unsafe "__flow.host.log" {
+  server_write :: Str -> () @server
+}
 
 log :: Str -> ()
 log msg = server_write msg        -- therefore server

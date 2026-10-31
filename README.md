@@ -145,7 +145,7 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
   iteration, JSON, dates and paths ship in the language
 * **FFI for libraries** - bind globals (`Math.floor`), methods (`@trim`) and your own JS/TS
-  modules with `foreign import js module "./shim.js" { … }`; shims are copied into the build and
+  modules with `foreign import js unsafe "./shim.js" { … }`; shims are copied into the build and
   served to the browser, so one file runs on both tiers
 * **Packages and registries** - `flow install` resolves from the default
   [flow-registry](https://github.com/oOBoomberOo/flow-registry) git registry; registries can be

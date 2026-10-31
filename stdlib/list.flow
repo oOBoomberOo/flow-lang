@@ -72,7 +72,9 @@ all xs p = case xs of
 
 -- ---------------------------------------------------------------- sorting
 -- JS sort, reached through the FFI; the input list is copied first.
-foreign import js unsafe "@sort" sort_in_place :: List a -> (a -> a -> Int) -> List a
+foreign import js unsafe "@sort" {
+  sort_in_place :: List a -> (a -> a -> Int) -> List a
+}
 
 sortBy :: List a -> (a -> a -> Int) -> List a
 sortBy xs cmp = sort_in_place (slice_to xs 0 (len xs)) cmp

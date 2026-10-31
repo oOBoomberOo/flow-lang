@@ -4,18 +4,18 @@
 import Http (get, Router, textResponse)
 
 -- (1) our own helper, written in JavaScript
-foreign import js module "./text.js" {
+foreign import js unsafe "./text.js" {
   shout :: Str -> Str
   slug :: Str -> Str
 }
 
 -- (2) a shim over a third-party module (here a tiny vendored renderer)
-foreign import js module "./tiny-chart.js" {
+foreign import js unsafe "./tiny-chart.js" {
   renderChart :: List Int -> (Int -> Str) -> Str
 }
 
 -- (3) TypeScript, on the server where Node can strip the types
-foreign import js module "./stats.ts" {
+foreign import js unsafe "./stats.ts" {
   average :: List Float -> Float @server
 }
 

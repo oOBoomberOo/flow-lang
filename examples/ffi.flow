@@ -5,13 +5,21 @@ import Time (nowMs, duration)
 import Math (sqrt, floor, pow, pi)
 
 -- User code can bind raw JavaScript directly — the same mechanism std uses.
-foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
+foreign import js unsafe "Math.hypot" {
+  hypot :: Float -> Float -> Float
+}
 
-foreign import js unsafe "@toUpperCase" shout :: Str -> Str
+foreign import js unsafe "@toUpperCase" {
+  shout :: Str -> Str
+}
 
-foreign import js unsafe "#length" countOf :: List Int -> Int
+foreign import js unsafe "#length" {
+  countOf :: List Int -> Int
+}
 
-foreign import js unsafe "#index" itemAt :: List Int -> Int -> Int
+foreign import js unsafe "#index" {
+  itemAt :: List Int -> Int -> Int
+}
 
 main :: Html
 main = do

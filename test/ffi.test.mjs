@@ -31,13 +31,21 @@ const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 test("ffi: unsafe extern js reaches every JavaScript target form", () => {
   const { entry } = packageWith({
-    "main.flow": `foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
+    "main.flow": `foreign import js unsafe "Math.hypot" {
+  hypot :: Float -> Float -> Float
+}
 
-foreign import js unsafe "@toUpperCase" shout :: Str -> Str
+foreign import js unsafe "@toUpperCase" {
+  shout :: Str -> Str
+}
 
-foreign import js unsafe "#length" count :: List Int -> Int
+foreign import js unsafe "#length" {
+  count :: List Int -> Int
+}
 
-foreign import js unsafe "#index" item :: List Int -> Int -> Int
+foreign import js unsafe "#index" {
+  item :: List Int -> Int -> Int
+}
 
 main :: Html
 main = <p>{str (hypot 3.0 4.0)} {shout "ok"} {str (count [1, 2])} {str (item [10, 20] 1)}</p>`,

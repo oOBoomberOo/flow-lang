@@ -85,9 +85,13 @@ provide Timer where
     let timer_id = unsafe_create_timer callback ms
     \\() -> unsafe_remove_timer timer_id
 
-foreign import js unsafe "window.setInterval" unsafe_create_timer :: IO () -> Int -> Int
+foreign import js unsafe "window.setInterval" {
+  unsafe_create_timer :: IO () -> Int -> Int
+}
 
-foreign import js unsafe "window.clearInterval" unsafe_remove_timer :: Int -> ()
+foreign import js unsafe "window.clearInterval" {
+  unsafe_remove_timer :: Int -> ()
+}
 
 main :: Html
 main = do

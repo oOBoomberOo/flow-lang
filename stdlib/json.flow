@@ -95,9 +95,13 @@ escapeChar c =
   else c
 
 -- ---------------------------------------------------------------- decoding
-foreign import js unsafe "__flow.host.jsonParse" host_parse :: Str -> Json
+foreign import js unsafe "__flow.host.jsonParse" {
+  host_parse :: Str -> Json
+}
 
-foreign import js unsafe "__flow.host.jsonParseSafe" host_parse_safe :: Str -> Option Json
+foreign import js unsafe "__flow.host.jsonParseSafe" {
+  host_parse_safe :: Str -> Option Json
+}
 
 -- Decode a document. Invalid JSON throws; prefer `decodeSafe` for user input.
 decode :: Str -> Json

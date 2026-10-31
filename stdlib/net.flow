@@ -10,7 +10,9 @@ type NetResult = { ok :: Bool, status :: Int, body :: Str, error :: Str }
 effect Net @ neutral where
   request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
 
-foreign import js unsafe "__flow.host.netRequest" host_request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
+foreign import js unsafe "__flow.host.netRequest" {
+  host_request :: Str -> Str -> List (Str, Str) -> Str -> (NetResult -> ()) -> ()
+}
 
 provide Net where
   request = host_request

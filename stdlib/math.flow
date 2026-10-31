@@ -3,35 +3,65 @@ module Math (sqrt, pow, floor, ceil, round, absF, minF, maxF, logF, expF, sinF, 
 -- std::math — Int helpers in Flow, float primitives through the FFI.
 -- ---------------------------------------------------------------- float host ops
 -- These used to be compiler builtins; now they are ordinary std bindings.
-foreign import js unsafe "Math.sqrt" f_sqrt :: Float -> Float
+foreign import js unsafe "Math.sqrt" {
+  f_sqrt :: Float -> Float
+}
 
-foreign import js unsafe "Math.pow" f_pow :: Float -> Float -> Float
+foreign import js unsafe "Math.pow" {
+  f_pow :: Float -> Float -> Float
+}
 
-foreign import js unsafe "Math.floor" f_floor :: Float -> Int
+foreign import js unsafe "Math.floor" {
+  f_floor :: Float -> Int
+}
 
-foreign import js unsafe "Math.ceil" f_ceil :: Float -> Int
+foreign import js unsafe "Math.ceil" {
+  f_ceil :: Float -> Int
+}
 
-foreign import js unsafe "Math.round" f_round :: Float -> Int
+foreign import js unsafe "Math.round" {
+  f_round :: Float -> Int
+}
 
-foreign import js unsafe "Math.abs" f_abs :: Float -> Float
+foreign import js unsafe "Math.abs" {
+  f_abs :: Float -> Float
+}
 
-foreign import js unsafe "Math.min" f_min :: Float -> Float -> Float
+foreign import js unsafe "Math.min" {
+  f_min :: Float -> Float -> Float
+}
 
-foreign import js unsafe "Math.max" f_max :: Float -> Float -> Float
+foreign import js unsafe "Math.max" {
+  f_max :: Float -> Float -> Float
+}
 
-foreign import js unsafe "Math.log" f_log :: Float -> Float
+foreign import js unsafe "Math.log" {
+  f_log :: Float -> Float
+}
 
-foreign import js unsafe "Math.exp" f_exp :: Float -> Float
+foreign import js unsafe "Math.exp" {
+  f_exp :: Float -> Float
+}
 
-foreign import js unsafe "Math.sin" f_sin :: Float -> Float
+foreign import js unsafe "Math.sin" {
+  f_sin :: Float -> Float
+}
 
-foreign import js unsafe "Math.cos" f_cos :: Float -> Float
+foreign import js unsafe "Math.cos" {
+  f_cos :: Float -> Float
+}
 
-foreign import js unsafe "Math.random" f_random :: () -> Float
+foreign import js unsafe "Math.random" {
+  f_random :: () -> Float
+}
 
-foreign import js unsafe "Math.PI" f_pi :: () -> Float
+foreign import js unsafe "Math.PI" {
+  f_pi :: () -> Float
+}
 
-foreign import js unsafe "Math.E" f_e :: () -> Float
+foreign import js unsafe "Math.E" {
+  f_e :: () -> Float
+}
 
 sqrt :: Float -> Float
 sqrt x = f_sqrt x
@@ -112,7 +142,9 @@ sign :: Int -> Int
 sign n = if n < 0 then -1 else if n > 0 then 1 else 0
 
 -- ---------------------------------------------------------------- conversions
-foreign import js unsafe "Number" f_number :: Int -> Float
+foreign import js unsafe "Number" {
+  f_number :: Int -> Float
+}
 
 toFloat :: Int -> Float
 toFloat n = f_number n

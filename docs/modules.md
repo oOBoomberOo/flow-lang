@@ -116,7 +116,7 @@ Inside the package, `import Util` resolves to `src/util.flow`; `import FlowTime.
 resolves to the dependency's `src/format.flow`.
 
 A package may ship JavaScript or TypeScript beside its Flow sources and bind it with
-`foreign import js module "./text.js" { … }` (see [language.md](language.md) § 8). The file is
+`foreign import js unsafe "./text.js" { … }` (see [language.md](language.md) § 8). The file is
 resolved relative to the declaring source, copied into `modules/` at build time and served to the
 browser, so one shim runs on both tiers. `examples/ffi-shim` shows a hand-written helper, a
 wrapper around an existing library and a server-only TypeScript module.

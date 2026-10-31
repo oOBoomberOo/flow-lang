@@ -138,7 +138,9 @@ test("declarations: effect, provide and foreign", () => {
 provide Audit where
   record k = k
 
-foreign import js unsafe "Math.floor" floor :: Float -> Int`);
+foreign import js unsafe "Math.floor" {
+  floor :: Float -> Int
+}`);
   assert.equal(p.decls[0].k, "Effect");
   assert.equal(p.decls[0].place, "server");
   assert.equal(p.decls[1].k, "Provide");

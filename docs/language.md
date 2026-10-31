@@ -201,7 +201,9 @@ that reaches it carries the placement:
 ```flow
 module Server (log, now, random) where
 
-foreign import js unsafe "__flow.host.log" server_write :: Str -> () @server
+foreign import js unsafe "__flow.host.log" {
+  server_write :: Str -> () @server
+}
 
 log :: Str -> ()
 log msg = server_write msg
@@ -358,31 +360,52 @@ summary () =
 
 ## 8. FFI
 
-### Globals, methods and properties
+FFI has **one shape**: a source and a block of bindings.
 
 ```flow
-foreign import js unsafe "Math.sqrt" sqrt :: Float -> Float
-foreign import js unsafe "@toUpperCase" upper :: Str -> Str
-foreign import js unsafe "#length" length :: List a -> Int
+foreign import js unsafe "./text.js" { shout :: Str -> Str }
+
+foreign import js unsafe "Math" {
+  floor :: Float -> Int
+  sqrt :: Float -> Float
+}
+
+foreign import js unsafe "@toUpperCase" { upper :: Str -> Str }
 ```
 
-`"Path"` calls a global (keeping its receiver), `"@name"` is a method on the first argument,
-`"#name"` a property, `"#index"` an element access. Plain FFI is `unsafe` by construction and
-only the `js` target exists.
+The **source** says where the JavaScript lives; the **block** says which names Flow sees.
+A block may hold one binding or many, and every binding is an ordinary Flow value (curried,
+passable to `map`, usable on either side of the boundary).
+
+| Source | Meaning | Lookup |
+|---|---|---|
+| `"./shim.js"` `"./stats.ts"` | a module shipped next to the `.flow` file | the exported name of each binding |
+| `"Math"` | a global object | each binding is one of its properties (`Math.floor`) |
+| `"Math.floor"` | a single global leaf | the source itself (the block has one binding) |
+| `"@toUpperCase"` | a method on the first argument | `arg0.toUpperCase(rest…)` |
+| `"#length"` | a property of the first argument | `arg0.length` |
+
+```flow
+foreign import js unsafe "Math.hypot" { hypot :: Float -> Float -> Float }   -- a leaf
+foreign import js unsafe "console" {
+  log :: Str -> ()                                                           -- console.log
+}
+```
+
+FFI is `unsafe` by construction and only the `js` target exists.
 
 ### Shimming your own module
 
-A library can ship JavaScript or TypeScript next to its `.flow` files and bind it as a module:
-
 ```flow
-foreign import js module "./text.js" {
+foreign import js unsafe "./text.js" {
   shout :: Str -> Str
   slug :: Str -> Str
 }
 ```
 
-The path is resolved relative to the declaring source. Every member is a normal Flow value, so
-it can be curried, passed to `map`, or used on either side of the boundary:
+The path is resolved relative to the declaring source. The file is copied into the build
+(`modules/`) and **served to the browser** at `/modules/<name>`, while the server imports the
+same file, so one shim serves both tiers.
 
 ```js
 // text.js
@@ -390,12 +413,8 @@ export const shout = (s) => String(s).toUpperCase() + "!";
 export const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 ```
 
-* The file is copied into the build (`modules/`) and **served to the browser** at
-  `/modules/<name>`, so the client can use it.
-* The server imports the same file, so one shim serves both tiers.
-* A missing file, or an export that the Flow declaration names but the module does not have,
-  is a **build error**.
-* TypeScript works on the server (Node strips the types). A client use of a `.ts` shim is a
+* A missing file, or an export the block names but the module does not have, is a **build error**.
+* TypeScript works on the server (Node strips the types). A client binding to a `.ts` shim is a
   build error — annotate those bindings `@server` (which turns calls into cuts) or ship `.js`.
 
 ### Wrapping an existing library
@@ -403,7 +422,7 @@ export const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 Declare the shape you need and keep the adapter in the shim, where the third-party API lives:
 
 ```flow
-foreign import js module "./tiny-chart.js" {
+foreign import js unsafe "./tiny-chart.js" {
   renderChart :: List Int -> (Int -> Str) -> Str
 }
 ```

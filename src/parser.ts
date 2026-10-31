@@ -585,58 +585,81 @@ export class Parser {
     return { k: "Provide", effect, target, ops, span: this.spanFrom(start) };
   }
 
+  /**
+   * FFI has one shape: a *source* and a block of bindings.
+   *
+   *   foreign import js unsafe "./text.js" { shout :: Str -> Str }
+   *   foreign import js unsafe "Math"        { floor :: Float -> Int, sqrt :: Float -> Float }
+   *   foreign import js unsafe "@toUpperCase" { upper :: Str -> Str }
+   *
+   * The source is a shim module (a relative path), a global object path, or a
+   * receiver primitive (`@method` / `#property`). A dotted global with one binding
+   * addresses that leaf (`"Math.floor"`); with several bindings the source names the
+   * object and each binding is one of its properties.
+   */
   private parseForeign(): Decl | Decl[] {
     const start = this.expectKw("foreign");
     this.expectKw("import");
     const target = this.expect("id").value;
     if (target !== "js") this.err(`unsupported FFI target '${target}' (expected js)`);
-    const unsafe = this.tok.kind === "id" && this.tok.value === "unsafe";
-    if (unsafe) this.next();
-    // `foreign import js module "./shim.js" { name :: T … }` binds a shim module
-    if (this.tok.kind === "kw" && this.tok.value === "module") {
-      this.next();
-      const moduleTok = this.expect("str");
-      const modulePath = moduleTok.value;
-      if (!/^\.{1,2}\/.*\.(js|mjs|ts|cjs)$/.test(modulePath)) {
-        this.err(`a shim module must be a relative path ending in .js, .mjs or .ts (got '${modulePath}')`, moduleTok);
-      }
-      const decls: Decl[] = [];
-      this.expectSym("{");
-      // the block is layout-sensitive: one member per line, like a class body
-      const opened = this.openBlock();
-      for (;;) {
-        while (this.isVSemi(this.tok) || this.atSym(";")) this.next();
-        if (this.atSym("}") || this.isVClose(this.tok)) break;
-        const nameTok = this.expect("id");
-        this.expectOp("::");
-        const { type, bounds } = this.parseSigType();
-        const sig = this.sigFromType(nameTok.value, type, bounds, nameTok);
-        decls.push({
-          k: "Extern", sig, target: "js", implName: nameTok.value,
-          modulePath, exportName: nameTok.value, unsafe: true, pub: true, span: this.spanFrom(nameTok),
-        } as Decl);
-      }
-      if (opened) {
-        if (this.isVClose(this.tok)) this.next();
-        else this.layout.pop();
-      }
-      // consume the raw `}`: at the top level the same line also starts a statement,
-      // so going through the virtual-token view would show a `;` instead
-      if (this.raw.kind === "sym" && this.raw.value === "}") this.pos++;
-      else this.err(`expected '}' to close the shim block`, this.raw);
-      if (!decls.length) this.err(`the shim ${modulePath} binds no names`, start);
-      return decls;
+    if (!(this.tok.kind === "id" && this.tok.value === "unsafe")) {
+      this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
     }
-    if (!unsafe) this.err("FFI declarations must be explicitly marked `unsafe`", this.tok);
-    const implName = this.expect("str").value;
-    if (!/^(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*|[@#][A-Za-z_$][A-Za-z0-9_$]*)$/.test(implName)) {
-      this.err(`invalid JavaScript FFI target '${implName}' (expected "Math.floor", "@module", "#property" or 'module "./shim.js"')`, start);
+    this.next();
+
+    const sourceTok = this.expect("str");
+    const source = sourceTok.value;
+    const isShim = /^\.{1,2}\/.*\.(js|mjs|ts|cjs)$/.test(source);
+    const isPrimitive = /^[@#][A-Za-z_$][A-Za-z0-9_$]*$/.test(source);
+    const isGlobal = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(source);
+    if (!isShim && !isPrimitive && !isGlobal) {
+      this.err(
+        `invalid FFI source '${source}' — use a shim path ("./shim.js"), a global ("Math" or "Math.floor") ` +
+        `or a method/property ("@method" / "#property")`,
+        sourceTok,
+      );
     }
-    const nameTok = this.expect("id");
-    this.expectOp("::");
-    const { type, bounds } = this.parseSigType();
-    const sig = this.sigFromType(nameTok.value, type, bounds, nameTok);
-    return { k: "Extern", sig, target: "js", implName, unsafe: true, pub: true, span: this.spanFrom(start) };
+
+    type Member = { name: string; type: TypeExpr; bounds: Record<string, string[]>; tok: Token };
+    const members: Member[] = [];
+    this.expectSym("{");
+    // the block is layout-sensitive: one binding per line, like a class body
+    const opened = this.openBlock();
+    for (;;) {
+      while (this.isVSemi(this.tok) || this.atSym(";")) this.next();
+      if (this.atSym("}") || this.isVClose(this.tok)) break;
+      const nameTok = this.expect("id");
+      this.expectOp("::");
+      const { type, bounds } = this.parseSigType();
+      members.push({ name: nameTok.value, type, bounds, tok: nameTok });
+    }
+    if (opened) {
+      if (this.isVClose(this.tok)) this.next();
+      else this.layout.pop();
+    }
+    // consume the raw `}`: at the top level the same line also starts a statement,
+    // so going through the virtual-token view would show a `;` instead
+    if (this.raw.kind === "sym" && this.raw.value === "}") this.pos++;
+    else this.err("expected '}' to close the FFI block", this.raw);
+    if (!members.length) this.err(`the FFI source '${source}' binds no names`, start);
+    if (isPrimitive && members.length > 1) {
+      this.err(`'${source}' is a single method/property; it binds exactly one name`, sourceTok);
+    }
+
+    const single = members.length === 1;
+    return members.map((m) => {
+      const sig = this.sigFromType(m.name, m.type, m.bounds, m.tok);
+      if (isShim) {
+        return {
+          k: "Extern", sig, target: "js", implName: m.name,
+          modulePath: source, exportName: m.name, unsafe: true, pub: true, span: this.spanFrom(start),
+        } as Decl;
+      }
+      const implName = isPrimitive || single ? source : `${source}.${m.name}`;
+      return {
+        k: "Extern", sig, target: "js", implName, unsafe: true, pub: true, span: this.spanFrom(start),
+      } as Decl;
+    });
   }
 
   private spanOf(t: Token): Span {

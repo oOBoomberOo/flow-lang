@@ -24,11 +24,17 @@ effect Router @ server where
   notFound :: Handler -> ()
 
 -- ---------------------------------------------------------------- host primitives
-foreign import js unsafe "__flow.host.request" host_request :: () -> RequestObject
+foreign import js unsafe "__flow.host.request" {
+  host_request :: () -> RequestObject
+}
 
-foreign import js unsafe "__flow.host.routes" host_routes :: List Route -> ()
+foreign import js unsafe "__flow.host.routes" {
+  host_routes :: List Route -> ()
+}
 
-foreign import js unsafe "__flow.host.notFound" host_not_found :: Handler -> ()
+foreign import js unsafe "__flow.host.notFound" {
+  host_not_found :: Handler -> ()
+}
 
 provide Request where
   current = host_request

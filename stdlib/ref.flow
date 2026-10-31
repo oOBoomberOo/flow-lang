@@ -6,7 +6,9 @@ module Ref (Ref, newRef, get, set, modify) where
 -- implement stateful algebraic handlers (`std::state`) on the client or server.
 type Ref a = { get :: () -> a, set :: a -> () }
 
-foreign import js unsafe "__flow.host.refNew" host_ref_new :: a -> Ref a
+foreign import js unsafe "__flow.host.refNew" {
+  host_ref_new :: a -> Ref a
+}
 
 newRef :: a -> Ref a
 newRef init = host_ref_new init

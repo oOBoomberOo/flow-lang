@@ -3,11 +3,17 @@ module Server (log, now, random) where
 -- Server-side authority. Each body performs a server-only primitive, so the
 -- function is placed on the server and calling it from the client is a cut.
 
-foreign import js unsafe "__flow.host.log" server_write :: Str -> () @server
+foreign import js unsafe "__flow.host.log" {
+  server_write :: Str -> () @server
+}
 
-foreign import js unsafe "__flow.host.now" server_now :: () -> Int @server
+foreign import js unsafe "__flow.host.now" {
+  server_now :: () -> Int @server
+}
 
-foreign import js unsafe "Math.random" server_random :: () -> Float @server
+foreign import js unsafe "Math.random" {
+  server_random :: () -> Float @server
+}
 
 log :: Str -> ()
 log msg = server_write msg

@@ -12,11 +12,17 @@ module Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, 
 import Math (div, mod, floor)
 import String (padLeft)
 
-foreign import js unsafe "Date.now" host_now :: () -> Float
+foreign import js unsafe "Date.now" {
+  host_now :: () -> Float
+}
 
-foreign import js unsafe "__flow.host.dateIso" host_iso :: Int -> Str
+foreign import js unsafe "__flow.host.dateIso" {
+  host_iso :: Int -> Str
+}
 
-foreign import js unsafe "__flow.host.datePart" host_part :: Int -> Str -> Int
+foreign import js unsafe "__flow.host.datePart" {
+  host_part :: Int -> Str -> Int
+}
 
 -- Current time in whole seconds.
 now :: () -> Int
@@ -86,12 +92,16 @@ secondOf :: Int -> Int
 secondOf instant = host_part instant "second"
 
 -- Names come back as a separate primitive so `datePart` stays an Int function.
-foreign import js unsafe "__flow.host.dateWord" host_word :: Int -> Str -> Str
+foreign import js unsafe "__flow.host.dateWord" {
+  host_word :: Int -> Str -> Str
+}
 
 wordPart :: Int -> Str -> Str
 wordPart instant what = host_word instant what
 
-foreign import js unsafe "globalThis.performance.now" perf_now :: () -> Float
+foreign import js unsafe "globalThis.performance.now" {
+  perf_now :: () -> Float
+}
 
 -- High-resolution milliseconds since the process started (fractional).
 nowPrecise :: () -> Float

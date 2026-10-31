@@ -18,7 +18,9 @@ function compileSource(source) {
 
 const TIMER = `type IO a = () -> a
 
-foreign import js unsafe "window.setInterval" unsafe_create_timer :: IO () -> Int -> Int
+foreign import js unsafe "window.setInterval" {
+  unsafe_create_timer :: IO () -> Int -> Int
+}
 
 make_timer :: Int -> IO () -> Int
 make_timer ms callback = do

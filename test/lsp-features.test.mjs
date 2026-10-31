@@ -445,7 +445,9 @@ main = <p>{str 1} {str (len [1, 2])} {str (Some 3)}</p>
 
 test("lsp: unsafe extern declarations are first-class symbols", async () => {
   const { entry } = packageWith({
-    "main.flow": `foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
+    "main.flow": `foreign import js unsafe "Math.hypot" {
+  hypot :: Float -> Float -> Float
+}
 
 main :: Html
 main = <p>{str (hypot 3.0 4.0)}</p>

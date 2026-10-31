@@ -340,9 +340,13 @@ main = do
 
 test("ffi: user code can declare and call raw JavaScript directly", () => {
   const { entry } = packageWith({
-    "main.flow": `foreign import js unsafe "Math.hypot" hypot :: Float -> Float -> Float
+    "main.flow": `foreign import js unsafe "Math.hypot" {
+  hypot :: Float -> Float -> Float
+}
 
-foreign import js unsafe "@toUpperCase" shout :: Str -> Str
+foreign import js unsafe "@toUpperCase" {
+  shout :: Str -> Str
+}
 
 main :: Html
 main = <p>{str (hypot 3.0 4.0)} {shout "ok"}</p>

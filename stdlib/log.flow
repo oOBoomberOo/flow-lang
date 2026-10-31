@@ -3,13 +3,21 @@ module Log (info, warn, error, debug, value) where
 -- std::log — logging through the host console, built on the FFI.
 --
 -- No compiler support: `console.log` is an ordinary `unsafe extern js` binding.
-foreign import js unsafe "console.log" console_log :: Str -> ()
+foreign import js unsafe "console.log" {
+  console_log :: Str -> ()
+}
 
-foreign import js unsafe "console.warn" console_warn :: Str -> ()
+foreign import js unsafe "console.warn" {
+  console_warn :: Str -> ()
+}
 
-foreign import js unsafe "console.error" console_error :: Str -> ()
+foreign import js unsafe "console.error" {
+  console_error :: Str -> ()
+}
 
-foreign import js unsafe "console.debug" console_debug :: Str -> ()
+foreign import js unsafe "console.debug" {
+  console_debug :: Str -> ()
+}
 
 info :: Str -> ()
 info msg = do

@@ -8,7 +8,7 @@ import { createHost } from "../src/host.ts";
 
 /**
  * A package's own JavaScript/TypeScript, bound with
- * `foreign import js module "./shim.js" { … }`, on both sides.
+ * `foreign import js unsafe "./shim.js" { … }`, on both sides.
  */
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
@@ -59,7 +59,7 @@ test("ffi shim: a package binds its own JS module and runs it on the client", as
   const entry = packageWith({
     "main.flow": `import Http (get, Router, textResponse)
 
-foreign import js module "./text.js" {
+foreign import js unsafe "./text.js" {
   shout :: Str -> Str
   slug :: Str -> Str
 }
@@ -95,7 +95,7 @@ export const slug = (s) => String(s).toLowerCase().replace(/\\s+/g, "-");
 
 test("ffi shim: a TypeScript shim works on the server and a client use is rejected", () => {
   const entry = packageWith({
-    "main.flow": `foreign import js module "./calc.ts" {
+    "main.flow": `foreign import js unsafe "./calc.ts" {
   addAll :: List Int -> Int @server
 }
 
@@ -110,7 +110,7 @@ main = <p>{str (addAll [1, 2, 3])}</p>
   assert.ok(!result.client.includes("calc.ts"), "the client does not import TypeScript");
 
   const clientUse = packageWith({
-    "main.flow": `foreign import js module "./calc.ts" {
+    "main.flow": `foreign import js unsafe "./calc.ts" {
   addAll :: List Int -> Int
 }
 
@@ -125,7 +125,7 @@ main = <p>{str (addAll [1, 2, 3])}</p>
 
 test("ffi shim: missing files and missing exports are build errors", () => {
   const missing = packageWith({
-    "main.flow": `foreign import js module "./nope.js" {
+    "main.flow": `foreign import js unsafe "./nope.js" {
   f :: Int
 }
 main :: Html
@@ -135,7 +135,7 @@ main = <p>{"x"}</p>
   assert.throws(() => compileFile(missing), /shim module not found: "\.\/nope\.js"/);
 
   const noExport = packageWith({
-    "main.flow": `foreign import js module "./lib.js" {
+    "main.flow": `foreign import js unsafe "./lib.js" {
   absent :: Str -> Str
 }
 main :: Html
@@ -148,7 +148,7 @@ main = <p>{"x"}</p>
 
 test("ffi shim: a shim can wrap an existing library and be passed Flow callbacks", () => {
   const entry = packageWith({
-    "main.flow": `foreign import js module "./tiny-chart.js" {
+    "main.flow": `foreign import js unsafe "./tiny-chart.js" {
   renderChart :: List Int -> (Int -> Str) -> Str
 }
 

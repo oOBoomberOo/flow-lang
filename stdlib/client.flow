@@ -8,9 +8,13 @@ module Client (log, now, state) where
 --   log "hello"        -- runs in the browser
 --   Client.state 0     -- a reactive cell, created in the browser
 
-foreign import js unsafe "console.log" console_write :: Str -> () @client
+foreign import js unsafe "console.log" {
+  console_write :: Str -> () @client
+}
 
-foreign import js unsafe "__flow.host.now" client_now :: () -> Int @client
+foreign import js unsafe "__flow.host.now" {
+  client_now :: () -> Int @client
+}
 
 log :: Str -> ()
 log msg = console_write msg
