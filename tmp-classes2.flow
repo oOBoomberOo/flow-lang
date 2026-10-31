@@ -1,0 +1,14 @@
+module TmpClasses2 where
+import Flow.Result (Result(..))
+
+main :: Html
+main = <p>{
+  str (equals [1, 2] [1, 2])}{
+  str (compare (Some 1) None)}{
+  show [1, 2]}{
+  append "a" "b"}{
+  (mempty :: Str)}{
+  str (toList (Ok 3))}{
+  str (foldr (\(x :: Int) acc -> x + acc) 0 [1, 2, 3])}{
+  foldMap show [1, 2]}
+</p>

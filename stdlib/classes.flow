@@ -1,0 +1,185 @@
+module Flow.Classes where
+
+-- Common Haskell-style classes beyond the Functor/Applicative/Monad family:
+-- Eq, Ord, Show, Semigroup, Monoid and Foldable.
+--
+-- The prelude re-exports the class names; their methods are in scope
+-- unqualified like `map`/`bind`.
+
+import Flow.Result (Result(..))
+
+-- ---------------------------------------------------------------- Eq
+class Eq a where
+  equals :: a -> a -> Bool
+
+notEquals :: Eq a => a -> a -> Bool
+notEquals a b = not (equals a b)
+
+instance Eq Int where
+  equals a b = a == b
+
+instance Eq Float where
+  equals a b = a == b
+
+instance Eq Str where
+  equals a b = a == b
+
+instance Eq Bool where
+  equals a b = a == b
+
+instance Eq Unit where
+  equals a b = a == b
+
+instance Eq a => Eq (List a) where
+  equals a b = a == b
+
+instance Eq a => Eq (Option a) where
+  equals a b = a == b
+
+instance (Eq e, Eq a) => Eq (Result e a) where
+  equals a b = a == b
+
+-- ---------------------------------------------------------------- Ord
+class Eq a => Ord a where
+  compare :: a -> a -> Int
+
+instance Ord Int where
+  compare a b = if a < b then -1 else if a > b then 1 else 0
+
+instance Ord Float where
+  compare a b = if a < b then -1 else if a > b then 1 else 0
+
+instance Ord Str where
+  compare a b = if a < b then -1 else if a > b then 1 else 0
+
+instance Ord Bool where
+  compare a b = if a == b then 0 else if a then 1 else -1
+
+instance Ord Unit where
+  compare a b = 0
+
+instance Ord a => Ord (List a) where
+  compare xs ys = case xs of
+    [] -> case ys of
+      [] -> 0
+      _ -> -1
+    x : xr -> case ys of
+      [] -> 1
+      y : yr ->
+        let c = compare x y
+        in if c == 0 then compare xr yr else c
+
+instance Ord a => Ord (Option a) where
+  compare a b = case a of
+    None -> case b of
+      None -> 0
+      Some _ -> -1
+    Some x -> case b of
+      None -> 1
+      Some y -> compare x y
+
+instance (Ord e, Ord a) => Ord (Result e a) where
+  compare a b = case a of
+    Err ea -> case b of
+      Err eb -> compare ea eb
+      Ok _ -> -1
+    Ok xa -> case b of
+      Err _ -> 1
+      Ok xb -> compare xa xb
+
+minOf :: Ord a => a -> a -> a
+minOf a b = if compare a b <= 0 then a else b
+
+maxOf :: Ord a => a -> a -> a
+maxOf a b = if compare a b >= 0 then a else b
+
+-- ---------------------------------------------------------------- Show
+class Show a where
+  show :: a -> Str
+
+instance Show Int where
+  show x = str x
+
+instance Show Float where
+  show x = str x
+
+instance Show Str where
+  show x = str x
+
+instance Show Bool where
+  show x = str x
+
+instance Show Unit where
+  show x = str x
+
+instance Show (List a) where
+  show xs = str xs
+
+instance Show (Option a) where
+  show o = str o
+
+instance Show (Result e a) where
+  show r = str r
+
+-- ---------------------------------------------------------------- Semigroup
+class Semigroup a where
+  append :: a -> a -> a
+
+instance Semigroup Str where
+  append a b = a + b
+
+instance Semigroup (List a) where
+  append xs ys = concat xs ys
+
+instance Semigroup a => Semigroup (Option a) where
+  append a b = case a of
+    None -> b
+    Some x -> case b of
+      None -> a
+      Some y -> Some (append x y)
+
+-- ---------------------------------------------------------------- Monoid
+class Semigroup a => Monoid a where
+  mempty :: a
+
+instance Monoid Str where
+  mempty = ""
+
+instance Monoid (List a) where
+  mempty = []
+
+instance Monoid Unit where
+  mempty = ()
+
+instance Semigroup a => Monoid (Option a) where
+  mempty = None
+
+-- ---------------------------------------------------------------- Foldable
+class Foldable t where
+  foldr :: (a -> b -> b) -> b -> t a -> b
+  toList :: t a -> List a
+
+instance Foldable List where
+  foldr f z xs = case xs of
+    [] -> z
+    x : rest -> f x (foldr f z rest)
+  toList xs = xs
+
+instance Foldable Option where
+  foldr f z o = case o of
+    None -> z
+    Some x -> f x z
+  toList o = case o of
+    None -> []
+    Some x -> [x]
+
+instance Foldable (Result e) where
+  foldr f z r = case r of
+    Ok x -> f x z
+    Err _ -> z
+  toList r = case r of
+    Ok x -> [x]
+    Err _ -> []
+
+foldMap :: (Foldable t, Monoid m) => (a -> m) -> t a -> m
+foldMap f xs = foldr (\x acc -> append (f x) acc) mempty xs

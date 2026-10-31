@@ -225,11 +225,11 @@ import Flow.Prelude (at)    -- explicit import through the prelude
 The sources are `Flow.Basics` (`str`, `eq`, `neq`, `not`), `Flow.Option` (`Option`, `None`,
 `Some`), `Flow.List` (`len`, `length`, `isEmpty`, `push`, `concat`, `cons`, `head`, `tail`,
 `reverse`, `at`), `Flow.String` (`trim`, `upper`, `lower`, `split`, `replace`, `contains`,
-`join`, `chars`, `strLen`, `int`, `float`), `Flow.Cell` (`CellOps`, `makeCell`), `Flow.Store`
+`join`, `chars`, `strLen`, `int`, `float`), `Flow.Cell` (`CellOps`, `makeCell`), `Flow.Classes` (`Eq`, `Ord`, `Show`, `Semigroup`, `Monoid`, `Foldable`), `Flow.Store`
 (`Store`) and `Flow.Monad` (`Functor`, `Applicative`, `Monad`, `Alternative`).
 
 The standard library ships as modules under the reserved `Flow` namespace: `Flow.Basics`,
-`Flow.List`, `Flow.Iter`, `Flow.Dict`, `Flow.Set`, `Flow.Tuple`, `Flow.Option`, `Flow.Result`,
+`Flow.Classes`, `Flow.List`, `Flow.Iter`, `Flow.Dict`, `Flow.Set`, `Flow.Tuple`, `Flow.Option`, `Flow.Result`,
 `Flow.Math`, `Flow.Random`, `Flow.String`, `Flow.Html`, `Flow.Log`, `Flow.Time`, `Flow.Path`,
 `Flow.Env`, `Flow.Http`, `Flow.Net`, `Flow.Fs`, `Flow.State`, `Flow.Exn`, `Flow.Ref`,
 `Flow.Cell`, `Flow.Store`, `Flow.Client`, `Flow.Server`, `Flow.Monad`, `Flow.Fn`, `Flow.Json`,

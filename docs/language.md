@@ -140,6 +140,25 @@ instance (use `Dict.mapWithKey` / `Set.mapWith` when the key or a comparator is
 needed). `Result e` fixes the error type and is a monad over the success value,
 exactly like Haskell's `Either e`; `Result.mapOk`/`andThen` remain available.
 
+### Common classes
+
+`Flow.Classes` (re-exported by the prelude) adds the other everyday Haskell
+classes. The built-in operators stay as they are; the class methods have
+unambiguous names:
+
+| class | methods | notes |
+|---|---|---|
+| `Eq a` | `equals`, `notEquals` | `==` remains the built-in equality operator |
+| `Ord a` | `compare`, `minOf`, `maxOf` | superclass `Eq a`; `<`/`>` remain built-in |
+| `Show a` | `show` | `str` still shows any value |
+| `Semigroup a` | `append` | `Str`, `List a`, `Option a` |
+| `Monoid a` | `mempty` | superclass `Semigroup a`; `Str`, `List a`, `Unit`, `Option a` |
+| `Foldable t` | `foldr`, `toList` | plus `foldMap :: (Foldable t, Monoid m) => (a -> m) -> t a -> m` |
+
+Instances cover `Int`, `Float`, `Str`, `Bool`, `Unit`, `List a`, `Option a`
+and `Result e a`, with the usual element constraints. A local class with the
+same name shadows the prelude one.
+
 ## 3. Expressions
 
 ```flow
@@ -443,7 +462,7 @@ module claims them.
 
 | Module | What it gives you |
 |---|---|
-| `Flow.Prelude` | re-export surface injected everywhere: `str`, `len`, `length`, `head`, `tail`, `push`, `concat`, `cons`, `at`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `makeCell`, `CellOps`, `Store`, `Option`, `Functor`, `Applicative`, `Monad`, `Alternative` |
+| `Flow.Prelude` | re-export surface injected everywhere: `str`, `len`, `length`, `head`, `tail`, `push`, `concat`, `cons`, `at`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `makeCell`, `CellOps`, `Store`, `Option`, `Functor`, `Applicative`, `Monad`, `Alternative`, `Eq`, `Ord`, `Show`, `Semigroup`, `Monoid`, `Foldable` |
 | `Flow.Basics` | `str`, `eq`, `neq`, `not` |
 | `Flow.List` | `len`, `length`, `isEmpty`, `push`, `concat`, `cons`, `head`, `tail`, `reverse`, `at`, `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
 | `Flow.Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
@@ -460,7 +479,8 @@ module claims them.
 | `Flow.Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
 | `Flow.Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
 | `Flow.Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
-| `Flow.Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List` and `Cell`, plus `>>=`/`do` |
+| `Flow.Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List`, `Cell` and `Result e`, plus `>>=`/`do` |
+| `Flow.Classes` | `Eq` (`equals`/`notEquals`), `Ord` (`compare`/`minOf`/`maxOf`), `Show` (`show`), `Semigroup` (`append`), `Monoid` (`mempty`) and `Foldable` (`foldr`/`toList`/`foldMap`), with primitives and container instances |
 | `Flow.Cell` | `pure`, `make`, `read`, `write`, `makeCell`, `CellOps` - cells are neutral reactive values and monads |
 | `Flow.Client` / `Flow.Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
 | `Flow.State`, `Flow.Exn`, `Flow.Ref` | algebraic `State`, exceptions with `resume`, and mutable references |

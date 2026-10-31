@@ -147,11 +147,14 @@ export interface Module {
 // reaches the host through `unsafe extern js` bindings. No callable primitive
 // is registered by the compiler.
 
+/** The source name of a trait, without a linker qualification suffix. */
+export const traitBase = (trait: string) => trait.split("$")[0]!;
+
 export const implFnName = (trait: string, index: number, method: string) =>
-  `$impl_${trait}_${index}_${method}`;
+  `$impl_${traitBase(trait)}_${index}_${method}`;
 
 export const dictParamName = (trait: string, typeParam: string) =>
-  `$d_${trait}_${typeParam}`;
+  `$d_${traitBase(trait)}_${typeParam}`;
 
 /** Key for the trait dictionaries carried by one type variable. */
 export const dictKey = (trait: string, varId: number) => `${varId}:${trait}`;
@@ -783,21 +786,21 @@ export class Infer {
     const clash = this.mod.impls.find((im) =>
       im.trait === d.trait && im.targetType && typeKey(im.targetType) === typeKey(targetType));
     if (clash) {
-      this.fail(`duplicate impl of ${d.trait} for ${typeStr(targetType)}`, d.span);
+      this.fail(`duplicate impl of ${traitBase(d.trait)} for ${typeStr(targetType)}`, d.span);
     }
 
     const implNames = new Set(d.methods.map((m) => m.name));
     if (!traitInfo) this.fail(`impl for unknown trait '${d.trait}'`, d.span);
     for (const m of d.methods) {
       if (traitInfo && !traitInfo.methods.has(m.name)) {
-        this.fail(`trait ${d.trait} has no method '${m.name}'`, m.span);
+        this.fail(`trait ${traitBase(d.trait)} has no method '${m.name}'`, m.span);
       }
     }
     if (traitInfo) {
       const missing = [...traitInfo.methods.keys()].filter((name) => !implNames.has(name));
       if (missing.length) {
         this.fail(
-          `impl ${d.trait} for ${typeStr(targetType)} is missing method(s) ${missing.sort().join(", ")}`,
+          `impl ${traitBase(d.trait)} for ${typeStr(targetType)} is missing method(s) ${missing.sort().join(", ")}`,
           d.span,
         );
       }
@@ -842,7 +845,7 @@ export class Infer {
           restoreSubst(before);
           if (err instanceof FlowError) {
             this.fail(
-              `impl ${d.trait}.${m.name} does not match the trait signature: ${err.message}`,
+              `impl ${traitBase(d.trait)}.${m.name} does not match the trait signature: ${err.message}`,
               m.span,
             );
           }
@@ -2334,9 +2337,10 @@ export class Infer {
     const t = prune(target);
     if (t.k === "var") {
       if (!t.bounds?.includes(traitName)) {
+        const label = traitName.split("$")[0]!;
         this.fail(
-          `no instance of ${traitName} for type variable ${typeStr(t)}; ` +
-          `add a trait bound such as <a: ${traitName}>`,
+          `no instance of ${label} for type variable ${typeStr(t)}; ` +
+          `add a trait bound such as <a: ${label}>`,
           span,
         );
       }
@@ -2346,7 +2350,7 @@ export class Infer {
       return;
     }
     const resolved = this.resolveImplInfo(traitName, t);
-    if (!resolved) this.fail(`no instance of ${traitName} for ${typeStr(t)}`, span);
+    if (!resolved) this.fail(`no instance of ${traitName.split("$")[0]} for ${typeStr(t)}`, span);
     const impl = resolved.impl;
     const dicts: { trait: string; type: Type }[] = [];
     for (const d of impl.dicts ?? []) {

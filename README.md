@@ -238,9 +238,10 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
 * **Editing and refactors** — tag/attribute snippets with closing tags, bracket/quote/comment
   auto-closing, rename that updates imports, Import Symbol, Move Symbol to Module and Organize
   Imports in the VS Code extension
-* **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
-  `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
-  iteration, JSON, dates and paths ship in the language
+* **Batteries included** - `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
+  `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`, `Classes`
+  (`Eq`, `Ord`, `Show`, `Semigroup`, `Monoid`, `Foldable`): containers, iteration, JSON,
+  dates and paths ship in the language
 * **Reflection and JSON** - `Reflect.meta` describes records, data constructors, containers and\n  recursive types; `Serialize.encode`/`decode` use that metadata for a JSON standard with\n  tagged constructors, tuple/list support and path-qualified errors
 * **FFI for libraries** - bind globals (`Math.floor`), methods (`@trim`) and your own JS/TS
   modules with `foreign import js unsafe "./shim.js" { … }`; shims are copied into the build and

@@ -82,6 +82,25 @@ main = <form onSubmit={submitForm}></form>
       ()`);
 });
 
+test("common typeclasses resolve for primitives and containers", () => {
+  const r = ok(`import Flow.Result (Result(..))
+
+main :: Html
+main = <p>{
+  str (equals [1, 2] [1, 2])}{
+  str (compare (Some 1) None)}{
+  show [1, 2]}{
+  append "a" "b"}{
+  (mempty :: Str)}{
+  str (toList (Ok 3))}{
+  foldMap show (Some 2)}{
+  foldMap show (Ok 3 :: Result Str Int)}{
+  str (foldr (\\(x :: Int) acc -> x + acc) 0 [1, 2, 3])}{
+  foldMap show [1, 2]}
+</p>`);
+  assert.match(r.client, /function main/);
+});
+
 /* ------------------------- ADTs ------------------------- */
 
 test("exhaustive match on an ADT", () => {

@@ -1,4 +1,4 @@
-module Flow.Prelude (not, cons, Option(..), Store, len, length, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, at, makeCell, Functor, Applicative, Monad, Alternative) where
+module Flow.Prelude (not, cons, Option(..), Store, len, length, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, at, makeCell, Functor, Applicative, Monad, Alternative, Eq, Ord, Show, Semigroup, Monoid, Foldable) where
 
 -- Flow.Prelude is a re-export surface only. Every name below is declared in a
 -- real module and injected into each unit with the lowest priority; a unit's
@@ -10,3 +10,4 @@ import Flow.String (trim, upper, lower, split, replace, contains, join, chars, s
 import Flow.Cell (CellOps, makeCell)
 import Flow.Store (Store)
 import Flow.Monad (Functor, Applicative, Monad, Alternative)
+import Flow.Classes (Eq, Ord, Show, Semigroup, Monoid, Foldable)

@@ -16,7 +16,7 @@
 
 import type { Decl, Expr, HtmlNode, Pattern, Program } from "./ast.ts";
 import type { Module, Infer, DictParam } from "./infer.ts";
-import { implFnName, dictKey } from "./infer.ts";
+import { implFnName, dictKey, traitBase } from "./infer.ts";
 import type { Place, Type } from "./types.ts";
 import { prune, typeStr, typePlace, sendable } from "./types.ts";
 import type { Eff } from "./types.ts";
@@ -1517,7 +1517,7 @@ export class Codegen {
       // The variable may be a fresh alias whose origin was lost during
       // unification; if this function carries a dictionary for the same trait,
       // that is the dictionary to pass.
-      const fallback = [...this.currentDicts.values()].find((n) => n.startsWith(`$d_${trait}_`));
+      const fallback = [...this.currentDicts.values()].find((n) => n.startsWith(`$d_${traitBase(trait)}_`));
       if (fallback) return fallback;
       this.fail(`no dictionary for ${trait} ${typeStr(t)} is in scope`);
     }
