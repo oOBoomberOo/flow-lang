@@ -1,9 +1,4 @@
 -- std::option
-map :: Option a -> (a -> b) -> Option b
-map o f = case o of
-  None -> None
-  Some x -> Some (f x)
-
 withDefault :: Option a -> a -> a
 withDefault o fallback = case o of
   None -> fallback

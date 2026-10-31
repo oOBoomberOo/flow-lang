@@ -79,13 +79,13 @@ f = 1`);
 
 test("declarations: import forms", () => {
   const p = D(`import List
-import List (map, filter)
+import List (filter)
 import List as L
 import Http (get as httpGet)
 import Foo.Bar (thing)`);
   const [a, b, c, d, e] = p.decls;
   assert.deepEqual(a.path, ["List"]);
-  assert.deepEqual(b.items.map((i) => i.name), ["map", "filter"]);
+  assert.deepEqual(b.items.map((i) => i.name), ["filter"]);
   assert.equal(c.alias, "L");
   assert.equal(d.items[0].alias, "httpGet");
   assert.deepEqual(e.path, ["Foo", "Bar"]);
@@ -188,7 +188,7 @@ total xs = go xs 0
 });
 
 test("declarations: no signature means an inferred function", () => {
-  const p = D(`double xs = List.map (\\x -> x + x) xs`);
+  const p = D(`double xs = map (\\x -> x + x) xs`);
   const fn = p.decls[0];
   assert.equal(fn.ret, undefined);
   assert.equal(fn.params.length, 1);

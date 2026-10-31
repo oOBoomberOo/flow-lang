@@ -116,11 +116,11 @@ probe = List.
       position: pos(text, "List.", 5),
     });
     const memberLabels = (members.items ?? []).map((i) => i.label);
-    assert.ok(memberLabels.includes("map"), "List. offers map");
+    assert.ok(!memberLabels.includes("map"), "map is a typeclass method, not a List member");
     assert.ok(memberLabels.includes("sortBy"), "List. offers sortBy");
     assert.ok(memberLabels.includes("length"), "List. offers length");
-    const map = members.items.find((i) => i.label === "map");
-    assert.match(String(map.detail), /List\.map/);
+    const filter = members.items.find((i) => i.label === "filter");
+    assert.match(String(filter.detail), /List\.filter/);
   } finally { c.proc.kill(); }
 });
 

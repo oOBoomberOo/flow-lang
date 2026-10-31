@@ -19,8 +19,8 @@ isErr r = case r of
   Ok _ -> False
   Err _ -> True
 
-map :: (a -> b) -> Result a e -> Result b e
-map f r = case r of
+mapOk :: (a -> b) -> Result a e -> Result b e
+mapOk f r = case r of
   Ok a -> Ok (f a)
   Err e -> Err e
 

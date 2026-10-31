@@ -64,14 +64,14 @@ describe info = case info of
   TBool -> "Bool"
   TUnit -> "()"
   TList item -> "List " + describeArg item
-  TTuple items -> "(" + join (List.map items describe) ", " + ")"
+  TTuple items -> "(" + join (map items describe) ", " + ")"
   TRecord fields ->
-    "{ " + join (List.map fields (\(name, field) -> name + " :: " + describe field)) ", " + " }"
+    "{ " + join (map fields (\(name, field) -> name + " :: " + describe field)) ", " + " }"
   TRef name -> name
   TFun params result ->
     if isEmpty params
       then "() -> " + describe result
-      else join (List.map params describeArg) " -> " + " -> " + describe result
+      else join (map params describeArg) " -> " + " -> " + describe result
   TUnknown why -> why
 
 -- / Describe the root and every referenced definition.
@@ -81,18 +81,18 @@ describeAll info = "root: " + describe info.root + defsText info.defs
 defsText :: List (Str, TypeDef) -> Str
 defsText pairs = case pairs of
   [] -> ""
-  _ -> "\n" + join (List.map pairs describeDef) "\n"
+  _ -> "\n" + join (map pairs describeDef) "\n"
 
 describeDef :: (Str, TypeDef) -> Str
 describeDef pair = case pair of
   (key, definition) ->
-    key + " = " + join (List.map definition.variants describeVariant) " | "
+    key + " = " + join (map definition.variants describeVariant) " | "
 
 describeVariant :: Variant -> Str
 describeVariant variant =
   if isEmpty variant.args
     then variant.name
-    else variant.name + " " + join (List.map variant.args describeArg) " "
+    else variant.name + " " + join (map variant.args describeArg) " "
 
 describeArg :: TypeInfo -> Str
 describeArg info = if contains (describe info) " " then "(" + describe info + ")" else describe info

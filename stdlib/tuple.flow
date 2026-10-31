@@ -33,9 +33,9 @@ uncurry f pair = case pair of
 
 zip3 :: List a -> List b -> List c -> List (a, b, c)
 zip3 xs ys zs =
-  List.map (List.zip xs (List.zip ys zs)) (\(a, pair) ->
+  map (List.zip xs (List.zip ys zs)) (\(a, pair) ->
     case pair of
       (b, c) -> (a, b, c))
 
 unzip :: List (a, b) -> (List a, List b)
-unzip pairs = (List.map pairs fst, List.map pairs snd)
+unzip pairs = (map pairs fst, map pairs snd)

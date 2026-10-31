@@ -102,7 +102,7 @@ shape (tagged constructors, tuples, dictionaries, error paths and limits).
 ```flow
 module Shapes (Shape(..), area, main) where
 
-import List (map, sum)
+import List (filter)
 import Option as O
 
 -- data, records and aliases
@@ -126,15 +126,19 @@ total xs = go xs 0
     go [] acc = acc
     go (x : rest) acc = go rest (acc + x)
 
--- currying, sections, composition
+-- currying, sections, composition; `map` and `filter` are typeclass/List methods
+incs :: List Int -> List Int
 incs = map (+ 1)
+
+evens :: List Int -> List Int
 evens = filter (\x -> x `mod` 2 == 0)
+
 banner = upper . trim
 
 main :: Html
 main = do
   let shapes = [Circle 2.0, Rect 3.0 4.0]
-  <ul>{map (\s -> <li>{str (area s)}</li>) shapes}</ul>
+  <ul>{map shapes (\s -> <li>{str (area s)}</li>)}</ul>
 ```
 
 Layout is the block structure: `where`, `let`, `of`, `do` and `with` open a block, and a line
@@ -149,13 +153,14 @@ import List as L
 import Http (get, Router, textResponse)
 
 main :: Html
-main = <p>{withDefault (Option.map Option.Some 3) "none"}</p>
+main = <p>{str (withDefault (map (Option.Some 3) (\x -> x + 1)) 0)}</p>
 ```
 
 * `import Module (a, b)` brings names into scope.
 * `import Module as M` (or just mentioning `Module.x`) lets you write `M.x`.
-* Qualified names work **without any import**: `Option.map`, `Option.withDefault`, `List.sortBy`,
+* Qualified names work **without any import**: `Option.withDefault`, `List.sortBy`,
   `Http.textResponse`. The linker loads the module on demand and checks its export list.
+  The monad family (`map`, `pure`, `return`, `empty`) comes from the prelude.
 
 `module Name (exports) where` makes everything else private. A file without a header exports
 everything.
@@ -212,11 +217,11 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   `case … of`, `let … in`, `where`, operator sections, `$` and `.`
 * **Full inference** — signatures are optional; unannotated functions are inferred callee-first
   and generalized, lambda parameters take their types from the caller
-* **Modules as namespaces** — `Option.map`, `Option.withDefault`, `List.sortBy`, plus the
+* **Modules as namespaces** - `Option.withDefault`, `List.sortBy`, plus the
   `import` forms; no `::` paths to remember
 * **Data and records** — `data Shape = Circle Float | Rect Float Float`, `type P = { x :: Int }`
 * **Classes and instances** — `class Show a where`, `instance Show Int where`, contexts
-  (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: (a -> b) -> f a -> f b`)
+  (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: f a -> (a -> b) -> f b`)
 * **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
   `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
   iteration, JSON, dates and paths ship in the language

@@ -285,6 +285,13 @@ higher-kinded application, normalized to `List<a>` / `Option<a>` after unificati
 and impls are written at the constructor (`impl Functor for List`). Dispatch uses
 the head constructor of the constructor-typed argument.
 
+`class Functor f => Applicative f` records a superclass. A `Monad f` bound is
+expanded to `Monad`/`Applicative`/`Functor`, so a generic function receives a
+dictionary for each and can call `bind`, `pure` and `map` from one bound. A
+method whose dispatch type is its result (`pure`, `return`, `empty`) is resolved
+after the enclosing body's annotations have constrained that type; if it is still
+unconstrained and the trait has more than one instance, the call is ambiguous.
+
 ### 4.7 Exhaustiveness
 
 For a scrutinee whose type is a known ADT, if no arm is a wildcard or binder, every

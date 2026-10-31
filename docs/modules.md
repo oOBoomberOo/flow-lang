@@ -32,14 +32,15 @@ import**:
 
 ```flow
 let sorted = List.sortBy [3, 1, 2] (\a b -> a - b)
-let o = Option.map (Option.Some 1) (\x -> x + 1)
+let o = map (Option.Some 1) (\x -> x + 1)
 let f = Option.withDefault (Option.None) "fallback"
 ```
 
 The linker sees the qualifier, loads the module on demand, checks visibility and rewrites the
 reference to the declaration. Members of the injected prelude are reachable through their
-conventional module, so `Option.Some`, `Option.None` and `Option.map` all work even though the
-`Option` type itself lives in the prelude.
+conventional module, so `Option.Some` and `Option.None` work even though the `Option` type
+itself lives in the prelude; the monad family (`map`, `pure`, `return`, `bind`, `empty`) is
+part of the prelude surface as well.
 
 Qualified references work for values, constructors, effects, traits and types:
 

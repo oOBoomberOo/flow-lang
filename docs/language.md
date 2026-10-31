@@ -65,12 +65,12 @@ A file without a `module` header exports everything. `pub` does not exist.
 ### Signatures are optional
 
 ```flow
-double xs = List.map xs (\x -> x + x)   -- inferred
+double xs = map xs (\x -> x + x)   -- inferred
 ```
 
 An unannotated function is inferred when its callees have been, and generalized afterwards, so
 callers can use it at several types. Lambda parameters take their types from the caller:
-`List.map xs (\x -> x + 1)` needs no annotation when `xs :: List Int`.
+`map xs (\x -> x + 1)` needs no annotation when `xs :: List Int`.
 
 A definition with no parameters is a constant:
 
@@ -112,15 +112,32 @@ class Eq a => Ord a where
 A method whose signature mentions no value of `a` (`empty :: () -> a`) dispatches on its result.
 An instance method written without types takes them from the class.
 
-Higher-kinded parameters work too:
+Higher-kinded parameters work too. The standard library defines the monad family
+and re-exports it from the prelude, so `map`, `pure`, `return`, `bind` and
+`empty` are always in scope:
 
 ```flow
 class Functor f where
-  fmap :: (a -> b) -> f a -> f b
+  map :: f a -> (a -> b) -> f b
 
-instance Functor List where
-  fmap f xs = List.map xs f
+class Functor f => Applicative f where
+  pure :: a -> f a
+
+class Applicative f => Monad f where
+  bind :: f a -> (a -> f b) -> f b
+  return :: a -> f a
 ```
+
+`map xs f` and `map (Some 1) f` both work; a `Monad f` bound also carries the
+Applicative and Functor dictionaries, so generic code can call `pure` and `map`.
+Instances are declared per class, exactly like the `Show`/`Ord` examples above.
+
+`Option`, `List` and `Cell` have Functor/Applicative/Monad instances; `Option` and
+`List` also have `Alternative` (`empty`/`orElse`). `Dict k` and `Set a` are aliases
+of `List`, so `map`/`empty` use the List instance (use `Dict.mapWithKey` /
+`Set.mapWith` when the key or a comparator is needed). `Result a e` keeps
+`Result.mapOk`/`andThen`: Flow type constructors are not partially applied, so a
+two-parameter `Result e` cannot be a Functor instance in this system.
 
 ## 3. Expressions
 
@@ -128,12 +145,12 @@ instance Functor List where
 f x y = x + y          -- application by juxtaposition
 g = f 1                -- partial application (fills from the left)
 h = f 1 2              -- fully applied
-byOption = Option.map f -- right section (fills the trailing parameter)
+byOption = map f -- right section (fills the trailing parameter)
 ```
 
 A call may fill the **trailing** parameters instead of the leading ones; that is
-a right section, mirroring `(+ 1)`. `Option.map f` is a function waiting for the
-option, and `xs |> List.map f` is `List.map f xs`. The compiler prefers the
+a right section, mirroring `(+ 1)`. `map f` is a function waiting for the
+option, and `xs |> map f` is `map f xs`. The compiler prefers the
 normal left-filled partial when both readings type-check.
 
 Operators, from loosest to tightest: `$`, `<|`, `|>`, `>>=`, `||`, `&&`, comparisons, `:`,
@@ -367,12 +384,13 @@ See [`modules.md`](modules.md). In short:
 import Option (withDefault)
 import List as L
 
-best = withDefault (Option.map (Option.Some 3) (\x -> x * 2)) 0
+best = withDefault (map (Option.Some 3) (\x -> x * 2)) 0
 sorted = L.sortBy [3, 1, 2] (\a b -> a - b)
 ```
 
-Any public name can be reached by its module qualifier without an import: `Option.map`,
+Any public name can be reached by its module qualifier without an import: `Option.withDefault`,
 `List.sortBy`, `Http.textResponse`. `module M (a, b) where` controls what is public.
+The monad family is a prelude export, so `map`/`pure`/`return`/`empty` need no qualifier.
 
 ### 7.1 The standard library
 

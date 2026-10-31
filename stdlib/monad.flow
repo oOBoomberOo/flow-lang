@@ -1,53 +1,92 @@
--- std::monad — the Monad class for Option, List and Cell.
+-- std::monad — the Functor / Applicative / Monad / Alternative family.
 --
--- `>>=` and `do` notation desugar to `Monad.bind`, and `pure` lifts a value:
+-- Methods dispatch on the type of their receiver, so the same `map` works for
+-- `List`, `Option` and `Cell`:
 --
---   import Monad (Monad)
---   Option.Some 2 >>= (\x -> Option.Some (x + 1))
---   do
---     x <- Option.Some 2
---     y <- Option.Some 3
---     pure (x + y)
+--   map xs f          -- List
+--   xs |> map f       -- left to right
+--   map (Some 1) f    -- Option
+--   pure 1            -- the instance follows from the expected type
 --
--- Cells are monads too, so a sequence of reads and writes is just a do block:
---
---   do
---     n <- counter
---     counter := n + 1
---     pure n
-class Monad f where
-  bind :: f a -> (a -> f b) -> f b
+-- `>>=` and `do` notation desugar to `Monad.bind`; `pure` and `return` lift a
+-- value. The prelude re-exports these classes, so they are in scope everywhere
+-- (and `import Monad (Monad)` still works for code that spells it out).
+
+-- ---------------------------------------------------------------- classes
+class Functor f where
   map :: f a -> (a -> b) -> f b
+
+class Functor f => Applicative f where
   pure :: a -> f a
+  ap :: f (a -> b) -> f a -> f b
+
+class Applicative f => Monad f where
+  bind :: f a -> (a -> f b) -> f b
+  return :: a -> f a
+
+-- `empty` and `orElse` are the choice side of the family: `None`/`[]` and the
+-- left-biased union of two values.
+class Applicative f => Alternative f where
+  empty :: f a
+  orElse :: f a -> f a -> f a
+
+-- ---------------------------------------------------------------- Option
+instance Functor Option where
+  map value mapper = case value of
+    None -> None
+    Some x -> Some (mapper x)
+
+instance Applicative Option where
+  pure x = Some x
+  ap ff fx = case ff of
+    None -> None
+    Some f -> map fx f
 
 instance Monad Option where
   bind value k = case value of
     None -> None
     Some x -> k x
-  map value mapper = case value of
-    None -> None
-    Some x -> Some (mapper x)
-  pure x = Some x
+  return x = Some x
+
+instance Alternative Option where
+  empty = None
+  orElse left right = case left of
+    None -> right
+    Some _ -> left
+
+-- ---------------------------------------------------------------- List
+instance Functor List where
+  map xs f = case xs of
+    [] -> []
+    x : rest -> concat [f x] (map rest f)
+
+instance Applicative List where
+  pure x = [x]
+  ap fs xs = case fs of
+    [] -> []
+    f : rest -> concat (map xs f) (ap rest xs)
 
 instance Monad List where
-  bind value k = go value
-    where
-      go v = case v of
-        [] -> []
-        x : rest -> concat (k x) (go rest)
-  map value mapper = go value
-    where
-      go v = case v of
-        [] -> []
-        x : rest -> concat [mapper x] (go rest)
-  pure x = [x]
+  bind xs k = case xs of
+    [] -> []
+    x : rest -> concat (k x) (bind rest k)
+  return x = [x]
 
--- `Cell` is neutral and reactive: binding reads the current value, `pure` makes
--- a fresh cell, and the result is itself a cell that tracks its inputs.
+instance Alternative List where
+  empty = []
+  orElse left right = if isEmpty left then right else left
+
+-- ---------------------------------------------------------------- Cell
+instance Functor Cell where
+  map cell f = makeCell (f (get cell))
+
+instance Applicative Cell where
+  pure x = makeCell x
+  ap cf cx = makeCell ((get cf) (get cx))
+
 instance Monad Cell where
   bind cell k = k (get cell)
-  map cell f = makeCell (f (get cell))
-  pure x = makeCell x
+  return x = makeCell x
 
 -- `some(value)` is `pure` for an Option; `one(value)` for a List.
 some :: a -> Option a

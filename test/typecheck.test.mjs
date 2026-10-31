@@ -302,7 +302,7 @@ test("a right section fills the trailing parameter", () => {
   ok(`import Option
 
 render :: Option (Int, Int) -> Option Int
-render = Option.map \\(a, b) -> a + b
+render = map \\(a, b) -> a + b
 
 main :: Html
 main = <p>{str (render (Some (1, 2)))}</p>`);
@@ -312,7 +312,7 @@ test("diagnostics name unresolved variables a, b instead of compiler ids", () =>
   bad(`import Option
 
 main :: Html
-main = <p>{str (Option.map (\\x -> x) (\\y -> y))}</p>`, /type mismatch: \(a -> a\) vs Option b/);
+main = <p>{str (map (\\x -> x) (\\y -> y))}</p>`, /Functor\.map argument 1: expected a b, got a -> a/);
 });
 
 test("a record argument must still supply every field the callee reads", () => {

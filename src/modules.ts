@@ -281,9 +281,11 @@ export class Linker {
     for (const u of this.units.values()) visit(u);
 
     // The prelude is injected into every module: intrinsics and the capability
-    // effects live in std, not in the compiler. It must be first so its types
+    // effects live in std, not in the compiler. Visiting it also pulls in the
+    // modules it re-exports (the Monad family). It must be first so its types
     // (Option, …) are registered before modules that use them.
     const prelude = this.loadUnit(stdPackage(), ["prelude"]);
+    visit(prelude);
     const preludeIndex = ordered.indexOf(prelude);
     if (preludeIndex >= 0) ordered.splice(preludeIndex, 1);
     ordered.unshift(prelude);
@@ -519,6 +521,23 @@ export class Linker {
         if (d.k === "Adt") {
           for (const v of d.variants) {
             const vFinal = finalName.get(`${preludeUnit.id}::${v.name}`);
+            if (vFinal) preludeValues.set(v.name, vFinal);
+          }
+        }
+      }
+      // The prelude also re-exports what it imports: the Monad family is
+      // declared in std::monad but every module sees `Functor`, `Applicative`,
+      // `Monad` and `Alternative` through the prelude.
+      for (const [alias, ref] of this.importTable(preludeUnit)) {
+        const final = finalName.get(`${ref.unit.id}::${ref.name}`);
+        if (!final) continue;
+        const decl = ref.unit.declares.get(ref.name);
+        if (!decl) continue;
+        if (decl.k === "Adt" || decl.k === "RecordType" || decl.k === "Alias") preludeTypes.set(alias, final);
+        else preludeValues.set(alias, final);
+        if (decl.k === "Adt") {
+          for (const v of decl.variants) {
+            const vFinal = finalName.get(`${ref.unit.id}::${v.name}`);
             if (vFinal) preludeValues.set(v.name, vFinal);
           }
         }

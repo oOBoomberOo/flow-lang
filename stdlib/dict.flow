@@ -14,9 +14,6 @@ import Tuple (fst, snd)
 
 type Dict k v = List (k, v)
 
-empty :: Dict k v
-empty = []
-
 isEmptyDict :: Dict k v -> Bool
 isEmptyDict d = isEmpty d
 
@@ -24,16 +21,16 @@ size :: Dict k v -> Int
 size d = len d
 
 keys :: Dict k v -> List k
-keys d = List.map d (\(k, _v) -> k)
+keys d = map d (\(k, _v) -> k)
 
 values :: Dict k v -> List v
-values d = List.map d (\(_k, v) -> v)
+values d = map d (\(_k, v) -> v)
 
 toList :: Dict k v -> List (k, v)
 toList d = d
 
 fromList :: (k -> k -> Int) -> List (k, v) -> Dict k v
-fromList cmp xs = List.fold xs empty (\acc pair -> insert cmp (fst pair) (snd pair) acc)
+fromList cmp xs = List.fold xs [] (\acc pair -> insert cmp (fst pair) (snd pair) acc)
 lookup :: (k -> k -> Int) -> k -> Dict k v -> Option v
 lookup cmp key d = case d of
   [] -> None
@@ -71,8 +68,8 @@ adjust cmp f key d = case d of
        else if c < 0 then d
        else (k, v) : adjust cmp f key rest
 
-map :: (k -> v -> w) -> Dict k v -> Dict k w
-map f d = List.map d (\(k, v) -> (k, f k v))
+mapWithKey :: (k -> v -> w) -> Dict k v -> Dict k w
+mapWithKey f d = map d (\(k, v) -> (k, f k v))
 
 filter :: (k -> v -> Bool) -> Dict k v -> Dict k v
 filter keep d = List.filter d (\(k, v) -> keep k v)

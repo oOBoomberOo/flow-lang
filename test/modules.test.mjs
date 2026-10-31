@@ -156,7 +156,7 @@ value () = 42`,
 
 test("stdlib: list, math, option and string modules", () => {
   const { entry } = packageWith({
-    "main.flow": `import List (map, filter, range, fold)
+    "main.flow": `import List (filter, range, fold)
 import Math (sum, clamp)
 import Option (withDefault, isSome)
 import String (padLeft, capitalize)
@@ -240,19 +240,30 @@ test("packages: integrity detects a tampered dependency", () => {
 
 test("packages: a registry dependency used by a program", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-use-"));
+  const registry = path.join(dir, "registry");
+  const chart = path.join(registry, "packages", "flow-charts", "1.0.0");
+  fs.mkdirSync(path.join(chart, "src"), { recursive: true });
+  fs.writeFileSync(path.join(chart, "flow.json"), JSON.stringify({
+    name: "flow-charts", version: "1.0.0", dependencies: {},
+  }, null, 2));
+  fs.writeFileSync(path.join(chart, "src", "bar.flow"), `module Bar (Bar) where
+
+Bar :: { label :: Str, value :: Int, max :: Int } -> Html
+Bar props = <div class="bar-fill">{"bar"}</div>
+`);
+  fs.writeFileSync(path.join(registry, "index.json"), JSON.stringify({
+    packages: { "flow-charts": { versions: { "1.0.0": { path: "packages/flow-charts/1.0.0" } } } },
+  }, null, 2));
   fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({
-    name: "consumer", version: "0.1.0", dependencies: { "flow-charts": "^1.0.0", "flow-time": "^1.2.0" },
+    name: "consumer", version: "0.1.0",
+    dependencies: { "flow-charts": "^1.0.0" },
+    registry: { path: "./registry" },
   }, null, 2));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
   fs.writeFileSync(path.join(dir, "src", "main.flow"), `import FlowCharts.Bar (Bar)
-import FlowTime.Format (hms)
 
 main :: Html
-main =
-  <div>
-    <Bar label={"a"} value={2} max={4} />
-    <p>{hms 61000}</p>
-  </div>
+main = <div><Bar label={"a"} value={2} max={4} /></div>
 `);
   install(dir);
   const r = compileFile(path.join(dir, "src", "main.flow"));

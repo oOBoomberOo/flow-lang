@@ -97,7 +97,7 @@ test("tuple: fst, snd, swap, curry and zip3", async () => {
 
 test("result: Ok/Err survive with map, andThen, withDefault and all", async () => {
   await withRoute(`do
-  let ok = Result.map (\\x -> x + 1) (Ok 2)
+  let ok = Result.mapOk (\\x -> x + 1) (Ok 2)
   let bad = Result.andThen (\\x -> if x > 0 then Ok x else Err "neg") (Ok 5)
   let neg = Result.andThen (\\x -> if x > 0 then Ok x else Err "neg") (Ok (0 - 1))
   let list = Result.all [Ok 1, Ok 2]

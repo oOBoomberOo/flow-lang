@@ -273,7 +273,6 @@ test("algebraic: an effectful callback needs an effect row on the consumer", () 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-alg-cb-"));
   const entry = path.join(root, "main.flow");
   fs.writeFileSync(entry, `import State (State)
-import List (map)
 
 f :: () -> List Int
 f () = map [1] (\\(x :: Int) -> State.get () + x)

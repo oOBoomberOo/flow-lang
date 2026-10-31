@@ -72,8 +72,8 @@ encode j = case j of
   JBool b -> if b then "true" else "false"
   JNum n -> str n
   JStr s -> encodeString s
-  JList xs -> "[" + String.joinWith (List.map xs encode) "," + "]"
-  JObject pairs -> "{" + String.joinWith (List.map pairs encodePair) "," + "}"
+  JList xs -> "[" + String.joinWith (map xs encode) "," + "]"
+  JObject pairs -> "{" + String.joinWith (map pairs encodePair) "," + "}"
 
 encodePair :: (Str, Json) -> Str
 encodePair pair = case pair of

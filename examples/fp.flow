@@ -1,6 +1,6 @@
 -- Functional style: inferred lambda params, currying, pipes and combinators.
 import Fn (compose, flip, pipe, applyTwice)
-import List (map, filter, range)
+import List (filter, range)
 
 add :: Int -> Int -> Int
 add a b = a + b

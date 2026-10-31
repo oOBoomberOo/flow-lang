@@ -1,4 +1,4 @@
-module List (length, isEmptyList, map, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
+module List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
 
 -- std::list — list transforms, written in Flow itself.
 length :: List a -> Int
@@ -6,11 +6,6 @@ length xs = len xs
 
 isEmptyList :: List a -> Bool
 isEmptyList xs = isEmpty xs
-
-map :: List a -> (a -> b) -> List b
-map xs f = case xs of
-  [] -> []
-  x : rest -> concat [f x] (map rest f)
 
 filter :: List a -> (a -> Bool) -> List a
 filter xs keep = case xs of

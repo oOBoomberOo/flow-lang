@@ -52,7 +52,7 @@ async function withHost(source, fn) {
 test("functional: partial application, chained calls and pipes run", async () => {
   const source = `import Fn (compose)
 import Monad (Monad)
-import List (map, filter, range)
+import List (filter, range)
 import Http (get, Router, RequestObject, Response, textResponse)
 
 add :: Int -> Int -> Int
@@ -88,18 +88,17 @@ main = <p>{"fp"}</p>
 });
 
 test("functional: a right section fills the trailing parameters", async () => {
-  const source = `import List (map)
-import Option
+  const source = `import Option
 import Http (get, Router, RequestObject, textResponse)
 
 doubleAll :: List Int -> List Int
 doubleAll = map (\\x -> x * 2)
 
 incOption :: Option Int -> Option Int
-incOption = Option.map (\\x -> x + 1)
+incOption = map (\\x -> x + 1)
 
 addPair :: Option (Int, Int) -> Option Int
-addPair = Option.map \\(a, b) -> a + b
+addPair = map \\(a, b) -> a + b
 
 routes :: () -> ()
 routes () =
@@ -156,7 +155,7 @@ main = <p>{"adt"}</p>
 });
 
 test("functional: inferred lambda parameters work in every position", () => {
-  const src = `import List (map, filter, range)
+  const src = `import List (filter, range)
 
 main :: Html
 main = do

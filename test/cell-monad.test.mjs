@@ -176,13 +176,12 @@ main = do
   <p>{str x}</p>`),
     /Monad\.bind argument 2/,
   );
-  assert.throws(
-    () => compileSource(`main :: Html
+  // The Monad family is part of the prelude, so `>>=` needs no import.
+  const noImport = compileSource(`main :: Html
 main = do
   let x = Some 1 >>= (\\(v :: Int) -> Some v)
-  <p>{str x}</p>`, "m3.flow"),
-    /operator '>>=' needs the Monad trait/,
-  );
+  <p>{str x}</p>`, "m3.flow");
+  assert.deepEqual(noImport.errors, []);
   assert.throws(
     () => compileInTemp(`import Monad (Monad)
 

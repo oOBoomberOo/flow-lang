@@ -35,6 +35,8 @@ export interface TraitInfo {
   /** the trait's parameter variables, as they appear in method signatures */
   paramVars: Map<string, Type>;
   methods: Map<string, { sig: FnSig; ty: Type }>;
+  /** superclass traits from `class Super f => Trait f` */
+  supers: string[];
 }
 
 /** A hidden dictionary parameter for a bounded type parameter. */
@@ -144,6 +146,9 @@ export const implFnName = (trait: string, index: number, method: string) =>
 export const dictParamName = (trait: string, typeParam: string) =>
   `$d_${trait}_${typeParam}`;
 
+/** Key for the trait dictionaries carried by one type variable. */
+export const dictKey = (trait: string, varId: number) => `${varId}:${trait}`;
+
 /** A type parameter's declared bounds, or an empty list. */
 const boundsOf = (paramBounds: Record<string, string[]> | undefined, name: string): string[] =>
   paramBounds?.[name] ?? [];
@@ -159,8 +164,17 @@ export class Infer {
   typeParams = new Map<string, Type>();
   /** declarations whose signature failed: references must not cascade errors */
   private failedNames = new Set<string>();
-  /** type-variable id -> dictionary parameter name while checking a body */
-  currentDicts = new Map<number, string>();
+  /** `(variable id, trait)` -> dictionary parameter name while checking a body */
+  currentDicts = new Map<string, string>();
+  /** return-position trait calls waiting for the body's types to settle */
+  private pendingTraitCalls: {
+    node: object;
+    trait: string;
+    method: string;
+    target: Type;
+    di: number;
+    span?: { line?: number; col?: number; file?: string };
+  }[] = [];
   private uidCtor = 0;
   /** the type a lambda argument is expected to have, so its parameters need no annotation */
   private expectedFor = new Map<Expr, Type>();
@@ -580,7 +594,20 @@ export class Infer {
       methods.set(m.name, { sig: m, ty });
       this.mod.methodIndex.set(m.name, d.name);
     }
-    this.mod.traits.set(d.name, { name: d.name, params: d.params, ctorParams, paramVars: params, methods });
+    const supers = [...new Set(Object.values(d.paramBounds ?? {}).flat())];
+    this.mod.traits.set(d.name, { name: d.name, params: d.params, ctorParams, paramVars: params, methods, supers });
+  }
+
+  /** A trait and all of its superclasses, in written-then-super order. */
+  expandBounds(bounds: string[]): string[] {
+    const out: string[] = [];
+    const visit = (trait: string) => {
+      if (out.includes(trait)) return;
+      out.push(trait);
+      for (const superTrait of this.mod.traits.get(trait)?.supers ?? []) visit(superTrait);
+    };
+    for (const b of bounds) visit(b);
+    return out;
   }
 
   registerEffect(d: Decl & { k: "Effect" }) {
@@ -632,9 +659,10 @@ export class Infer {
     for (const w of d.where ?? []) {
       const v = implParams.get(w.name) ?? fresh(0);
       v.generic = true;
-      v.bounds = [...new Set([...(v.bounds ?? []), ...w.bounds])];
+      const bs = this.expandBounds(w.bounds);
+      v.bounds = [...new Set([...(v.bounds ?? []), ...bs])];
       implParams.set(w.name, v);
-      for (const b of w.bounds) {
+      for (const b of bs) {
         dicts.push({ trait: b, typeParam: w.name, name: dictParamName(b, w.name), varId: v.id });
       }
     }
@@ -869,7 +897,7 @@ export class Infer {
     for (const tp of d.typeParams ?? []) {
       const v = fresh(0);
       v.generic = true;
-      const bs = boundsOf(d.paramBounds, tp);
+      const bs = this.expandBounds(boundsOf(d.paramBounds, tp));
       if (bs.length) {
         v.bounds = [...bs];
         for (const b of bs) dicts.push({ trait: b, typeParam: tp, name: dictParamName(b, tp), varId: v.id });
@@ -935,13 +963,13 @@ export class Infer {
     this.fail(`placement mismatch: ${what} is annotated @${expected}, but is placed ${actual}`, span);
   }
 
-  /** Resolve a dictionary for a type variable by its id or its instantiation origin. */
-  private dictForVar(v: Type): string | undefined {
+  /** Resolve a dictionary for a type variable and trait by id or instantiation origin. */
+  private dictForVar(v: Type, trait: string): string | undefined {
     const p = prune(v);
     if (p.k !== "var") return undefined;
-    const direct = this.currentDicts.get(p.id);
+    const direct = this.currentDicts.get(dictKey(trait, p.id));
     if (direct) return direct;
-    return p.origin !== undefined ? this.currentDicts.get(p.origin) : undefined;
+    return p.origin !== undefined ? this.currentDicts.get(dictKey(trait, p.origin)) : undefined;
   }
 
   /** The place of a call argument, resolving locals from the environment so an
@@ -970,8 +998,10 @@ export class Infer {
     const savedDicts = this.currentDicts;
     const savedTypeParams = this.typeParams;
     this.env = new Map(saved);
-    this.currentDicts = new Map((info.dicts ?? []).map((d) => [d.varId, d.name]));
+    this.currentDicts = new Map((info.dicts ?? []).map((d) => [dictKey(d.trait, d.varId), d.name]));
     this.typeParams = info.typeParams ?? new Map();
+    const savedPending = this.pendingTraitCalls;
+    this.pendingTraitCalls = [];
     for (let i = 0; i < params.length; i++) {
       const p = params[i]!;
       this.env.set(p.name, { ty: t.params[i]!, envVars: new Set(), place: "neutral" });
@@ -983,6 +1013,7 @@ export class Infer {
       this.env = saved;
       this.currentDicts = savedDicts;
       this.typeParams = savedTypeParams;
+      this.pendingTraitCalls = savedPending;
       if (e instanceof FlowError) {
         this.fail(
           `${e.message}\n  in fn ${name}`,
@@ -991,7 +1022,6 @@ export class Infer {
       }
       throw e;
     }
-    this.currentDicts = savedDicts;
     this.checkPlacement(info.retPlace, r.place, body.span, `fn ${name}`);
 
     // The return type is checked against the *tail* expression, not the whole
@@ -1002,7 +1032,9 @@ export class Infer {
     } catch (e) {
       restoreSubst(before);
       this.env = saved;
+      this.currentDicts = savedDicts;
       this.typeParams = savedTypeParams;
+      this.pendingTraitCalls = savedPending;
       if (e instanceof FlowError) {
         const [wantText, gotText] = typeStrs([t.ret, r.ty]);
         this.fail(
@@ -1012,6 +1044,24 @@ export class Infer {
       }
       throw e;
     }
+
+    try {
+      this.resolvePendingTraitCalls();
+    } catch (e) {
+      this.env = saved;
+      this.currentDicts = savedDicts;
+      this.typeParams = savedTypeParams;
+      this.pendingTraitCalls = savedPending;
+      if (e instanceof FlowError) {
+        this.fail(
+          `${e.message}\n  in fn ${name}`,
+          e.line != null ? { line: e.line, col: e.col ?? 1, file: e.file } : undefined,
+        );
+      }
+      throw e;
+    }
+    this.currentDicts = savedDicts;
+    this.pendingTraitCalls = savedPending;
 
     try {
       if (declaredEff) {
@@ -1031,6 +1081,7 @@ export class Infer {
       this.env = saved;
       this.currentDicts = savedDicts;
       this.typeParams = savedTypeParams;
+      this.pendingTraitCalls = savedPending;
       throw e;
     }
     this.env = saved;
@@ -1049,7 +1100,7 @@ export class Infer {
     for (const tp of s.typeParams ?? []) {
       const v = fresh(0);
       v.generic = true;
-      const bs = boundsOf(s.paramBounds, tp);
+      const bs = this.expandBounds(boundsOf(s.paramBounds, tp));
       if (bs.length) v.bounds = [...bs];
       local.set(tp, v);
     }
@@ -1183,6 +1234,14 @@ export class Infer {
         if (e.name === "resume" && !this.env.has("resume") && !this.mod.fns.has("resume")) {
           this.fail("'resume' is only available inside an operation handler of an algebraic effect", e.span);
         }
+        // A trait method with no parameters is a value: `empty`, not `empty ()`.
+        const nullaryTrait = !this.env.has(e.name) && !this.mod.fns.has(e.name) ? this.mod.methodIndex.get(e.name) : undefined;
+        if (nullaryTrait) {
+          const m = this.mod.traits.get(nullaryTrait)?.methods.get(e.name);
+          if (m && m.ty.k === "fun" && m.ty.params.length === 0) {
+            return this.inferTraitCall(nullaryTrait, e.name, m.ty, [], e);
+          }
+        }
         const ty = this.lookupVar(e.name, e.span);
         this.mod.varTypes.set(e, ty);
         // a top-level constant (`pi = 3.14`) is a nullary function: referencing it evaluates it
@@ -1285,6 +1344,14 @@ export class Infer {
 
       case "Field": {
         const qn = this.qualName(e.target);
+        if (qn && this.mod.traits.has(qn)) {
+          const method = this.mod.traits.get(qn)?.methods.get(e.name);
+          // A nullary trait method is a value, even when qualified:
+          // `Alternative.empty`.
+          if (method && method.ty.k === "fun" && method.ty.params.length === 0) {
+            return this.inferTraitCall(qn, e.name, method.ty, [], e);
+          }
+        }
         if (qn && (this.mod.effects.has(qn) || this.mod.traits.has(qn))) {
           this.fail(`'${qn}.${e.name}' is a qualified name and must be called: ${qn}.${e.name}(...)`, e.span);
         }
@@ -1957,61 +2024,143 @@ export class Infer {
   inferTraitCall(traitName: string, method: string, schemeTy: Type, args: Expr[], node: object): ResInfo {
     const inst = instantiate(schemeTy, 0);
     if (inst.k !== "fun") this.fail(`${traitName}.${method} is not callable`);
-    if (args.length !== inst.params.length) this.fail(`${traitName}.${method} expects ${inst.params.length} argument(s)`);
+    const arity = inst.params.length;
+    if (args.length > arity) this.fail(`${traitName}.${method} expects ${arity} argument(s)`);
+    const partial = args.length < arity;
     // A trait method may declare effects; they participate in placement exactly
     // like a function's declared row (CellOps declares `! Client`).
-    let place: Place = placeFromEffects(inst.eff, this);
-    let eff: Eff = { labels: new Set(inst.eff.labels) };
-    args.forEach((a, i) => {
-      const r = this.inferArg(a, inst.params[i]!);
-      this.unifyArg(r.ty, inst.params[i]!, a.span, `${traitName}.${method} argument ${i + 1}`);
-      place = joinPlace(place, r.place);
-      eff = mergeEff(eff, r.eff);
-    });
+    const seed: Place = placeFromEffects(inst.eff, this);
+    const inferArgs = (slots: number[]): { place: Place; eff: Eff } => {
+      let place = seed;
+      let eff: Eff = { labels: new Set(inst.eff.labels) };
+      args.forEach((a, i) => {
+        const slot = slots[i]!;
+        const r = this.inferArg(a, inst.params[slot]!);
+        this.unifyArg(r.ty, inst.params[slot]!, a.span, `${traitName}.${method} argument ${i + 1}`);
+        // A callback that performs an algebraic effect cannot be passed to a
+        // parameter whose declared row does not admit it.
+        const argFun = prune(r.ty);
+        if (argFun.k === "fun" && this.effHasAlgebraic(argFun.eff) && schemeTy.k === "fun") {
+          const declared = prune(schemeTy.params[slot]!);
+          if (declared.k === "fun" && !this.effHasAlgebraic(declared.eff)) {
+            const labels = [...argFun.eff.labels].filter((l) => this.mod.effects.get(l)?.algebraic);
+            this.fail(
+              `cannot pass a function that performs {${labels.join(", ")}} to '${traitName}.${method}': ` +
+              `argument ${i + 1} is declared ${typeStr(declared)} without that effect row. ` +
+              `Declare the row on the consumer (e.g. '() -> a ! {${labels[0]}}') or handle the effect first.`,
+              a.span,
+            );
+          }
+        }
+        place = joinPlace(place, r.place);
+        eff = mergeEff(eff, r.eff);
+      });
+      return { place, eff };
+    };
+    let slots = args.map((_, i) => i);
+    let right = false;
+    const beforeArgs = snapshotSubst();
+    let placed: { place: Place; eff: Eff };
+    try {
+      placed = inferArgs(slots);
+    } catch (err) {
+      // `map f` and other sections fill the trailing parameters.
+      if (!partial || args.length === 0 || !(err instanceof FlowError)) throw err;
+      restoreSubst(beforeArgs);
+      slots = args.map((_, i) => arity - args.length + i);
+      right = true;
+      try {
+        placed = inferArgs(slots);
+      } catch {
+        restoreSubst(beforeArgs);
+        throw err;
+      }
+    }
+    const { place, eff } = placed;
     if (this.effHasAlgebraic(inst.eff)) this.mod.genCalls.add(node);
+    if (partial) {
+      this.mod.partialCalls.add(node);
+      if (right) this.mod.rightPartials.set(node, arity - args.length);
+    }
+    const remaining = right ? inst.params.slice(0, arity - args.length) : inst.params.slice(args.length);
+    const resultTy = partial ? fnT(remaining, inst.ret, inst.eff) : inst.ret;
+
     const trait = this.mod.traits.get(traitName)!;
     const di = this.dispatchIndex(trait, schemeTy);
     let target = prune(di >= 0 ? inst.params[di]! : inst.ret);
     if (trait.ctorParams.size && trait.params.length && trait.ctorParams.has(trait.params[0]!)) {
       target = headConstructor(target);
     }
-    if (target.k === "var" && !target.bounds?.includes(traitName) && di < 0) {
-      // A nullary trait method (e.g. Monoid.empty()) has no value to dispatch
-      // on. If the trait has exactly one instance, use it; otherwise the call is
-      // genuinely ambiguous and needs an annotation or a value argument.
-      const impls = this.mod.impls.filter((im) => im.trait === traitName && im.targetType);
-      if (impls.length === 1) {
-        unify(target, instantiate(impls[0]!.targetType!, 0));
-        target = prune(inst.ret);
-      } else {
-        this.fail(
-          `cannot infer the type for ${traitName}.${method}(): the trait has ${impls.length} instances`,
-        );
-      }
-    }
-    this.mod.info.set(node, { ty: inst.ret, place, eff });
+    this.mod.info.set(node, { ty: resultTy, place, eff });
+
     if (target.k === "var") {
-      if (!target.bounds?.includes(traitName)) {
+      if (target.bounds?.includes(traitName)) {
+        this.bindTraitChoice(node, traitName, method, target);
+        return { ty: resultTy, place, eff };
+      }
+      // A return-position method (`pure`, `empty`, `return`) has no receiver to
+      // dispatch on yet. Defer until the enclosing body has unified the result
+      // type; the enclosing lambda or annotation may still supply it.
+      this.pendingTraitCalls.push({
+        node, trait: traitName, method, target, di,
+        span: (node as { span?: { line?: number; col?: number; file?: string } }).span,
+      });
+      return { ty: resultTy, place, eff };
+    }
+    this.bindTraitChoice(node, traitName, method, target);
+    return { ty: resultTy, place, eff };
+  }
+
+  /** Point a trait call at a dictionary parameter or a concrete impl. */
+  private bindTraitChoice(
+    node: object,
+    traitName: string,
+    method: string,
+    target: Type,
+    span?: { line?: number; col?: number; file?: string },
+  ): void {
+    const t = prune(target);
+    if (t.k === "var") {
+      if (!t.bounds?.includes(traitName)) {
         this.fail(
-          `no instance of ${traitName} for type variable ${typeStr(target)}; ` +
+          `no instance of ${traitName} for type variable ${typeStr(t)}; ` +
           `add a trait bound such as <a: ${traitName}>`,
+          span,
         );
       }
-      const dictName = this.dictForVar(target);
-      if (!dictName) this.fail(`internal: no dictionary parameter for ${traitName} ${typeStr(target)}`);
+      const dictName = this.dictForVar(t, traitName);
+      if (!dictName) this.fail(`internal: no dictionary parameter for ${traitName} ${typeStr(t)}`, span);
       this.mod.boundChoices.set(node, { dictName, method, trait: traitName });
-      return { ty: inst.ret, place, eff };
+      return;
     }
-    const resolved = this.resolveImplInfo(traitName, target);
-    if (!resolved) this.fail(`no instance of ${traitName} for ${typeStr(target)}`);
+    const resolved = this.resolveImplInfo(traitName, t);
+    if (!resolved) this.fail(`no instance of ${traitName} for ${typeStr(t)}`, span);
     const impl = resolved.impl;
     const dicts: { trait: string; type: Type }[] = [];
     for (const d of impl.dicts ?? []) {
-      const t = resolved.subst.get(d.varId);
-      if (t) dicts.push({ trait: d.trait, type: t });
+      const sub = resolved.subst.get(d.varId);
+      if (sub) dicts.push({ trait: d.trait, type: sub });
     }
     this.mod.implChoices.set(node, { impl, method, mangled: impl.mangled.get(method)!, dicts });
-    return { ty: inst.ret, place, eff };
+  }
+
+  /** Resolve deferred return-position trait calls once the body's types are known. */
+  private resolvePendingTraitCalls(): void {
+    const pending = this.pendingTraitCalls;
+    this.pendingTraitCalls = [];
+    for (const p of pending) {
+      let target = prune(p.target);
+      // A call with no receiver and one instance can still pick that instance,
+      // but only after the body's annotations have had a chance to constrain it.
+      if (p.di < 0 && target.k === "var" && !target.bounds?.includes(p.trait)) {
+        const impls = this.mod.impls.filter((im) => im.trait === p.trait && im.targetType);
+        if (impls.length === 1) {
+          unify(target, instantiate(impls[0]!.targetType!, 0));
+          target = prune(target);
+        }
+      }
+      this.bindTraitChoice(p.node, p.trait, p.method, target, p.span);
+    }
   }
 
   resolveImplInfo(trait: string, target: Type): { impl: ImplInfo; subst: Map<number, Type> } | null {

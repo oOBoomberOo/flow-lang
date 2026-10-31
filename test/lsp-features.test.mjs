@@ -729,7 +729,7 @@ broken =
 
 test("lsp: hover works on built-in types and primitives", async () => {
   const { entry } = packageWith({
-    "main.flow": `import List (map)
+    "main.flow": `import List (filter)
 
 data Role = Admin | Member Str
 
@@ -767,9 +767,9 @@ main = <p>{str count} {if True then "y" else "n"}</p>
     const userType = await hoverAt("Role", 1, 1);
     assert.ok(userType?.contents, "user type hover");
     assert.match(userType.contents.value, /data Role = Admin \| Member Str/);
-    const imported = await hoverAt("map", 1);
+    const imported = await hoverAt("filter", 1);
     assert.ok(imported?.contents, "imported name hover");
-    assert.match(imported.contents.value, /List\.map/);
+    assert.match(imported.contents.value, /List\.filter/);
   } finally { c.proc.kill(); }
 });
 

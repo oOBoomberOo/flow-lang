@@ -16,7 +16,7 @@
 
 import type { Decl, Expr, HtmlNode, Pattern, Program } from "./ast.ts";
 import type { Module, Infer, DictParam } from "./infer.ts";
-import { implFnName } from "./infer.ts";
+import { implFnName, dictKey } from "./infer.ts";
 import type { Place, Type } from "./types.ts";
 import { prune, typeStr, typePlace, sendable } from "./types.ts";
 import type { Eff } from "./types.ts";
@@ -73,7 +73,7 @@ export class Codegen {
   private counter = 0;
   private tmp = 0;
   /** type-variable id -> dictionary parameter name while emitting a function */
-  private currentDicts = new Map<number, string>();
+  private currentDicts = new Map<string, string>();
   /** effects that suspend and resume (`algebraic effect`) */
   private algebraicEffects = new Set<string>();
   /** true while emitting the body of a JS generator function */
@@ -1007,7 +1007,7 @@ export class Codegen {
     const env = new Set([...params.map((p) => p.name), ...dictParams]);
     const savedDicts = this.currentDicts;
     const savedGen = this.genMode;
-    this.currentDicts = new Map((dicts ?? []).map((d) => [d.varId, d.name]));
+    this.currentDicts = new Map((dicts ?? []).map((d) => [dictKey(d.trait, d.varId), d.name]));
     const info = this.mod.fns.get(name);
     const gen = Boolean(info && info.scheme.k === "fun" && this.rowHasAlgebraic(info.scheme.eff));
     this.genMode = gen;
@@ -1074,6 +1074,10 @@ export class Codegen {
     switch (e.k) {
       case "Lit": return litJs(e.lit);
       case "Var": {
+        const traitChoice = this.mod.implChoices.get(e);
+        if (traitChoice) return `${traitChoice.mangled}()`;
+        const traitBound = this.mod.boundChoices.get(e);
+        if (traitBound) return `${traitBound.dictName}.${traitBound.method}()`;
         if (!env.has(e.name)) {
           const ctor = this.mod.ctors.get(e.name);
           if (ctor) {
@@ -1493,7 +1497,7 @@ export class Codegen {
   private emitDict(trait: string, type: Type): string {
     const t = prune(type);
     if (t.k === "var") {
-      const name = this.currentDicts.get(t.id) ?? (t.origin !== undefined ? this.currentDicts.get(t.origin) : undefined);
+      const name = this.currentDicts.get(dictKey(trait, t.id)) ?? (t.origin !== undefined ? this.currentDicts.get(dictKey(trait, t.origin)) : undefined);
       if (name) return name;
       // The variable may be a fresh alias whose origin was lost during
       // unification; if this function carries a dictionary for the same trait,
