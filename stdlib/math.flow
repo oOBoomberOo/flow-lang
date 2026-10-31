@@ -102,12 +102,12 @@ cosF x = f_cos x
 random :: () -> Float
 random () = f_random ()
 
--- / Constants are dotted FFI targets too: a nullary binding reads the value.
-pi :: () -> Float
-pi () = f_pi ()
+-- Dotted FFI targets are read by nullary functions; these are values.
+pi :: Float
+pi = f_pi ()
 
-e :: () -> Float
-e () = f_e ()
+e :: Float
+e = f_e ()
 
 -- ---------------------------------------------------------------- Int helpers
 abs :: Int -> Int

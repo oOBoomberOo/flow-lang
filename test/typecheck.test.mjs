@@ -47,6 +47,15 @@ test("an unbound serve points at the Http import", () => {
 main = serve (\\_ -> <p>{"x"}</p>)`, /import Flow\.Http \(serve\)/);
 });
 
+test("a top-level value is a constant, not a nullary function", () => {
+  const r = ok(`pi :: Float
+pi = 3.14
+
+main :: Html
+main = <p>{str (pi * 2.0)}</p>`);
+  assert.match(r.client, /pi\(\)/, "the value is read once per reference");
+});
+
 /* ------------------------- ADTs ------------------------- */
 
 test("exhaustive match on an ADT", () => {

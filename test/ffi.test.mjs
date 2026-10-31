@@ -132,7 +132,7 @@ test("ffi: a dotted target can be a global constant", () => {
     "main.flow": `import Math (pi, e)
 
 main :: Html
-main = <p>{str (pi ())} {str (e ())}</p>`,
+main = <p>{str pi} {str e}</p>`,
   });
   const r = compileFile(entry);
   assert.ok(r.client.includes('R.ffiCall("Math.PI"'), "pi reads Math.PI");

@@ -33,7 +33,7 @@ main = do
   let loud = shout "flow ffi"
   let n = countOf [10, 20, 30]
   let second = itemAt [10, 20, 30] 1
-  let circle = pi () * 4.0
+  let circle = pi * 4.0
   info "flow: ffi demo"
   value "sqrt(144)" root
   value "floor(2.7)" whole
