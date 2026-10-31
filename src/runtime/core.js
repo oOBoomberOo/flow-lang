@@ -314,10 +314,10 @@ export function createRuntime() {
 
     serve(id, fn) { serves.set(id, fn); },
 
-    remote(id, depsThunk) {
+    remote(id, depsThunk, initial) {
       const existing = remotes.get(id);
       if (existing) return existing.node;
-      const state = { value: undefined };
+      const state = { value: initial };
       const node = new Node(() => {
         const args = resolveArgs(depsThunk());
         sendFn({ t: "sub", id, args });

@@ -34,6 +34,8 @@ export interface CutInfo {
   home: Side;
   deps: string[];
   mode: "reactive" | "call";
+  /** A placeholder value for a reactive cut until the first wire value. */
+  initial?: string;
   line: number;
   file?: string;
 }
@@ -276,13 +278,15 @@ export class Codegen {
       }
       const deps = [...freeVars(e, new Set())].filter((n) => this.isRuntimeLocal(n));
       const lifted = this.liftLocalDeps(e, deps, h);
+      const mode = inHandler ? "call" : "reactive";
       const cut: CutInfo = {
         id: `cut${++this.counter}`,
         node: e,
         serverNode: lifted.node === e ? undefined : lifted.node,
         home: h,
         deps: lifted.wire,
-        mode: inHandler ? "call" : "reactive",
+        mode,
+        initial: mode === "reactive" ? this.initialFor(this.mod.info.get(e)?.ty) : undefined,
         line: e.span.line,
         file: e.span.file,
       };
@@ -1482,10 +1486,43 @@ export class Codegen {
     return `function* (${params}) { return ${bodyJs}; }`;
   }
 
+  /**
+   * A reactive cut has no value until the first wire message. Give it a
+   * type-appropriate placeholder so the initial render does not pattern-match
+   * `undefined` (for example, `map (get serverCell) $ ...` on an empty list).
+   */
+  private initialFor(t: Type | undefined): string | undefined {
+    if (!t) return undefined;
+    const p = prune(t);
+    if (p.k === "tuple") {
+      const items = p.items.map((i) => this.initialFor(i));
+      return items.some((x) => x === undefined) ? undefined : `[${items.join(", ")}]`;
+    }
+    if (p.k === "rec") {
+      const fields = Object.entries(p.fields).map(([k, v]) => [k, this.initialFor(v)] as const);
+      return fields.some(([, v]) => v === undefined)
+        ? undefined
+        : `{ ${fields.map(([k, v]) => `${ev(k)}: ${v}`).join(", ")} }`;
+    }
+    if (p.k !== "con") return undefined;
+    switch (p.name) {
+      case "List": return "[]";
+      case "Str": return '""';
+      case "Int": case "Float": return "0";
+      case "Bool": return "false";
+      case "Unit": return "null";
+      case "Option": return 'R.ctor("None", [])';
+      case "Json": return 'R.ctor("JNull", [])';
+      case "Html": case "Dom": case "Event": case "Cell": return "null";
+      default: return "null";
+    }
+  }
+
   private emitCutRef(cut: CutInfo): string {
     const deps = cut.deps.length ? `{ ${cut.deps.map((d) => `${ev(d)}: ${d}`).join(", ")} }` : "{}";
     if (cut.mode === "call") return `(await R.call(${ev(cut.id)}, ${deps}))`;
-    return `R.remote(${ev(cut.id)}, () => (${deps}))`;
+    const initial = cut.initial !== undefined ? `, ${cut.initial}` : "";
+    return `R.remote(${ev(cut.id)}, () => (${deps})${initial})`;
   }
 
   private effectOfOp(name: string): string | null {

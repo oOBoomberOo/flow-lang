@@ -45,6 +45,14 @@ test("dom: boolean attributes set and clear their attribute", () => {
   assert.equal(unchecked.attrs.checked, undefined, "false removes the attribute");
 });
 
+test("dom: a reactive cut starts with its placeholder until the first value", async () => {
+  const R = runtime();
+  const node = R.remote("cut1", () => ({}), []);
+  assert.deepEqual(R.v(node), []);
+  await R._receive({ t: "val", id: "cut1", value: [1, 2] });
+  assert.deepEqual(R.v(node), [1, 2]);
+});
+
 test("dom: eventField walks target.value and target.checked", () => {
   runtime();
   const host = globalThis.__flow.host;

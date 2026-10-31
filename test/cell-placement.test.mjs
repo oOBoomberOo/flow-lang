@@ -207,6 +207,11 @@ main = <ul>{map (get state) $ \\n -> <li>{str n}</li>}</ul>`, "map-cut.flow");
   assert.match(cut, /type=List Int/, "the cut produces the list, not a function");
   assert.doesNotMatch(cut, /->/, "no function value crosses");
   assert.match(r.client, /map|Functor/, "the map runs in the browser");
+  assert.match(
+    r.client,
+    /R\.remote\("[^"]+", \(\) => \(\{\}\), \[\]\)/,
+    "the list has an empty placeholder until the first server value",
+  );
 });
 
 test("cells: a server-bound cell cannot be created inside client code", () => {
