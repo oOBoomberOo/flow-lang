@@ -1,0 +1,103 @@
+-- std::iter — the everyday list algorithms: enumerate, scan, partition, group.
+--
+-- These are the functions a program reaches for most often; `List` keeps the core
+-- map/filter/fold, and this module adds the rest.
+
+enumerate :: List a -> List (Int, a)
+enumerate xs = go 0 xs
+  where
+    go i rest = case rest of
+      [] -> []
+      x : more -> (i, x) : go (i + 1) more
+
+zipWith :: (a -> b -> c) -> List a -> List b -> List c
+zipWith f xs ys = List.map (List.zip xs ys) (\(a, b) -> f a b)
+
+takeWhile :: (a -> Bool) -> List a -> List a
+takeWhile keep xs = case xs of
+  [] -> []
+  x : rest -> if keep x then x : takeWhile keep rest else []
+
+dropWhile :: (a -> Bool) -> List a -> List a
+dropWhile skip xs = case xs of
+  [] -> []
+  x : rest -> if skip x then dropWhile skip rest else xs
+
+partition :: (a -> Bool) -> List a -> (List a, List a)
+partition keep xs = List.fold xs ([], []) (\acc x ->
+  case acc of
+    (yes, no) -> if keep x then (x : yes, no) else (yes, x : no))
+
+-- Group consecutive elements that share a key, keeping their order.
+groupBy :: (a -> a -> Bool) -> List a -> List (List a)
+groupBy same xs = case xs of
+  [] -> []
+  x : rest ->
+    let (run, more) = spanFrom (same x) rest
+    in (x : run) : groupBy same more
+
+spanFrom :: (a -> Bool) -> List a -> (List a, List a)
+spanFrom keep xs = case xs of
+  [] -> ([], [])
+  x : rest -> if keep x then
+    let (run, more) = spanFrom keep rest
+    in (x : run, more)
+  else ([], xs)
+
+-- Split into chunks of at most `n`; the last chunk may be shorter.
+chunks :: Int -> List a -> List (List a)
+chunks n xs = if n <= 0 then [] else case xs of
+  [] -> []
+  _ -> let (head, rest) = splitAt n xs in head : chunks n rest
+
+splitAt :: Int -> List a -> (List a, List a)
+splitAt n xs = (List.take xs n, List.drop xs n)
+
+-- Interleave two lists, stopping at the shorter one.
+interleave :: List a -> List a -> List a
+interleave xs ys = case xs of
+  [] -> []
+  x : rest -> case ys of
+    [] -> []
+    y : more -> x : y : interleave rest more
+
+-- Every element paired with every other element (cartesian product).
+product2 :: List a -> List b -> List (a, b)
+product2 xs ys = List.fold xs [] (\acc x -> concat acc (List.map ys (\y -> (x, y))))
+
+find :: (a -> Bool) -> List a -> Option a
+find match xs = case xs of
+  [] -> None
+  x : rest -> if match x then Some x else find match rest
+
+count :: (a -> Bool) -> List a -> Int
+count match xs = len (List.filter xs match)
+
+sumInts :: List Int -> Int
+sumInts xs = List.fold xs 0 (\acc x -> acc + x)
+
+productInts :: List Int -> Int
+productInts xs = List.fold xs 1 (\acc x -> acc * x)
+
+minimum :: List Int -> Option Int
+minimum xs = case xs of
+  [] -> None
+  x : rest -> Some (List.fold rest x (\best y -> if y < best then y else best))
+
+maximum :: List Int -> Option Int
+maximum xs = case xs of
+  [] -> None
+  x : rest -> Some (List.fold rest x (\best y -> if y > best then y else best))
+
+average :: List Int -> Option Float
+average xs =
+  if isEmpty xs then None
+  else Some (Math.toFloat (Math.sum xs) / Math.toFloat (len xs))
+
+-- `scan` is fold that keeps every intermediate value.
+scanl :: (b -> a -> b) -> b -> List a -> List b
+scanl f init xs =
+  let go acc rest = case rest of
+        [] -> [acc]
+        x : more -> acc : go (f acc x) more
+  in go init xs

@@ -1,4 +1,4 @@
-module String (length, isEmptyStr, joinWith, repeat, padLeft, words, startsWith, capitalize, take, drop) where
+module String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower) where
 
 -- std::string
 --
@@ -55,3 +55,73 @@ drop xs n =
     else case xs of
       [] -> []
       _ : rest -> drop rest (n - 1)
+
+-- ---------------------------------------------------------------- padding
+foreign import js unsafe "__flow.host.strPadEnd" host_pad_end :: Str -> Int -> Str -> Str
+
+padRight :: Str -> Int -> Str -> Str
+padRight s n fill = host_pad_end s n fill
+
+-- ---------------------------------------------------------------- searching
+foreign import js unsafe "__flow.host.strEndsWith" host_ends_with :: Str -> Str -> Bool
+
+foreign import js unsafe "__flow.host.strIndexOf" host_index_of :: Str -> Str -> Int
+
+endsWith :: Str -> Str -> Bool
+endsWith s suffix = host_ends_with s suffix
+
+-- `-1` when the substring is absent.
+indexOf :: Str -> Str -> Int
+indexOf s needle = host_index_of s needle
+
+-- Split at the first occurrence of the separator.
+splitOnce :: Str -> Str -> Option (Str, Str)
+splitOnce s sep =
+  let at = indexOf s sep
+  in if at < 0
+     then None
+     else Some (sliceStr s 0 at, sliceStr s (at + length sep) (length s))
+
+sliceStr :: Str -> Int -> Int -> Str
+sliceStr s from to = joinWith (List.take (List.drop (chars s) from) (to - from)) ""
+
+-- ---------------------------------------------------------------- characters
+foreign import js unsafe "__flow.host.isDigit" host_is_digit :: Str -> Bool
+
+foreign import js unsafe "__flow.host.isAlpha" host_is_alpha :: Str -> Bool
+
+foreign import js unsafe "__flow.host.isAlphaNum" host_is_alpha_num :: Str -> Bool
+
+foreign import js unsafe "__flow.host.isSpace" host_is_space :: Str -> Bool
+
+foreign import js unsafe "__flow.host.isUpper" host_is_upper :: Str -> Bool
+
+foreign import js unsafe "__flow.host.isLower" host_is_lower :: Str -> Bool
+
+foreign import js unsafe "__flow.host.charUpper" host_char_upper :: Str -> Str
+
+foreign import js unsafe "__flow.host.charLower" host_char_lower :: Str -> Str
+
+isDigit :: Str -> Bool
+isDigit s = host_is_digit s
+
+isAlpha :: Str -> Bool
+isAlpha s = host_is_alpha s
+
+isAlphaNum :: Str -> Bool
+isAlphaNum s = host_is_alpha_num s
+
+isSpace :: Str -> Bool
+isSpace s = host_is_space s
+
+isUpper :: Str -> Bool
+isUpper s = host_is_upper s
+
+isLower :: Str -> Bool
+isLower s = host_is_lower s
+
+toUpper :: Str -> Str
+toUpper s = host_char_upper s
+
+toLower :: Str -> Str
+toLower s = host_char_lower s

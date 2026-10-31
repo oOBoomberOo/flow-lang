@@ -1,0 +1,41 @@
+-- std::tuple — the small helpers every language ships for pairs.
+
+fst :: (a, b) -> a
+fst pair = case pair of
+  (a, _b) -> a
+
+snd :: (a, b) -> b
+snd pair = case pair of
+  (_a, b) -> b
+
+swap :: (a, b) -> (b, a)
+swap pair = case pair of
+  (a, b) -> (b, a)
+
+both :: (a -> b) -> (a, a) -> (b, b)
+both f pair = case pair of
+  (a, b) -> (f a, f b)
+
+mapFirst :: (a -> b) -> (a, c) -> (b, c)
+mapFirst f pair = case pair of
+  (a, c) -> (f a, c)
+
+mapSecond :: (b -> c) -> (a, b) -> (a, c)
+mapSecond f pair = case pair of
+  (a, b) -> (a, f b)
+
+curry :: ((a, b) -> c) -> a -> b -> c
+curry f a b = f (a, b)
+
+uncurry :: (a -> b -> c) -> (a, b) -> c
+uncurry f pair = case pair of
+  (a, b) -> f a b
+
+zip3 :: List a -> List b -> List c -> List (a, b, c)
+zip3 xs ys zs =
+  List.map (List.zip xs (List.zip ys zs)) (\(a, pair) ->
+    case pair of
+      (b, c) -> (a, b, c))
+
+unzip :: List (a, b) -> (List a, List b)
+unzip pairs = (List.map pairs fst, List.map pairs snd)

@@ -1,0 +1,72 @@
+-- std::set — a persistent set over a sorted list.
+--
+-- Like Dict, the operations take the element comparison, so any type works.
+-- `stringSet` variants hide it for Str.
+
+type Set a = List a
+
+empty :: Set a
+empty = []
+
+isEmptySet :: Set a -> Bool
+isEmptySet s = isEmpty s
+
+size :: Set a -> Int
+size s = len s
+
+toList :: Set a -> List a
+toList s = s
+
+member :: (a -> a -> Int) -> a -> Set a -> Bool
+member cmp x s = case s of
+  [] -> False
+  y : rest ->
+    let c = cmp x y
+    in if c == 0 then True else if c < 0 then False else member cmp x rest
+
+fromList :: (a -> a -> Int) -> List a -> Set a
+fromList cmp xs = List.fold xs empty (\acc x -> insert cmp x acc)
+
+insert :: (a -> a -> Int) -> a -> Set a -> Set a
+insert cmp x s = case s of
+  [] -> [x]
+  y : rest ->
+    let c = cmp x y
+    in if c == 0 then s
+       else if c < 0 then x : s
+       else y : insert cmp x rest
+
+remove :: (a -> a -> Int) -> a -> Set a -> Set a
+remove cmp x s = case s of
+  [] -> []
+  y : rest ->
+    let c = cmp x y
+    in if c == 0 then rest else if c < 0 then s else y : remove cmp x rest
+
+union :: (a -> a -> Int) -> Set a -> Set a -> Set a
+union cmp left right = List.fold right left (\acc x -> insert cmp x acc)
+
+intersect :: (a -> a -> Int) -> Set a -> Set a -> Set a
+intersect cmp left right = List.filter left (\x -> member cmp x right)
+
+difference :: (a -> a -> Int) -> Set a -> Set a -> Set a
+difference cmp left right = List.filter left (\x -> not (member cmp x right))
+
+map :: (a -> b) -> (a -> a -> Int) -> (b -> b -> Int) -> Set a -> Set b
+map f fromCmp toCmp s = fromList toCmp (List.map s f)
+
+filter :: (a -> Bool) -> Set a -> Set a
+filter keep s = List.filter s keep
+
+-- ---------------------------------------------------------------- Int and Str
+intCompare :: Int -> Int -> Int
+intCompare a b = if a < b then -1 else if a > b then 1 else 0
+
+stringCompare :: Str -> Str -> Int
+stringCompare a b = if a < b then -1 else if a > b then 1 else 0
+
+intSet :: List Int -> Set Int
+intSet xs = fromList intCompare xs
+
+stringSet :: List Str -> Set Str
+stringSet xs = fromList stringCompare xs

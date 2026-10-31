@@ -1,0 +1,51 @@
+-- The standard library as a one-stop toolkit: containers, results, iteration,
+-- JSON, time, paths and the environment — no FFI needed.
+
+import Monad (Monad)
+import Env
+import Dict
+import Set
+import Result
+import Iter
+import Json (Json(..), encode, decodeSafe, getPath, asString)
+import Time
+import Path
+import Math
+
+scores :: Dict.Dict Str Int
+scores = Dict.stringDict [("ada", 36), ("grace", 85)]
+
+topScore :: () -> Option Int
+topScore () =
+  let values = Dict.values scores
+  in Iter.maximum values
+
+tags :: Set.Set Str
+tags = Set.stringSet ["flow", "web", "types"]
+
+report :: () -> Str
+report () = do
+  let best = case topScore () of
+        Some n -> str n
+        None -> "none"
+  let doc = Json.JObject
+        [ ("scores", Json.JList (List.map (Dict.toList scores) (\(k, v) -> Json.JObject [("name", Json.JStr k), ("score", Json.JNum (Math.toFloat v))])))
+        , ("best", Json.JNum 85.0)
+        ]
+  let text = encode doc
+  let winner = case decodeSafe text of
+        Ok json -> str (Json.field "best" json)
+        Err why -> why
+  best + "|" + winner + "|" + str (Set.member Set.stringCompare "web" tags) + "|" +
+    str (Iter.chunks 2 [1, 2, 3]) + "|" + str (Dict.stringLookup "grace" scores)
+
+main :: Html
+main = do
+  let now = Time.nowMillis ()
+  <div class="card">
+    <h1>Batteries included</h1>
+    <p class="report">{report ()}</p>
+    <p class="time">{Time.formatDate now} {Time.formatClock now}</p>
+    <p class="path">{Path.join ["std", "dict.flow"]} {" "} {Path.extension "main.flow"}</p>
+    <p class="env">{str (isEmpty (Env.args ()))}</p>
+  </div>

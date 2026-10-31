@@ -1,0 +1,105 @@
+-- std::dict — a persistent dictionary (an ordered association list).
+--
+-- Operations take the key's comparison function, so any key type works:
+--
+--   import Dict
+--   let d = Dict.fromList (\a b -> if a < b then -1 else if a > b then 1 else 0)
+--                          [("a", 1), ("b", 2)]
+--   Dict.lookup cmp "a" d        -- Some 1
+--
+-- Entries are kept sorted by key, so `keys` and `toList` are ordered and
+-- `lookup` can stop early. `stringDict` helpers hide the comparison for Str keys.
+
+import Tuple (fst, snd)
+
+type Dict k v = List (k, v)
+
+empty :: Dict k v
+empty = []
+
+isEmptyDict :: Dict k v -> Bool
+isEmptyDict d = isEmpty d
+
+size :: Dict k v -> Int
+size d = len d
+
+keys :: Dict k v -> List k
+keys d = List.map d (\(k, _v) -> k)
+
+values :: Dict k v -> List v
+values d = List.map d (\(_k, v) -> v)
+
+toList :: Dict k v -> List (k, v)
+toList d = d
+
+fromList :: (k -> k -> Int) -> List (k, v) -> Dict k v
+fromList cmp xs = List.fold xs empty (\acc pair -> insert cmp (fst pair) (snd pair) acc)
+lookup :: (k -> k -> Int) -> k -> Dict k v -> Option v
+lookup cmp key d = case d of
+  [] -> None
+  (k, v) : rest ->
+    let c = cmp key k
+    in if c == 0 then Some v else if c < 0 then None else lookup cmp key rest
+
+member :: (k -> k -> Int) -> k -> Dict k v -> Bool
+member cmp key d = case lookup cmp key d of
+  Some _ -> True
+  None -> False
+
+insert :: (k -> k -> Int) -> k -> v -> Dict k v -> Dict k v
+insert cmp key value d = case d of
+  [] -> [(key, value)]
+  (k, v) : rest ->
+    let c = cmp key k
+    in if c == 0 then (key, value) : rest
+       else if c < 0 then (key, value) : d
+       else (k, v) : insert cmp key value rest
+
+remove :: (k -> k -> Int) -> k -> Dict k v -> Dict k v
+remove cmp key d = case d of
+  [] -> []
+  (k, v) : rest ->
+    let c = cmp key k
+    in if c == 0 then rest else if c < 0 then d else (k, v) : remove cmp key rest
+
+adjust :: (k -> k -> Int) -> (v -> v) -> k -> Dict k v -> Dict k v
+adjust cmp f key d = case d of
+  [] -> []
+  (k, v) : rest ->
+    let c = cmp key k
+    in if c == 0 then (k, f v) : rest
+       else if c < 0 then d
+       else (k, v) : adjust cmp f key rest
+
+map :: (k -> v -> w) -> Dict k v -> Dict k w
+map f d = List.map d (\(k, v) -> (k, f k v))
+
+filter :: (k -> v -> Bool) -> Dict k v -> Dict k v
+filter keep d = List.filter d (\(k, v) -> keep k v)
+
+union :: (k -> k -> Int) -> Dict k v -> Dict k v -> Dict k v
+union cmp left right = List.fold right left (\acc pair -> insert cmp (fst pair) (snd pair) acc)
+
+-- Entries of `left` whose key also appears in `right`.
+intersect :: (k -> k -> Int) -> Dict k v -> Dict k w -> Dict k v
+intersect cmp left right = List.filter left (\(k, _v) -> member cmp k right)
+
+-- Entries of `left` whose key does not appear in `right`.
+difference :: (k -> k -> Int) -> Dict k v -> Dict k w -> Dict k v
+difference cmp left right = List.filter left (\(k, _v) -> not (member cmp k right))
+
+-- ---------------------------------------------------------------- Str keys
+stringCompare :: Str -> Str -> Int
+stringCompare a b = if a < b then -1 else if a > b then 1 else 0
+
+stringDict :: List (Str, v) -> Dict Str v
+stringDict pairs = fromList stringCompare pairs
+
+stringInsert :: Str -> v -> Dict Str v -> Dict Str v
+stringInsert = insert stringCompare
+
+stringLookup :: Str -> Dict Str v -> Option v
+stringLookup = lookup stringCompare
+
+stringRemove :: Str -> Dict Str v -> Dict Str v
+stringRemove = remove stringCompare

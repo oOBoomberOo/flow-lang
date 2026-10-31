@@ -1,20 +1,104 @@
-module Time (nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration) where
+module Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration, addSeconds, addDays, diffSeconds, formatIso, formatDate, formatClock, weekday, month, fromMillis) where
 
--- std::time — timing built on the FFI, not on compiler intrinsics.
-foreign import js unsafe "Date.now" date_now :: () -> Int
+-- std::time — instants in milliseconds since the epoch, plus formatting.
+--
+--   import Time
+--   let t = Time.nowMillis ()
+--   Time.formatIso t          -- "2026-10-31T12:00:00Z"
+--   Time.addDays 7 t
+--
+-- Instants are `Int` milliseconds so arithmetic is ordinary integer arithmetic.
+
+import Math (div, mod, floor)
+import String (padLeft)
+
+foreign import js unsafe "Date.now" host_now :: () -> Float
+
+foreign import js unsafe "__flow.host.dateIso" host_iso :: Int -> Str
+
+foreign import js unsafe "__flow.host.datePart" host_part :: Int -> Str -> Int
+
+-- Current time in whole seconds.
+now :: () -> Int
+now () = floor (host_now () / 1000.0)
+
+-- Current time in milliseconds.
+nowMillis :: () -> Int
+nowMillis () = floor (host_now ())
+
+-- Alias kept for older code.
+nowMs :: () -> Int
+nowMs () = floor (host_now ())
+
+addSeconds :: Int -> Int -> Int
+addSeconds seconds instant = instant + seconds * 1000
+
+addDays :: Int -> Int -> Int
+addDays days instant = addSeconds (days * 86400) instant
+
+-- `a - b` in whole seconds.
+diffSeconds :: Int -> Int -> Int
+diffSeconds a b = div (a - b) 1000
+
+-- ISO-8601 in UTC: "2026-10-31T09:15:02Z".
+formatIso :: Int -> Str
+formatIso instant = host_iso instant
+
+-- "2026-10-31"
+formatDate :: Int -> Str
+formatDate instant =
+  yearOf instant + "-" + padLeft (str (monthOf instant)) 2 "0" + "-" + padLeft (str (dayOf instant)) 2 "0"
+
+-- "09:15:02"
+formatClock :: Int -> Str
+formatClock instant =
+  padLeft (str (hourOf instant)) 2 "0" + ":" +
+    padLeft (str (minuteOf instant)) 2 "0" + ":" +
+    padLeft (str (secondOf instant)) 2 "0"
+
+-- "Monday" … "Sunday"
+weekday :: Int -> Str
+weekday instant = wordPart instant "weekday"
+
+-- "January" … "December"
+month :: Int -> Str
+month instant = wordPart instant "month"
+
+fromMillis :: Int -> Int
+fromMillis millis = millis
+
+yearOf :: Int -> Str
+yearOf instant = str (host_part instant "year")
+
+monthOf :: Int -> Int
+monthOf instant = host_part instant "monthNumber"
+
+dayOf :: Int -> Int
+dayOf instant = host_part instant "day"
+
+hourOf :: Int -> Int
+hourOf instant = host_part instant "hour"
+
+minuteOf :: Int -> Int
+minuteOf instant = host_part instant "minute"
+
+secondOf :: Int -> Int
+secondOf instant = host_part instant "second"
+
+-- Names come back as a separate primitive so `datePart` stays an Int function.
+foreign import js unsafe "__flow.host.dateWord" host_word :: Int -> Str -> Str
+
+wordPart :: Int -> Str -> Str
+wordPart instant what = host_word instant what
 
 foreign import js unsafe "globalThis.performance.now" perf_now :: () -> Float
 
--- / Wall-clock milliseconds since the epoch.
-nowMs :: () -> Int
-nowMs () = date_now ()
-
--- / High-resolution milliseconds since the process started (fractional).
+-- High-resolution milliseconds since the process started (fractional).
 nowPrecise :: () -> Float
 nowPrecise () = perf_now ()
 
 elapsedSince :: Int -> Int
-elapsedSince start = nowMs () - start
+elapsedSince start = nowMillis () - start
 
 since :: Float -> Float
 since start = perf_now () - start
@@ -22,17 +106,17 @@ since start = perf_now () - start
 pad2 :: Int -> Str
 pad2 n = if n < 0 then "00" else if n < 10 then "0" + str n else str n
 
--- / `hh:mm:ss` for a duration in milliseconds.
+-- `hh:mm:ss` for a duration in milliseconds.
 hms :: Int -> Str
-hms ms = do
-  let total = ms / 1000
-  pad2 (total / 3600) + ":" + pad2 (total / 60 % 60) + ":" + pad2 (total % 60)
+hms ms =
+  let total = div ms 1000
+  in pad2 (div total 3600) + ":" + pad2 (mod (div total 60) 60) + ":" + pad2 (mod total 60)
 
--- / A compact duration: `900ms`, `12s`, `3m 05s`.
+-- A compact duration: `900ms`, `12s`, `3m 05s`.
 duration :: Int -> Str
 duration ms =
   if ms < 1000
     then str ms + "ms"
     else if ms < 60000
-      then str (ms / 1000) + "s"
-      else str (ms / 60000) + "m " + pad2 (ms / 1000 % 60) + "s"
+      then str (div ms 1000) + "s"
+      else str (div ms 60000) + "m " + pad2 (mod (div ms 1000) 60) + "s"

@@ -1,0 +1,107 @@
+-- std::json — a `Json` value, an encoder and a decoder.
+--
+--   import Json (Json(..), encode, decodeSafe)
+--   let text = encode (JObject [("name", JStr "ada")])
+--   case decodeSafe text of
+--     Ok value -> str (Json.getPath ["name"] value)
+--     Err why -> why
+--
+-- Values keep their shape: objects become `JObject`, arrays `JList`, numbers
+-- `JNum`, strings `JStr`, booleans `JBool` and `null` `JNull`.
+
+import Dict
+import Result
+import String
+
+data Json
+  = JNull
+  | JBool Bool
+  | JNum Float
+  | JStr Str
+  | JList (List Json)
+  | JObject (List (Str, Json))
+
+-- ---------------------------------------------------------------- accessors
+asString :: Json -> Option Str
+asString j = case j of
+  JStr s -> Some s
+  _ -> None
+
+asNumber :: Json -> Option Float
+asNumber j = case j of
+  JNum n -> Some n
+  _ -> None
+
+asInt :: Json -> Option Int
+asInt j = case j of
+  JNum n -> Some (Math.floor n)
+  _ -> None
+
+asBool :: Json -> Option Bool
+asBool j = case j of
+  JBool b -> Some b
+  _ -> None
+
+asList :: Json -> Option (List Json)
+asList j = case j of
+  JList xs -> Some xs
+  _ -> None
+
+field :: Str -> Json -> Option Json
+field key j = case j of
+  JObject pairs -> Dict.stringLookup key (Dict.fromList Dict.stringCompare pairs)
+  _ -> None
+
+-- Follow a path of object keys: `getPath ["user", "name"] doc`.
+getPath :: List Str -> Json -> Option Json
+getPath path j = case path of
+  [] -> Some j
+  key : rest -> case field key j of
+    Some next -> getPath rest next
+    None -> None
+
+at :: Int -> Json -> Option Json
+at index j = case j of
+  JList xs -> if index < 0 || index >= len xs then None else Some (Prelude.at xs index)
+  _ -> None
+
+-- ---------------------------------------------------------------- encoding
+encode :: Json -> Str
+encode j = case j of
+  JNull -> "null"
+  JBool b -> if b then "true" else "false"
+  JNum n -> str n
+  JStr s -> encodeString s
+  JList xs -> "[" + String.joinWith (List.map xs encode) "," + "]"
+  JObject pairs -> "{" + String.joinWith (List.map pairs encodePair) "," + "}"
+
+encodePair :: (Str, Json) -> Str
+encodePair pair = case pair of
+  (k, v) -> encodeString k + ":" + encode v
+
+encodeString :: Str -> Str
+encodeString s = "\"" + escape s + "\""
+
+escape :: Str -> Str
+escape s = List.fold (chars s) "" (\acc c -> acc + escapeChar c)
+
+escapeChar :: Str -> Str
+escapeChar c =
+  if c == "\"" then "\\\""
+  else if c == "\\" then "\\\\"
+  else if c == "\n" then "\\n"
+  else if c == "\t" then "\\t"
+  else if c == "\r" then "\\r"
+  else c
+
+-- ---------------------------------------------------------------- decoding
+foreign import js unsafe "__flow.host.jsonParse" host_parse :: Str -> Json
+
+foreign import js unsafe "__flow.host.jsonParseSafe" host_parse_safe :: Str -> Option Json
+
+-- Decode a document. Invalid JSON throws; prefer `decodeSafe` for user input.
+decode :: Str -> Json
+decode text = host_parse text
+
+decodeSafe :: Str -> Result Json Str
+decodeSafe text = Result.fromOption "invalid JSON" (host_parse_safe text)

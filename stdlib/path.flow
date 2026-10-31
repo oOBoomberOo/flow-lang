@@ -1,0 +1,39 @@
+module Path (join, basename, dirname, extension, normalize, isAbsolute, separator) where
+
+-- std::path — portable path manipulation, neutral (works on both sides).
+
+foreign import js unsafe "__flow.host.pathJoin" host_join :: List Str -> Str
+
+foreign import js unsafe "__flow.host.pathBasename" host_basename :: Str -> Str
+
+foreign import js unsafe "__flow.host.pathDirname" host_dirname :: Str -> Str
+
+foreign import js unsafe "__flow.host.pathExtension" host_extension :: Str -> Str
+
+foreign import js unsafe "__flow.host.pathNormalize" host_normalize :: Str -> Str
+
+foreign import js unsafe "__flow.host.pathIsAbsolute" host_is_absolute :: Str -> Bool
+
+foreign import js unsafe "__flow.host.pathSeparator" host_separator :: () -> Str
+
+join :: List Str -> Str
+join parts = host_join parts
+
+basename :: Str -> Str
+basename p = host_basename p
+
+dirname :: Str -> Str
+dirname p = host_dirname p
+
+-- The extension including the dot (`".flow"`), or `""`.
+extension :: Str -> Str
+extension p = host_extension p
+
+normalize :: Str -> Str
+normalize p = host_normalize p
+
+isAbsolute :: Str -> Bool
+isAbsolute p = host_is_absolute p
+
+separator :: () -> Str
+separator () = host_separator ()

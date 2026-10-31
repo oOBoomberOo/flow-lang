@@ -1,4 +1,4 @@
-module Math (sqrt, pow, floor, ceil, round, absF, minF, maxF, logF, expF, sinF, cosF, random, pi, e, abs, div, mod, minInt, maxInt, clamp, sum, product, sign) where
+module Math (sqrt, pow, floor, ceil, round, absF, minF, maxF, logF, expF, sinF, cosF, random, pi, e, abs, div, mod, minInt, maxInt, clamp, sum, product, sign, toFloat, toInt, isEven, isOdd, powInt, roundTo) where
 
 -- std::math — Int helpers in Flow, float primitives through the FFI.
 -- ---------------------------------------------------------------- float host ops
@@ -110,3 +110,29 @@ product xs = case xs of
 
 sign :: Int -> Int
 sign n = if n < 0 then -1 else if n > 0 then 1 else 0
+
+-- ---------------------------------------------------------------- conversions
+foreign import js unsafe "Number" f_number :: Int -> Float
+
+toFloat :: Int -> Float
+toFloat n = f_number n
+
+toInt :: Float -> Int
+toInt x = floor x
+
+isEven :: Int -> Bool
+isEven n = mod n 2 == 0
+
+isOdd :: Int -> Bool
+isOdd n = mod n 2 /= 0
+
+-- Integer power, so `2 ^ 10` does not go through floats.
+powInt :: Int -> Int -> Int
+powInt base exp =
+  if exp <= 0 then 1 else base * powInt base (exp - 1)
+
+-- Round to `n` decimal places.
+roundTo :: Float -> Int -> Float
+roundTo x n =
+  let factor = f_number (powInt 10 n)
+  in f_number (f_round (x * factor)) / factor

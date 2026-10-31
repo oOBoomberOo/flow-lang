@@ -43,6 +43,8 @@ export class Codegen {
   inf: Infer;
   prog: Program;
   homes = new Map<object, Side | "neutral">();
+  /** local binding -> emitted name, when the binder shadows a top-level name */
+  private localNames = new Map<string, string>();
   cuts = new Map<object, CutInfo>();
   cutList: CutInfo[] = [];
   emitting = new Set<object>();
@@ -461,7 +463,10 @@ export class Codegen {
         }
         const ext = this.mod.fns.get(e.name)?.extern;
         if (ext && !env.has(e.name)) return `R.ffiFn(${ev(ext.implName)})`;
-        return e.name;
+        // a top-level constant (`pi = 3.14`) is a nullary function: read its value
+        if (!env.has(e.name) && this.mod.constRefs.has(e)) return `${e.name}()`;
+        // a local that shadows a top-level name was renamed when it was bound
+        return env.has(e.name) ? (this.localNames.get(e.name) ?? e.name) : e.name;
       }
       case "Lam": {
         const inner = new Set(env);
@@ -501,15 +506,25 @@ export class Codegen {
           this.genMode = savedGen;
           return `(yield* (function* () { ${bind} return ${bodyJs}; })())`;
         }
+        // a binder that shadows a top-level function (`let args = Env.args ()`)
+        // would capture its own initializer, so the local gets a distinct name
+        const shadows = !env.has(e.name) && (this.mod.fns.has(e.name) || this.mod.ctors.has(e.name));
+        const bindName = shadows ? `${e.name}$local` : e.name;
         const inner = new Set(env); inner.add(e.name);
         // a local function may call itself, so its own name is in scope while its
         // body is emitted (and the binding is a real function, not a lazy node)
         const selfRec = e.value.k === "Lam";
         const vJs = this.emitExpr(e.value, side, ctxHome, selfRec ? inner : env);
         const bind = this.hasCallCut(e.value) || this.isEagerLet(e) || selfRec
-          ? `const ${e.name} = ${vJs};`
-          : `const ${e.name} = R.sig(() => ${vJs});`;
+          ? `const ${bindName} = ${vJs};`
+          : `const ${bindName} = R.sig(() => ${vJs});`;
+        const previousName = this.localNames.get(e.name);
+        if (shadows) this.localNames.set(e.name, bindName);
         const bodyJs = this.emitExpr(e.body, side, ctxHome, inner);
+        if (shadows) {
+          if (previousName === undefined) this.localNames.delete(e.name);
+          else this.localNames.set(e.name, previousName);
+        }
         const needsAwait = this.hasCallCut(e);
         return needsAwait
           ? `(await (async () => { ${bind} return ${bodyJs}; })())`
@@ -935,9 +950,14 @@ export class Codegen {
     const inner = new Set(env);
     for (const s of e.stmts) {
       if (s.k === "LetStmt") {
+        // a binder that shadows a top-level function would capture its own
+        // initializer (`let args = Env.args ()`), so give the local a new name
+        const shadows = !inner.has(s.name) && (this.mod.fns.has(s.name) || this.mod.ctors.has(s.name));
+        const bindName = shadows ? `${s.name}$local` : s.name;
         const v = this.emitExpr(s.value, side, ctxHome, inner);
-        const eager = gen || this.hasCallCut(s.value) || this.isEagerLet(s);
-        stmts.push(eager ? `const ${s.name} = ${v};` : `const ${s.name} = R.sig(() => ${v});`);
+        if (shadows) this.localNames.set(s.name, bindName);
+        const eager = gen || this.hasCallCut(s.value) || this.isEagerLet(s) || s.value.k === "Lam";
+        stmts.push(eager ? `const ${bindName} = ${v};` : `const ${bindName} = R.sig(() => ${v});`);
         inner.add(s.name);
       } else {
         stmts.push(`${this.emitExpr(s.e, side, ctxHome, inner)};`);

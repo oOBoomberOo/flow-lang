@@ -311,6 +311,51 @@ sorted = L.sortBy [3, 1, 2] (\a b -> a - b)
 Any public name can be reached by its module qualifier without an import: `Option.map`,
 `List.sortBy`, `Http.textResponse`. `module M (a, b) where` controls what is public.
 
+### 7.1 The standard library
+
+The standard library is meant to be a one-stop toolkit: reach for it before the FFI.
+
+| Module | What it gives you |
+|---|---|
+| `Prelude` | injected everywhere: `str`, `len`, `head`, `tail`, `push`, `concat`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `cons`, `makeCell`, `Cell`, `Option` |
+| `List` | `map`, `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` |
+| `Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
+| `Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `map`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
+| `Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `map`, `filter`, `intSet`, `stringSet` |
+| `Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
+| `Option` | `map`, `withDefault`, `isSome`, `isNone`, `toList` |
+| `Result` | `Ok`/`Err` with `map`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
+| `String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
+| `Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
+| `Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |
+| `Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
+| `Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
+| `Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
+| `Monad` | the `Monad` class with `bind`/`map` for `Option`, `List` and `Cell`, plus `>>=`/`do` |
+| `Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
+| `Client` / `Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
+| `State`, `Exn`, `Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
+| `Fs`, `Net`, `Http`, `Random`, `Store` | server file access, outbound HTTP, routing, randomness and key/value storage |
+
+Containers are ordinary values, so they work on both sides of the boundary:
+`Dict.stringLookup "k" d` in a render function reads a server-built map through a cut.
+
+```flow
+import Dict
+import Iter
+import Json (Json(..), encode, decodeSafe, getPath)
+
+scores = Dict.stringDict [("ada", 36), ("grace", 85)]
+
+summary :: () -> Str
+summary () =
+  let best = Iter.maximum (Dict.values scores)
+  let doc = Json.JObject [("best", Json.JNum 85.0)]
+  case decodeSafe (encode doc) of
+    Ok parsed -> str (getPath ["best"] parsed)
+    Err why -> why
+```
+
 ## 8. FFI
 
 ```flow

@@ -143,7 +143,8 @@ export function createRuntime() {
     show(v) {
       if (v == null) return "";
       if (typeof v === "string") return v;
-      if (typeof v === "number" || typeof v === "boolean") return String(v);
+      if (typeof v === "boolean") return v ? "True" : "False";
+      if (typeof v === "number") return String(v);
       if (Array.isArray(v)) return "[" + v.map((x) => R.show(x)).join(", ") + "]";
       if (typeof v === "object") {
         if (v.$ !== undefined) {
@@ -445,7 +446,108 @@ export function createRuntime() {
     },
   };
 
+  installSharedHost();
   return R;
+}
+
+/** Host shims shared by both sides: text predicates, JSON, paths and dates. */
+function installSharedHost() {
+  const host = globalThis.__flow.host;
+  // Small text predicates used by std/string. They live here because JavaScript
+  // regular expressions cannot be expressed in the FFI target syntax.
+  host.isDigit = (s) => /^[0-9]$/.test(String(s));
+  host.isAlpha = (s) => /^[A-Za-z]$/.test(String(s));
+  host.isAlphaNum = (s) => /^[A-Za-z0-9]$/.test(String(s));
+  host.isSpace = (s) => /^\s$/.test(String(s));
+  host.isUpper = (s) => /^[A-Z]$/.test(String(s));
+  host.isLower = (s) => /^[a-z]$/.test(String(s));
+  host.charUpper = (s) => String(s).toUpperCase();
+  host.charLower = (s) => String(s).toLowerCase();
+  host.strIndexOf = (haystack, needle) => String(haystack).indexOf(String(needle));
+  host.strEndsWith = (s, suffix) => String(s).endsWith(String(suffix));
+  host.strPadEnd = (s, n, fill) => String(s).padEnd(Number(n), String(fill ?? " "));
+  host.strRepeat = (s, n) => String(s).repeat(Math.max(0, Number(n)));
+
+  // JSON <-> the `Json` ADT of std/json. Decoding is a deep conversion so Flow
+  // code can pattern match on the result.
+  const toFlowJson = (v) => {
+    if (v === null) return { $: "JNull", args: [] };
+    if (typeof v === "boolean") return { $: "JBool", args: [v] };
+    if (typeof v === "number") return { $: "JNum", args: [v] };
+    if (typeof v === "string") return { $: "JStr", args: [v] };
+    if (Array.isArray(v)) return { $: "JList", args: [v.map(toFlowJson)] };
+    return { $: "JObject", args: [Object.entries(v).map(([k, x]) => [k, toFlowJson(x)])] };
+  };
+  // Environment and paths (std/env, std/path). Node-only values are undefined in
+  // a browser, which is why std/env is annotated @server.
+  const nodeProcess = typeof process !== "undefined" ? process : undefined;
+  host.envGet = (key) => {
+    const v = nodeProcess?.env?.[String(key)];
+    return v === undefined || v === "" ? { $: "None", args: [] } : { $: "Some", args: [String(v)] };
+  };
+  host.envVars = () => Object.entries(nodeProcess?.env ?? {});
+  host.envArgs = () => (nodeProcess?.argv ?? []).slice(2);
+  host.envName = () => String(nodeProcess?.release?.name ?? "browser");
+  host.envPlatform = () => String(nodeProcess?.platform ?? "browser");
+
+  const slash = (p) => String(p).replace(/\\/g, "/");
+  host.pathJoin = (parts) => parts.map(slash).filter((p) => p.length > 0)
+    .join("/").replace(/\/+/g, "/").replace(/\/\.\//g, "/");
+  host.pathBasename = (p) => slash(p).split("/").filter(Boolean).pop() ?? "";
+  host.pathDirname = (p) => {
+    const parts = slash(p).split("/");
+    parts.pop();
+    return parts.join("/") || ".";
+  };
+  host.pathExtension = (p) => {
+    const base = host.pathBasename(p);
+    const i = base.lastIndexOf(".");
+    return i > 0 ? base.slice(i) : "";
+  };
+  host.pathNormalize = (p) => {
+    const abs = slash(p).startsWith("/");
+    const out = [];
+    for (const part of slash(p).split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") { if (out.length && out[out.length - 1] !== "..") out.pop(); else if (!abs) out.push(part); continue; }
+      out.push(part);
+    }
+    return (abs ? "/" : "") + out.join("/") || ".";
+  };
+  host.pathIsAbsolute = (p) => /^([A-Za-z]:)?[\\/]/.test(String(p));
+  host.pathSeparator = () => (nodeProcess?.platform === "win32" ? "\\" : "/");
+
+  // std/time formatting (UTC, so client and server agree).
+  const dateOf = (ms) => new Date(Number(ms));
+  host.dateIso = (ms) => dateOf(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  host.datePart = (ms, what) => {
+    const d = dateOf(ms);
+    switch (String(what)) {
+      case "year": return d.getUTCFullYear();
+      case "monthNumber": return d.getUTCMonth() + 1;
+      case "day": return d.getUTCDate();
+      case "hour": return d.getUTCHours();
+      case "minute": return d.getUTCMinutes();
+      case "second": return d.getUTCSeconds();
+      case "milli": return d.getUTCMilliseconds();
+      default: return 0;
+    }
+  };
+  host.dateWord = (ms, what) => {
+    const d = dateOf(ms);
+    if (String(what) === "weekday") return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getUTCDay()];
+    return ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][d.getUTCMonth()];
+  };
+
+  host.jsonParse = (text) => toFlowJson(JSON.parse(String(text)));
+  host.jsonParseSafe = (text) => {
+    try {
+      return { $: "Some", args: [toFlowJson(JSON.parse(String(text)))] };
+    } catch {
+      return { $: "None", args: [] };
+    }
+  };
+
 }
 
 /* ------------------------------------------------------------------ */

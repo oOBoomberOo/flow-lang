@@ -119,9 +119,7 @@ resolves to the dependency's `src/format.flow`.
 available unqualified (`str`, `len`, `Some`, `None`, `True`, `False`, `not`, `concat`, `push`, …)
 and through the `Option` / `List` namespaces. A unit's own declarations and imports win.
 
-The standard library ships as modules: `List`, `Option`, `Math`, `Random`, `String`, `Html`,
-`Log`, `Time`, `Http`, `Net`, `Fs`, `State`, `Exn`, `Ref`, `Monad`, `Fn`. Full list in
-[`language.md`](language.md) § 7.
+The standard library ships as modules: `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `Math`, `Random`, `String`, `Html`, `Log`, `Time`, `Path`, `Env`, `Http`, `Net`, `Fs`, `State`, `Exn`, `Ref`, `Cell`, `Client`, `Server`, `Monad`, `Fn` and `Json`. The full catalogue is in [`language.md`](language.md) § 7.1.
 
 ## Everything is ordinary Flow
 

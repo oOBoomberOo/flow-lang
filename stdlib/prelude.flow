@@ -1,4 +1,4 @@
-module Prelude (not, cons, Option(..), Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, Cell(..)) where
+module Prelude (not, cons, Option(..), Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, Cell(..), at, makeCell) where
 
 -- std::prelude — the language surface that used to be compiler-injected.
 --

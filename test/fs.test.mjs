@@ -84,7 +84,7 @@ test("fs: server filesystem effect reads, writes, stats and lists", async () => 
 
     const res = await fetch(host.url + "/fs");
     assert.equal(res.status, 200);
-    assert.equal(await res.text(), "hello fs|hello fs|8|[a.txt]|none|true");
+    assert.equal(await res.text(), "hello fs|hello fs|8|[a.txt]|none|True");
   });
 });
 
@@ -92,6 +92,6 @@ test("fs: removeFile and removeDir work from the server", async () => {
   await withFsHost(async (host) => {
     const res = await fetch(host.url + "/fs-remove");
     assert.equal(res.status, 200);
-    assert.equal(await res.text(), "false");
+    assert.equal(await res.text(), "False");
   });
 });
