@@ -307,6 +307,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerHoverProvider("flow", {
     async provideHover(document, position) {
+      syncDocument(document);
       const h = await ask("textDocument/hover", { textDocument: doc(document), position: backPos(position) }, null);
       if (!h || !h.contents) return null;
       return new vscode.Hover(new vscode.MarkdownString(h.contents.value), h.range ? R(h.range) : undefined);
@@ -315,6 +316,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerDefinitionProvider("flow", {
     async provideDefinition(document, position) {
+      syncDocument(document);
       const d = await ask("textDocument/definition", { textDocument: doc(document), position: backPos(position) }, null);
       return d ? new vscode.Location(vscode.Uri.parse(d.uri), R(d.range)) : null;
     },
@@ -322,6 +324,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerReferenceProvider("flow", {
     async provideReferences(document, position, ctx) {
+      syncDocument(document);
       const refs = await ask("textDocument/references", {
         textDocument: doc(document), position: backPos(position),
         context: { includeDeclaration: ctx.includeDeclaration },
@@ -350,6 +353,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerSignatureHelpProvider("flow", {
     async provideSignatureHelp(document, position) {
+      syncDocument(document);
       const h = await ask("textDocument/signatureHelp", { textDocument: doc(document), position: backPos(position) }, null);
       if (!h) return null;
       const help = new vscode.SignatureHelp();
@@ -395,6 +399,7 @@ function registerProviders(context) {
 
   push(vscode.languages.registerDocumentHighlightProvider("flow", {
     async provideDocumentHighlights(document, position) {
+      syncDocument(document);
       const hits = await ask("textDocument/documentHighlight", { textDocument: doc(document), position: backPos(position) }, []);
       return (hits || []).map((h) => new vscode.DocumentHighlight(R(h.range), h.kind));
     },

@@ -52,8 +52,9 @@ Typing must never wait for a full compile:
   inlay hints never flush — they answer immediately from the current text and the
   last analysis.
 * **Text before requests.** The VS Code client sends the current document text
-  immediately before a completion request, so a `.`-trigger cannot be answered
-  against the previous line (which used to fall back to the global symbol list).
+  immediately before position-sensitive requests (completion, hover, definition,
+  references, signature help, highlights), so a request cannot be answered
+  against the previous line or fall back to the global symbol list.
 * **Active-file focus.** Switching editors sends `flow/activate`; the server
   reanalyses the file you switched to and its imports, so a module the package
   entry does not import (or a file in another package) still gets diagnostics,
