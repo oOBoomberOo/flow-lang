@@ -1,15 +1,18 @@
 module Flow.Builtins where
 
-// Flow built-in types. This file is documentation for editor navigation; it is
-// not imported by programs and is skipped by the linker.
-//
-// Html — client-rendered markup tree
-// Int — integer
-// Float — floating-point number
-// Str — text string
-// Bool — true or false
-// Unit — the empty value
-// List<a> — built-in list
-// Cell<a> — client-local reactive state
-// Event — DOM event
-// Dom — DOM handle
+-- Flow built-in types.
+--
+-- This is a documentation stub used as the go-to-definition target for the
+-- primitive types. It declares nothing, and the linker skips it when loading
+-- the standard library.
+--
+-- Html      client-rendered markup tree
+-- Int       integer
+-- Float     floating-point number
+-- Str       text string
+-- Bool      true or false
+-- Unit      the empty value
+-- List a    built-in list
+-- Cell a    client-local reactive state
+-- Event     DOM event
+-- Dom       DOM handle
