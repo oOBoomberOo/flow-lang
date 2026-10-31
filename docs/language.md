@@ -192,39 +192,70 @@ u = { name = "ada", age = 36 }
 shout = u.name ++ "!"
 ```
 
-## 5. Effects and services
+## 5. Client, Server and effects
 
-Capabilities are effects with a provider:
+`Client` and `Server` are **modules**, not capabilities. Each function lives on one
+side because its body reaches a primitive that only exists there; the FFI import
+that reaches it carries the placement:
 
 ```flow
-effect Server @ server where
-  secret :: Str -> Str
-  log :: Str -> ()
+module Server (log, now, random) where
 
-effect Client @ client where
-  state :: a -> Cell a
+foreign import js unsafe "__flow.host.log" server_write :: Str -> () @server
 
-provide Server where
-  secret k = host_secret k
-  log msg = host_log msg
+log :: Str -> ()
+log msg = server_write msg
 ```
 
-Calls look like ordinary functions and are placed by their effect:
+Calling one from the other side is a cut, exactly like any other crossing:
 
 ```flow
 main :: Html
 main = do
-  let token = Server.secret "api"     -- runs on the server
-  let count = Client.state 0          -- runs on the client
-  <p>{token}{str count.value}</p>
+  let started = Server.now ()        -- one server round trip
+  let count = Client.state 0         -- a cell, created here
+  <p>{str started}{str count.value}</p>
 ```
 
-### Cells
+A function without an annotation inherits the placement of its body, so ordinary
+code needs no annotations at all — only the FFI leaf says which side it belongs to.
 
-`cell.value` reads, `cell := e` writes, `cell += n` / `-=` / `*=` update, and
-`cell.update f` maps the current value. `cell.get ()` and `cell.set v` are the method forms.
+`effect` is for **capabilities you define**, with a provider that decides where
+they run (see §5.2). The standard library uses it for `Store`.
 
-### Algebraic effects
+### 5.1 Cells
+
+A cell is **neutral**: it lives wherever it is created and its value crosses the
+boundary as an ordinary cut. `cell.value` reads, `cell := e` writes, `cell += n` /
+`-=` / `*=` update, and `cell.update f` maps the current value; `cell.get ()` and
+`cell.set v` are the method forms. `Cell.pure x` (or `Client.state x`) creates one.
+
+Cells are monads, so a sequence of reads is an ordinary `do` block — no special
+syntax:
+
+```flow
+label :: Cell Str
+label = do
+  n <- counter
+  Cell.pure ("count: " + str n)
+```
+
+### 5.2 Capabilities
+
+A capability is an effect with a provider. The provider decides where the calls
+run, so the boundary follows the authority:
+
+```flow
+effect Audit where
+  record :: Str -> ()
+
+provide Audit where
+  record msg = Server.log msg      -- provider on the server
+```
+
+`Audit.record "hi"` is then a server call wherever it is written.
+
+### 5.3 Algebraic effects
 
 ```flow
 algebraic effect State where

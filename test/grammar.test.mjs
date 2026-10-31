@@ -132,9 +132,11 @@ test("declarations: class context is a bound", () => {
 });
 
 test("declarations: effect, provide and foreign", () => {
-  const p = D(`
-provide Server where
-  secret k = k
+  const p = D(`effect Audit @ server where
+  record :: Str -> ()
+
+provide Audit where
+  record k = k
 
 foreign import js unsafe "Math.floor" floor :: Float -> Int`);
   assert.equal(p.decls[0].k, "Effect");

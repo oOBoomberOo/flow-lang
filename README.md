@@ -18,7 +18,7 @@ greeting name = <p>{"Hello, " + name}</p>
 
 main :: Html
 main = do
-  let who = Server.secret "user"
+  let who = str (Server.now ())
   let count = Client.state 0
   <div class="card">
     <h1>{greeting who}</h1>

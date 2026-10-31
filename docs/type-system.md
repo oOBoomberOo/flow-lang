@@ -57,14 +57,23 @@ a mistake — it is a boundary that the compiler will build.
 
 ---
 
-## 3. Effects are capabilities
+## 3. Placement, capabilities and effects
 
-An effect declares an interface:
+`Client` and `Server` are modules, not effects. A function is placed by its body,
+and an FFI leaf states its side:
 
 ```flow
-effect Server where
-  secret :: Str -> Str
-  now :: () -> Int
+foreign import js unsafe "__flow.host.log" server_write :: Str -> () @server
+
+log :: Str -> ()
+log msg = server_write msg        -- therefore server
+```
+
+A *capability* is a user-defined effect with a provider:
+
+```flow
+effect Audit where
+  record :: Str -> ()
 ```
 
 A `provide` installs a file-level implementation:
@@ -199,7 +208,7 @@ when it fires. Nothing functional is serialized.
 ```
 
 The last join is the important one: **a call inherits the placement of its effects**. This is
-how `Server.secret("k")` becomes a server computation without any annotation.
+how `Server.now ()` becomes a server computation without any annotation on the caller.
 
 ### 4.3 Conditionals
 

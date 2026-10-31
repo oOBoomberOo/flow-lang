@@ -1,20 +1,19 @@
 -- Cells are monads.
 --
 -- A cell can be read in a do block with `<-`, written with `:=` / `+=`, and a
--- block that ends in `pure` produces a new cell. There is no special syntax:
--- the same `>>=` / `do` that works for Option and List works for Cell.
+-- block that ends in `Cell.pure` produces a new cell. There is no special
+-- syntax: the same `>>=` / `do` that works for Option and List works for Cell.
 import Monad (Monad)
+import Cell (pure)
 
-counter :: Cell Int
-counter = Client.state 1
-
-label :: Cell Str
-label = do
+label :: Cell Int -> Cell Str
+label counter = do
   n <- counter
   Cell.pure ("count: " + str n)
 
 main :: Html
 main = do
+  let counter = Client.state 1
   let total = do
         a <- counter
         b <- Cell.pure (a + 10)
@@ -22,7 +21,7 @@ main = do
   counter += 2
   <div class="card">
     <h1>Cells are monads</h1>
-    <p class="cell">{label}</p>
+    <p class="cell">{label counter}</p>
     <p class="total">{str total.value}</p>
     <p class="option">{str (do x <- Option.Some 2; y <- Option.Some 3; Option.Some (x + y))}</p>
     <p class="list">{str (do x <- [1, 2]; y <- [10, 20]; [x + y])}</p>

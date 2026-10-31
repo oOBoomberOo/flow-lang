@@ -1,4 +1,4 @@
-module Cell (pure, new, read, write) where
+module Cell (pure, make, read, write) where
 
 -- Cells are neutral reactive values, and they are monads (see std/monad), so a
 -- do block reads them with `<-`:
@@ -11,8 +11,8 @@ module Cell (pure, new, read, write) where
 pure :: a -> Cell a
 pure x = makeCell x
 
-new :: a -> Cell a
-new x = makeCell x
+make :: a -> Cell a
+make x = makeCell x
 
 read :: Cell a -> a
 read c = get c

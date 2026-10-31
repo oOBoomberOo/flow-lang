@@ -501,9 +501,14 @@ export class Codegen {
           this.genMode = savedGen;
           return `(yield* (function* () { ${bind} return ${bodyJs}; })())`;
         }
-        const vJs = this.emitExpr(e.value, side, ctxHome, env);
         const inner = new Set(env); inner.add(e.name);
-        const bind = this.hasCallCut(e.value) || this.isEagerLet(e) ? `const ${e.name} = ${vJs};` : `const ${e.name} = R.sig(() => ${vJs});`;
+        // a local function may call itself, so its own name is in scope while its
+        // body is emitted (and the binding is a real function, not a lazy node)
+        const selfRec = e.value.k === "Lam";
+        const vJs = this.emitExpr(e.value, side, ctxHome, selfRec ? inner : env);
+        const bind = this.hasCallCut(e.value) || this.isEagerLet(e) || selfRec
+          ? `const ${e.name} = ${vJs};`
+          : `const ${e.name} = R.sig(() => ${vJs});`;
         const bodyJs = this.emitExpr(e.body, side, ctxHome, inner);
         const needsAwait = this.hasCallCut(e);
         return needsAwait

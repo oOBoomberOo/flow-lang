@@ -153,26 +153,19 @@ main = do
   }
 });
 
-test("a call chain crosses the boundary twice (client serves, server serves)", async () => {
+test("a call inside an event handler crosses as a request/response cut", async () => {
   const file = path.join(import.meta.dirname, "..", "examples", "effects.flow");
   await withHost(file, async (host, result) => {
     const ids = [...result.server.matchAll(/R\.serve\("(\w+)"/g)].map((m) => m[1]);
     const clientIds = [...result.client.matchAll(/R\.serve\("(\w+)"/g)].map((m) => m[1]);
     assert.deepEqual(ids, ["cut1"], "server serves the audit cut");
-    assert.deepEqual(clientIds, ["cut2"], "client serves the argument cut");
+    // Cells are neutral now, so the server needs no client subscription.
+    assert.deepEqual(clientIds, [], "no client-side cut is required");
 
     const c = await connect(host, "s2");
-    // not awaited: the server will not answer until it has called back into the client
-    void post(host, "s2", { t: "call", id: "cut1", args: { clicks: 7 }, reqId: 99 });
-
-    // answering cut1 requires the server to call back into the client for cut2
-    const nested = await c.waitFor((m) => m.t === "call" && m.id === "cut2");
-    assert.equal(nested.args.clicks, 7, "the client value crossed up unchanged");
-
-    // complete the client's half of the story
-    await post(host, "s2", { t: "ret", reqId: nested.reqId, value: "clicked 7" });
+    void post(host, "s2", { t: "call", id: "cut1", args: {}, reqId: 99 });
     const done = await c.waitFor((m) => m.t === "ret" && m.reqId === 99);
     c.close();
-    assert.equal(done.value, null, "Audit.record returns Unit after the nested round trip");
+    assert.ok(done.value === undefined || done.value === null, "Audit.record returns Unit");
   });
 });

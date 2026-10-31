@@ -227,7 +227,7 @@ test("vscode: providers return real results from the server", async () => {
     const hints = await provider("inlayHint").provideInlayHints(doc, new env.mock.Range(0, 0, 40, 0));
     assert.ok(hints.some((h) => String(h.label).includes("client")), "placement hint");
 
-    const hover = await provider("hover").provideHover(doc, at("Server.secret"));
+    const hover = await provider("hover").provideHover(doc, at("Server.now"));
     assert.ok(hover && /Inferred cut/.test(hover.contents.value), "hover on a cut shows boundary details");
     assert.match(hover.contents.value, /client→server/);
 

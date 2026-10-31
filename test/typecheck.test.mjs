@@ -164,12 +164,17 @@ main = <p>{Show.show [1, 2, 3]}</p>`);
 /* ------------------------- effects ------------------------- */
 
 test("declared effect row must cover inferred effects", () => {
-  bad(`
+  bad(`effect Clock where
+  tick :: () -> Int
+
+provide Clock where
+  tick () = 7
+
 f :: () -> Int ! {}
-f () = Server.now ()
+f () = Clock.tick ()
 
 main :: Html
-main = <p>{f ()}</p>`, /unhandled effect\(s\) \{Server\}/);
+main = <p>{str (f ())}</p>`, /unhandled effect\(s\) \{Clock\}/);
 });
 
 test("effect operations require a declared effect", () => {
@@ -340,8 +345,7 @@ need x = x
 
 main :: Html
 main = do
-  let c = Client.state "x"
-  <p>{need (c.get ())}</p>
+  <p>{need (str (Client.now ()))}</p>
 `, /placement mismatch: argument 1 to need is annotated @server, but is placed client/);
 });
 
@@ -350,7 +354,7 @@ test("placement annotations: let bindings are checked", () => {
 main = do
   let
     x :: Str @server
-    x = ((Client.state "x").get) ()
+    x = str (Client.now ())
   <p>{x}</p>
 `, /placement mismatch: 'x' is annotated @server, but is placed client/);
 });

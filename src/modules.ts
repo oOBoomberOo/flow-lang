@@ -452,7 +452,16 @@ export class Linker {
       }
     }
 
-    // 2. final names: keep the simple name when unique, otherwise qualify
+    // 2. final names: keep the simple name when unique, otherwise qualify.
+    // Class methods are called by their bare name inside instances, so a global
+    // function with the same name is qualified apart (`get` vs `get$std$http`).
+    const methodNames = new Set<string>();
+    for (const u of units) {
+      for (const d of u.program.decls) {
+        if (d.k !== "Trait") continue;
+        for (const m of d.methods) methodNames.add(m.name);
+      }
+    }
     const finalName = new Map<string, string>(); // `${unit.id}::${name}` -> final
     const symbols = new Map<string, SymInfo>();
     for (const [name, entries] of byName) {
@@ -460,7 +469,7 @@ export class Linker {
       // declares Server/Client/Store; a program may redeclare them), so effects
       // keep their simple name instead of being qualified apart.
       const sameEffect = entries.every((e) => e.decl.k === "Effect");
-      const unique = entries.length === 1 || sameEffect;
+      const unique = (entries.length === 1 && !methodNames.has(name)) || sameEffect;
       for (const e of entries) {
         const key = `${e.unit.id}::${e.name}`;
         const final = unique ? name : `${name}$${e.unit.id.replace(/::/g, "$")}`;

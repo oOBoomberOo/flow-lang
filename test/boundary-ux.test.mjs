@@ -107,7 +107,7 @@ test("callback UX: the callback is hosted on the client and its server effect is
 
   // The server hosts only the statement that needs it.
   assert.match(result.server, /R\.serve\("cut1"/);
-  assert.match(result.server, /R\.op\("Server", "log"\)/);
+  assert.match(result.server, /R\.ffiCall\("__flow\.host\.log"/);
   assert.ok(result.diagnostics.some((d) => /cut cut1: .*type=Unit/.test(d)), "the cut returns Unit, not a function");
 });
 
@@ -148,8 +148,8 @@ main = do
   const server = result.server;
   const cuts = [...client.matchAll(/R\.call\("(cut\d+)"/g)].map((m) => m[1]);
   assert.equal(cuts.length, 1, "only the server statement is a call cut");
-  assert.match(client, /R\.op\("Client", "log"\)/);
-  assert.match(server, /R\.op\("Server", "log"\)/);
+  assert.match(client, /R\.ffiCall\("console\.log"/);
+  assert.match(server, /R\.ffiCall\("__flow\.host\.log"/);
 });
 
 test("callback UX: a callback value that must cross still fails clearly", () => {
