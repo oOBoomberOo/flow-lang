@@ -172,6 +172,17 @@ main = log "only the browser"
 `,
   });
   assert.throws(() => compileFile(clientOnly), /only touches the browser/);
+
+  const mixed = packageWith({
+    "main.flow": `import Http (serve)
+
+main :: Html
+main = do
+  serve (\\_ -> <p>{"page"}</p>)
+  <p>{"page"}</p>
+`,
+  });
+  assert.throws(() => compileFile(mixed), /`serve` needs `main :: \(\)`/);
 });
 
 test("serve: legacy main :: Html is still a single client page", async () => {

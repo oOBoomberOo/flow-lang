@@ -459,6 +459,13 @@ export class Codegen {
         main.body.span,
       );
     }
+    if (this.serveHandler && this.mainKind() === "page") {
+      this.fail(
+        "`serve` needs `main :: ()`: a `main :: Html` program is already a single page. " +
+        "Move the page into the serve handler and make main the server startup hook",
+        main.span,
+      );
+    }
   }
 
   /** Give every shim module an import alias; the import is emitted per side. */
