@@ -524,6 +524,18 @@ main = do
   } finally { c.proc.kill(); }
 });
 
+test("lsp: a std file opens as std, not as a duplicate entry module", async () => {
+  const file = path.join(import.meta.dirname, "..", "stdlib", "prelude.flow");
+  const text = fs.readFileSync(file, "utf8");
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    c.notify("textDocument/didOpen", { textDocument: { uri: uri(file), languageId: "flow", version: 1, text } });
+    const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+    assert.deepEqual(note.params.diagnostics, [], "the prelude does not redeclare its own Option");
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: document links point at the imported module", async () => {
   const { entry } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
   const c = startServer();
