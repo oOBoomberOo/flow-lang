@@ -424,3 +424,40 @@ main = <p>{str (Server.now ())} {str (Server.now ())} {str (Server.now ())}</p>
     restore();
   }
 });
+
+test("vscode: hover syncs the current document text before asking", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-hover-sync-"));
+  fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  const file = path.join(dir, "src", "main.flow");
+  const oldText = `main :: Html
+main = <p>{"old"}</p>
+`;
+  fs.writeFileSync(file, oldText);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const uri = env.mock.Uri.file(file);
+    const opened = { languageId: "flow", uri, version: 1, getText: () => oldText };
+    env.handlers.open(opened);
+    await waitUntil(() => env.registered.length >= 15, 5000, "providers");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const changedText = `count :: Int
+count = 1
+
+main :: Html
+main = <p>{"new"}</p>
+`;
+    const changed = { languageId: "flow", uri, version: 2, getText: () => changedText };
+    const provider = env.registered.find((r) => r[0] === "hover")[1];
+    const hover = await provider.provideHover(changed, new env.mock.Position(0, 10));
+    assert.ok(hover, "hover is returned for the new text");
+    assert.match(hover.contents.value, /Integer/, "the server saw `Int`, not the stale `Html`");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});
