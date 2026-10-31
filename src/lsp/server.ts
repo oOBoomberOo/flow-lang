@@ -11,7 +11,9 @@
  */
 
 import path from "node:path";
+import fs from "node:fs";
 import { analyze, findNodeAt, readSource, offsetToPosition, spanRange, stdModules } from "../analysis.ts";
+import { parse } from "../parser.ts";
 import { moduleDisplayName } from "../modules.ts";
 
 /** `std::list` -> `List` for the cheap std index, which carries only ids. */
@@ -659,24 +661,81 @@ const HTML_TAGS = [
   "ul", "ol", "li", "a", "img", "section", "header", "footer", "main", "nav", "aside",
   "form", "label", "table", "thead", "tbody", "tr", "td", "th", "strong", "em", "code",
   "pre", "hr", "br", "figure", "figcaption", "details", "summary", "select", "option",
+  "article", "audio", "video", "canvas", "dialog", "fieldset", "legend", "menu", "meter",
+  "object", "output", "progress", "slot", "template", "time",
 ];
+
+/** Tags that render without children. */
+const VOID_TAGS = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+  "param", "source", "track", "wbr",
+]);
+
+const BOOLEAN_ATTRS = new Set([
+  "disabled", "checked", "selected", "readonly", "readOnly", "required",
+  "autofocus", "multiple", "hidden", "open", "novalidate", "formnovalidate",
+  "autoplay", "controls", "loop", "muted", "default", "defer", "async",
+]);
+
+const NUMERIC_ATTRS = new Set([
+  "rows", "cols", "size", "maxlength", "maxLength", "minlength", "minLength",
+  "tabindex", "tabIndex", "width", "height", "span", "start", "step", "min",
+  "max", "colspan", "rowspan", "wrap",
+]);
 
 const HTML_ATTRS = [
   "class", "id", "style", "href", "src", "value", "placeholder", "title", "type",
   "disabled", "checked", "selected", "name", "target", "alt", "width", "height",
-  "onClick", "onInput", "onChange", "onSubmit", "onKeyDown", "onKeyUp", "onFocus",
-  "onBlur", "onMouseEnter", "onMouseLeave",
+  "role", "for", "action", "method", "enctype", "rel", "download", "loading",
+  "autocomplete", "required", "readonly", "multiple", "min", "max", "step",
+  "rows", "cols", "colspan", "rowspan", "scope", "controls", "loop", "muted",
+  "poster", "preload", "autoplay", "spellcheck", "contenteditable", "draggable",
+  "tabIndex", "aria-label", "aria-hidden", "aria-expanded", "aria-controls",
+  "onClick", "onInput", "onChange", "onSubmit", "onKeyDown", "onKeyUp",
+  "onKeyPress", "onFocus", "onBlur", "onMouseEnter", "onMouseLeave", "onMouseDown",
+  "onMouseUp", "onMouseOver", "onMouseOut", "onDblClick", "onScroll", "onWheel",
+  "onContextMenu", "onDragStart", "onDragOver", "onDrop",
 ];
 
-/** Are we in markup position inside an `html { … }` block?
- *  depth 1 = directly in markup; depth ≥ 2 = inside a `{expr}` hole. */
-function htmlContext(before: string): { inside: boolean; depth: number; inTag: boolean; afterLt: boolean } {
-  // markup is bare syntax, so decide from the current line: `<di` or `<div ` is a tag
-  const line = before.slice(before.lastIndexOf("\n") + 1);
-  const afterLt = /<([A-Za-z][\w-]*)?$/.test(line);
-  const inTag = /<[A-Za-z][\w-]*\s+[^<>]*$/.test(line) || afterLt;
-  const inside = afterLt || inTag;
-  return { inside, depth: inside ? 1 : 0, inTag, afterLt };
+/** Are we in markup position? `tagStart`/`closeStart` are absolute offsets. */
+function htmlContext(before: string, off: number): {
+  inside: boolean;
+  inTag: boolean;
+  afterLt: boolean;
+  closing: boolean;
+  tagStart: number;
+  closeStart: number;
+} {
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const line = before.slice(lineStart);
+  const close = /<\/\s*([A-Za-z][\w-]*)?$/.exec(line);
+  const open = /<([A-Za-z][\w-]*)?$/.exec(line);
+  const inTag = !close && /<[A-Za-z][\w-]*\s+[^<>]*$/.test(line);
+  const closing = Boolean(close);
+  const afterLt = Boolean(open) && !closing;
+  return {
+    inside: afterLt || inTag || closing,
+    inTag,
+    afterLt,
+    closing,
+    tagStart: afterLt ? lineStart + open!.index : -1,
+    closeStart: closing ? lineStart + close!.index : -1,
+  };
+}
+
+/** The currently open tags, innermost last. */
+function openTagStack(src: string): string[] {
+  const stack: string[] = [];
+  const re = /<\/?([A-Za-z][\w-]*)(?:\s[^<>]*?)?(\/?)>/g;
+  for (let m = re.exec(src); m; m = re.exec(src)) {
+    const tag = m[1]!;
+    if (VOID_TAGS.has(tag) || m[2] === "/") continue;
+    if (m[0].startsWith("</")) {
+      const at = stack.lastIndexOf(tag);
+      if (at >= 0) stack.splice(at, 1);
+    } else stack.push(tag);
+  }
+  return stack;
 }
 
 const KEYWORD_DOC: Record<string, string> = {
@@ -787,32 +846,76 @@ function completion(file: string, pos: Position) {
     return { isIncomplete: false, items };
   }
 
-  // Markup: inside `html { … }` (but not inside a `{expr}` hole)
-  const h = htmlContext(before);
-  if (h.inside && h.depth === 1) {
+  // Markup: tags, closing tags and attributes
+  const h = htmlContext(before, off);
+  if (h.inside) {
+    const replace = (start: number): Range => ({
+      start: offsetToPosition(text, start),
+      end: offsetToPosition(text, off),
+    });
+    if (h.closing) {
+      const stack = openTagStack(text.slice(0, h.closeStart));
+      const tags = [...new Set([...stack.slice().reverse(), ...HTML_TAGS])];
+      return {
+        isIncomplete: false,
+        items: tags
+          .filter((t) => !prefix || t.startsWith(prefix))
+          .map((t, i) => ({
+            label: `</${t}>`,
+            kind: 10,
+            detail: "closing tag",
+            insertTextFormat: 2,
+            textEdit: { range: replace(h.closeStart), newText: `</${t}>` },
+            sortText: "0" + String(i).padStart(3, "0") + t,
+          })),
+      };
+    }
     if (h.inTag && !h.afterLt) {
+      const range = replace(off - prefix.length);
       return {
         isIncomplete: false,
         items: HTML_ATTRS
           .filter((a) => !prefix || a.toLowerCase().startsWith(prefix.toLowerCase()))
-          .map((a) => ({
-            label: a,
-            kind: a.startsWith("on") ? 5 : 9,
-            detail: a.startsWith("on") ? "event handler" : "attribute",
-            sortText: "0" + a,
-          })),
+          .map((a) => {
+            const value = a.startsWith("on") || BOOLEAN_ATTRS.has(a) || NUMERIC_ATTRS.has(a)
+              ? `{\${0}}`
+              : `"\${0}"`;
+            return {
+              label: a,
+              kind: a.startsWith("on") ? 5 : 9,
+              detail: a.startsWith("on") ? "event handler"
+                : BOOLEAN_ATTRS.has(a) ? "boolean attribute"
+                : NUMERIC_ATTRS.has(a) ? "numeric attribute"
+                : "attribute",
+              insertTextFormat: 2,
+              textEdit: { range, newText: `${a}=${value}` },
+              sortText: "0" + a,
+            };
+          }),
       };
     }
+    const range = replace(h.tagStart);
+    const element = (tag: string, component: boolean) => ({
+      label: tag,
+      kind: component ? 3 : 10,
+      detail: component ? "component" : VOID_TAGS.has(tag) ? "void tag" : "tag",
+      insertTextFormat: 2,
+      textEdit: {
+        range,
+        newText: component
+          ? `<${tag} \${0}></${tag}>`
+          : VOID_TAGS.has(tag) ? `<${tag} \${0} />` : `<${tag}>\${0}</${tag}>`,
+      },
+      sortText: (component ? "1" : "0") + tag,
+    });
     const components = (lastAnalysis?.symbols ?? [])
-      .filter((s) => s.kind === "function")
-      .map((s) => ({ label: s.name, kind: 3, detail: "component", sortText: "1" + s.name }));
+      .filter((s) => s.kind === "function" && s.public)
+      .map((s) => s.name);
     return {
       isIncomplete: false,
       items: [
-        ...HTML_TAGS.filter((t) => !prefix || t.startsWith(prefix)).map((t) => ({
-          label: t, kind: 10, detail: "tag", sortText: "0" + t,
-        })),
-        ...components.filter((c) => !prefix || c.label.startsWith(prefix)),
+        ...HTML_TAGS.filter((t) => !prefix || t.startsWith(prefix)).map((t) => element(t, false)),
+        ...[...new Set(components)].filter((c) => !prefix || c.startsWith(prefix)).map((c) => element(c, true)),
       ],
     };
   }
@@ -1179,6 +1282,25 @@ function codeActions(file: string, range: Range, diagnostics: { message: string 
     });
   }
 
+  // Always-available refactors (the client runs the command so it can show a picker).
+  actions.push({
+    title: "Import symbol…",
+    kind: "refactor.rewrite",
+    command: { title: "Import symbol", command: "flow.importSymbol" },
+  });
+  if (sym && sym.kind !== "constructor") {
+    actions.push({
+      title: `Move '${sym.name}' to another module…`,
+      kind: "refactor.rewrite",
+      command: { title: "Move symbol", command: "flow.moveSymbol" },
+    });
+  }
+  actions.push({
+    title: "Organize imports",
+    kind: "source.organizeImports",
+    command: { title: "Organize imports", command: "flow.organizeImports" },
+  });
+
   // "import 'x'" for unbound names
   for (const d of diagnostics ?? []) {
     const m = /unbound name '([A-Za-z_][A-Za-z0-9_]*)'/.exec(d.message);
@@ -1243,7 +1365,8 @@ function rename(file: string, pos: Position, newName: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_']*$/.test(newName)) return null;
 
   const a = lastAnalysis;
-  const isGlobal = !!symbolForName(node.ident);
+  const sym = symbolForName(node.ident);
+  const isGlobal = !!sym;
   const text = textOf(file);
   const off = offsetAt(text, pos);
   const decl = a?.program ? declContaining(a.program, file, off) : null;
@@ -1261,7 +1384,343 @@ function rename(file: string, pos: Position, newName: string) {
     }
     (changes[o.uri] ??= []).push({ range: o.range, newText: newName });
   }
+  // A global declaration is a symbol, not an expression node: rename its name too.
+  if (sym) (changes[pathToUri(sym.file)] ??= []).push({ range: sym.range, newText: newName });
+  // Renaming a public symbol also renames it in `import M (name)` lists.
+  if (sym) {
+    for (const [uri, edits] of Object.entries(renameImportEdits(sym, newName))) {
+      (changes[uri] ??= []).push(...edits);
+    }
+  }
   return { changes };
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Rename the member in every `import Module (…)` list that imports it. */
+function renameImportEdits(sym: SymbolInfo, newName: string): Record<string, unknown[]> {
+  const out: Record<string, unknown[]> = {};
+  const a = lastAnalysis;
+  if (!a || sym.unit === "std::prelude") return out;
+  const module = sym.display.split(".").slice(0, -1).join(".");
+  if (!module) return out;
+  for (const u of a.units) {
+    const src = textOf(u.file);
+    const lines = src.split("\n");
+    let offset = 0;
+    for (const line of lines) {
+      const m = /^\s*import\s+([A-Za-z0-9_.]+)(?:\s+as\s+[A-Za-z0-9_']+)?\s*\(([^)]*)\)/.exec(line);
+      if (m && m[1] === module) {
+        const open = line.indexOf("(");
+        const inner = line.slice(open + 1, line.lastIndexOf(")"));
+        const re = new RegExp(`(^|,\\s*)(${escapeRegExp(sym.name)})(?=\\s*(?:,|$|\\(|\\.\\.\\.))`);
+        const hit = re.exec(inner);
+        if (hit) {
+          const nameStart = open + 1 + hit.index + hit[1]!.length;
+          const uri = pathToUri(u.file);
+          (out[uri] ??= []).push({
+            range: {
+              start: offsetToPosition(src, offset + nameStart),
+              end: offsetToPosition(src, offset + nameStart + sym.name.length),
+            },
+            newText: newName,
+          });
+        }
+      }
+      offset += line.length + 1;
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* refactors: imports, organize, move                                  */
+/* ------------------------------------------------------------------ */
+
+interface ImportEntry { module: string; alias?: string; names?: string[]; bare: boolean }
+
+function parseImportLines(text: string): { entries: ImportEntry[]; lastLine: number } {
+  const lines = text.split("\n");
+  const entries: ImportEntry[] = [];
+  let lastLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*import\s+([A-Za-z0-9_.]+)(?:\s+as\s+([A-Za-z0-9_']+))?\s*(?:\((.*)\))?\s*$/.exec(lines[i]!);
+    if (!m) continue;
+    lastLine = i;
+    const names = m[3] === undefined ? undefined : m[3].split(",").map((n) => n.trim()).filter(Boolean);
+    entries.push({ module: m[1]!, ...(m[2] ? { alias: m[2] } : {}), ...(names ? { names } : {}), bare: m[3] === undefined });
+  }
+  return { entries, lastLine };
+}
+
+const renderImport = (e: ImportEntry) =>
+  `import ${e.module}${e.alias ? ` as ${e.alias}` : ""}${e.names?.length ? ` (${e.names.join(", ")})` : ""}`;
+
+/** Add imports, merging names into an existing `import Module (…)` list. */
+function mergeImportEdits(text: string, wanted: ImportEntry[]): { range: Range; newText: string }[] {
+  const { entries: existing, lastLine } = parseImportLines(text);
+  const lines = text.split("\n");
+  const edits: { range: Range; newText: string }[] = [];
+  const fresh: string[] = [];
+  for (const want of wanted) {
+    const same = existing.find((e) => e.module === want.module && (e.alias ?? "") === (want.alias ?? ""));
+    if (same?.bare) continue;
+    if (!same) {
+      const line = renderImport(want);
+      if (!fresh.includes(line)) fresh.push(line);
+      continue;
+    }
+    if (!want.names?.length) continue;
+    const missing = want.names.filter((n) => !same.names?.some((m) => m.split("(")[0] === n.split("(")[0]));
+    if (!missing.length) continue;
+    const line = lines.findIndex((l) => {
+      const m = /^\s*import\s+([A-Za-z0-9_.]+)(?:\s+as\s+[A-Za-z0-9_']+)?/.exec(l);
+      return m && m[1] === want.module;
+    });
+    if (line < 0) continue;
+    const close = lines[line]!.lastIndexOf(")");
+    const at = { line, character: close >= 0 ? close : lines[line]!.length };
+    edits.push({
+      range: { start: at, end: at },
+      newText: close >= 0 ? `, ${missing.join(", ")}` : ` (${missing.join(", ")})`,
+    });
+  }
+  if (fresh.length) {
+    const at = { line: lastLine + 1, character: 0 };
+    edits.push({ range: { start: at, end: at }, newText: fresh.join("\n") + "\n" });
+  }
+  return edits;
+}
+
+/** Public symbols this file does not import yet. */
+function importCandidates(file: string): { name: string; module: string; kind: string }[] {
+  const a = lastAnalysis;
+  if (!a) return [];
+  const cur = a.units.find((u) => path.resolve(u.file) === path.resolve(file));
+  const imported = a.importedByFile?.get(path.resolve(file)) ?? new Set<string>();
+  const text = textOf(file);
+  const curImports = parseImportLines(text).entries;
+  const importedNames = new Set(curImports.flatMap((e) => e.names ?? []).map((n) => n.split("(")[0]!));
+  const out: { name: string; module: string; kind: string }[] = [];
+  const seen = new Set<string>();
+  const add = (name: string, module: string, kind: string) => {
+    if (!name || name === "main" || !module) return;
+    if (importedNames.has(name)) return;
+    const key = `${module}.${name}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name, module, kind });
+  };
+  for (const s of a.symbols) {
+    if (!s.public || s.kind === "constructor") continue;
+    if (s.unit === cur?.id || s.unit === "std::prelude") continue;
+    if (imported.has(s.finalName)) continue;
+    add(s.name, s.display.split(".").slice(0, -1).join("."), s.kind);
+  }
+  // Symbols from modules that are not imported yet are not in the analysis;
+  // read the package's source tree so Import Symbol can find them.
+  const srcDir = packageSrcDir(file);
+  if (srcDir) {
+    const currentNames = new Set(declaredNames(text, file).map((d) => d.name));
+    for (const f of walkFlowFiles(srcDir)) {
+      if (path.resolve(f) === path.resolve(file)) continue;
+      const rel = path.relative(srcDir, f).replace(/\.flow$/, "").split(path.sep);
+      const module = rel.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
+      let src = "";
+      try { src = fs.readFileSync(f, "utf8"); } catch { continue; }
+      for (const d of declaredNames(src, f)) {
+        if (currentNames.has(d.name)) continue;
+        add(d.name, module, d.kind);
+      }
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.module.localeCompare(b.module));
+}
+
+/** `<root>/src` for the package containing `file`, if there is a flow.json. */
+function packageSrcDir(file: string): string | null {
+  let dir = path.dirname(path.resolve(file));
+  for (;;) {
+    if (fs.existsSync(path.join(dir, "flow.json"))) return path.join(dir, "src");
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function walkFlowFiles(dir: string, out: string[] = []): string[] {
+  let entries: { isDirectory(): boolean; name: string }[] = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkFlowFiles(p, out);
+    else if (e.name.endsWith(".flow")) out.push(p);
+  }
+  return out;
+}
+
+/** Top-level declarations in a source file, respecting its export list. */
+function declaredNames(src: string, file: string): { name: string; kind: string }[] {
+  let program: Program;
+  try { program = parse(src, file, { recover: true }); } catch { return []; }
+  const header = /^\s*module\s+[A-Za-z0-9_.]+\s*(?:\(([^)]*)\))?\s*where/m.exec(src);
+  let exported: Set<string> | null = null;
+  if (header && header[1] !== undefined) {
+    exported = new Set(header[1].split(",")
+      .map((s) => s.trim().replace(/\s+as\s+.*$/, "").replace(/\(\.\.\)$/, ""))
+      .filter(Boolean));
+  }
+  const out: { name: string; kind: string }[] = [];
+  for (const d of program.decls) {
+    let name: string | undefined;
+    let kind: string;
+    switch (d.k) {
+      case "Fn": name = d.name; kind = "function"; break;
+      case "Adt": name = d.name; kind = "type"; break;
+      case "RecordType": name = d.name; kind = "record"; break;
+      case "Alias": name = d.name; kind = "alias"; break;
+      case "Trait": name = d.name; kind = "trait"; break;
+      case "Effect": name = d.name; kind = "effect"; break;
+      default: continue;
+    }
+    if (!name || name === "main") continue;
+    if (exported && !exported.has(name)) continue;
+    out.push({ name, kind });
+  }
+  return out;
+}
+
+function importSymbol(file: string, name: string, module: string) {
+  const text = textOf(file);
+  return { changes: { [pathToUri(file)]: mergeImportEdits(text, [{ module, names: [name], bare: false }]) } };
+}
+
+/** Sort and merge the leading import block. */
+function organizeImports(file: string) {
+  const text = textOf(file);
+  const lines = text.split("\n");
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*import\s/.test(lines[i]!)) {
+      if (first < 0) first = i;
+      last = i;
+      continue;
+    }
+    if (first >= 0) {
+      if (lines[i]!.trim() === "" || /^\s*(--|\/\/)/.test(lines[i]!)) continue;
+      break;
+    }
+  }
+  if (first < 0) return { changes: {} };
+  const merged = new Map<string, ImportEntry>();
+  for (let i = first; i <= last; i++) {
+    const m = /^\s*import\s+([A-Za-z0-9_.]+)(?:\s+as\s+([A-Za-z0-9_']+))?\s*(?:\((.*)\))?\s*$/.exec(lines[i]!);
+    if (!m) continue;
+    const key = `${m[1]}\u0000${m[2] ?? ""}`;
+    const e = merged.get(key) ?? { module: m[1]!, ...(m[2] ? { alias: m[2] } : {}), bare: false };
+    if (m[3] === undefined) e.bare = true;
+    else {
+      const names = e.names ?? [];
+      for (const n of m[3].split(",").map((x) => x.trim()).filter(Boolean)) if (!names.includes(n)) names.push(n);
+      e.names = names;
+    }
+    merged.set(key, e);
+  }
+  const rendered = [...merged.values()]
+    .sort((a, b) => a.module.localeCompare(b.module) || (a.alias ?? "").localeCompare(b.alias ?? ""))
+    .map((e) => {
+      if (e.bare) return renderImport({ ...e, names: undefined });
+      return renderImport({ ...e, names: (e.names ?? []).sort() });
+    });
+  const range = { start: { line: first, character: 0 }, end: { line: last + 1, character: 0 } };
+  return { changes: { [pathToUri(file)]: [{ range, newText: rendered.join("\n") + "\n" }] } };
+}
+
+/** Move the top-level declaration at `pos` into `targetUri`, fixing imports. */
+function moveSymbol(file: string, pos: Position, targetUri: string) {
+  const a = lastAnalysis;
+  if (!a?.program) return { error: "the file is not analysed" };
+  const source = path.resolve(file);
+  const target = path.resolve(uriToPath(targetUri));
+  if (source === target) return { error: "choose a different target file" };
+  if (!fs.existsSync(target)) return { error: `target file not found: ${target}` };
+  const sourceText = textOf(source);
+  const targetText = textOf(target);
+  const off = offsetAt(sourceText, pos);
+  const decl = declContaining(a.program, source, off);
+  if (!decl) return { error: "put the cursor inside a top-level declaration" };
+  if (!["Fn", "Adt", "RecordType", "Alias", "Trait", "Effect", "Extern"].includes(decl.k)) {
+    return { error: `cannot move a ${decl.k} declaration` };
+  }
+  const finalName = decl.k === "Extern" ? decl.sig.name : (decl as { name?: string }).name;
+  if (!finalName) return { error: "could not read the declaration name" };
+  const sym = a.symbols.find((s) => path.resolve(s.file) === source && s.finalName === finalName);
+  if (!sym) return { error: "could not resolve the declaration name" };
+  if (sym.name === "main") return { error: "main is the entry point and cannot be moved" };
+  const span = (decl as { span: { start: number; end: number } }).span;
+  const moved = sourceText.slice(span.start, span.end);
+
+  const unitFor = (f: string) => a.units.find((u) => path.resolve(u.file) === path.resolve(f));
+  const sourceUnit = unitFor(source);
+  const sourceModule = sym.display.split(".").slice(0, -1).join(".");
+  const tunit = unitFor(target);
+  let targetModule: string;
+  if (tunit) {
+    const sourcePkg = sourceUnit?.id.split("::")[0];
+    const parts = tunit.id.split("::").slice(1);
+    const samePkg = sourcePkg && tunit.id.split("::")[0] === sourcePkg;
+    targetModule = (samePkg ? parts : [tunit.id.split("::")[0]!, ...parts])
+      .map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
+  } else {
+    targetModule = path.basename(target, ".flow").replace(/^./, (c) => c.toUpperCase());
+  }
+  if (!targetModule) return { error: "could not work out the target module name" };
+
+  const words = new Set(moved.match(/[A-Za-z_][A-Za-z0-9_']*/g) ?? []);
+  const sourceSymbols = a.symbols.filter((s) => path.resolve(s.file) === source && s.name !== sym.name);
+  const privateHits = sourceSymbols.filter((s) => !s.public && s.kind !== "constructor" && words.has(s.name));
+  if (privateHits.length) {
+    return { error: `cannot move '${sym.name}': it uses private ${privateHits.map((s) => `'${s.name}'`).join(", ")}` };
+  }
+  const needed = [...new Set(sourceSymbols
+    .filter((s) => s.public && s.kind !== "constructor" && words.has(s.name))
+    .map((s) => s.kind === "type" ? `${s.name}(..)` : s.name))];
+
+  const srcImports = parseImportLines(sourceText).entries;
+  const tgtImports = parseImportLines(targetText).entries;
+  const wanted: ImportEntry[] = [];
+  for (const e of srcImports) {
+    if (e.module === sourceModule) continue;
+    const same = tgtImports.find((t) => t.module === e.module && (t.alias ?? "") === (e.alias ?? ""));
+    if (same) {
+      if (e.names?.length) wanted.push({ module: e.module, alias: e.alias, names: e.names, bare: false });
+      continue;
+    }
+    wanted.push(e);
+  }
+  if (needed.length) wanted.push({ module: sourceModule, names: needed, bare: false });
+
+  const targetEdits = mergeImportEdits(targetText, wanted);
+  const end = offsetToPosition(targetText, targetText.length);
+  targetEdits.push({
+    range: { start: end, end },
+    newText: `${targetText.endsWith("\n") ? "\n" : "\n\n"}${moved}\n`,
+  });
+
+  const sourceEdits: { range: Range; newText: string }[] = [
+    {
+      range: { start: offsetToPosition(sourceText, span.start), end: offsetToPosition(sourceText, span.end) },
+      newText: "",
+    },
+    ...mergeImportEdits(sourceText, [{ module: targetModule, names: [sym.name], bare: false }]),
+  ];
+  return {
+    changes: {
+      [pathToUri(source)]: sourceEdits,
+      [pathToUri(target)]: targetEdits,
+    },
+  };
 }
 
 function documentLinks(file: string) {
@@ -1351,7 +1810,7 @@ reader.onMessage((msg) => {
           textDocumentSync: { openClose: true, change: 2, save: { includeText: true } },
           semanticTokensProvider: { legend: { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS }, full: true },
           hoverProvider: true,
-          completionProvider: { triggerCharacters: [".", ":", "@", '"'], resolveProvider: false },
+          completionProvider: { triggerCharacters: [".", ":", "@", "\"", "<", "/"], resolveProvider: false },
           definitionProvider: true,
           referencesProvider: true,
           documentSymbolProvider: true,
@@ -1595,6 +2054,22 @@ reader.onMessage((msg) => {
       reply(id, res);
       return;
     }
+
+    case "flow/importCandidates":
+      reply(id, importCandidates(path.resolve(uriToPath(String(p.uri ?? docUri)))));
+      return;
+
+    case "flow/importSymbol":
+      reply(id, importSymbol(path.resolve(uriToPath(String(p.uri ?? docUri))), String(p.name ?? ""), String(p.module ?? "")));
+      return;
+
+    case "flow/moveSymbol":
+      reply(id, moveSymbol(path.resolve(uriToPath(String(p.uri ?? docUri))), p.position as Position, String(p.targetUri ?? "")));
+      return;
+
+    case "flow/organizeImports":
+      reply(id, organizeImports(path.resolve(uriToPath(String(p.uri ?? docUri)))));
+      return;
 
     case "flow/boundary":
       if (!lastAnalysis) reanalyze();

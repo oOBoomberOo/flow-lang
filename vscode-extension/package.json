@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and boundary colouring.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -28,7 +28,10 @@
     "commands": [
       { "command": "flow.explain", "title": "Flow: Explain Boundary" },
       { "command": "flow.toggleBoundary", "title": "Flow: Toggle Boundary Colouring" },
-      { "command": "flow.restart", "title": "Flow: Restart Language Server" }
+      { "command": "flow.restart", "title": "Flow: Restart Language Server" },
+      { "command": "flow.importSymbol", "title": "Flow: Import Symbol" },
+      { "command": "flow.moveSymbol", "title": "Flow: Move Symbol to Module" },
+      { "command": "flow.organizeImports", "title": "Flow: Organize Imports" }
     ],
     "configuration": {
       "title": "Flow",

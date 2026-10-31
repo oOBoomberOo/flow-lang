@@ -58,7 +58,10 @@ function makeMock(workspaceRoot) {
       File: 16, Reference: 17, Folder: 18, EnumMember: 19, Constant: 20, Struct: 21, Event: 22, Operator: 23,
       TypeParameter: 24 },
     CodeActionKind: { QuickFix: "quickfix", Refactor: "refactor", RefactorRewrite: "refactor.rewrite", Source: "source" },
-    Range: class { constructor(a, b, c, e) { this.start = { line: a, character: b }; this.end = { line: c, character: e }; } },
+    Range: class { constructor(a, b, c, e) {
+      if (a && typeof a === "object") { this.start = a; this.end = b; }
+      else { this.start = { line: a, character: b }; this.end = { line: c, character: e }; }
+    } },
     Position: class { constructor(line, character) { this.line = line; this.character = character; } },
     RelativePattern,
     Uri: {
@@ -76,6 +79,7 @@ function makeMock(workspaceRoot) {
     SymbolInformation: class { constructor(name, kind, containerName, location) { Object.assign(this, { name, kind, containerName, location }); } },
     DocumentSymbol: class { constructor(name, detail, kind, range, selectionRange) { Object.assign(this, { name, detail, kind, range, selectionRange }); } },
     CompletionItem: class { constructor(label, kind) { this.label = label; this.kind = kind; } },
+    SnippetString: class { constructor(value) { this.value = value; } },
     CompletionList: class { constructor(items, isIncomplete) { this.items = items; this.isIncomplete = isIncomplete; } },
     SignatureHelp: class { constructor() { this.signatures = []; this.activeSignature = 0; this.activeParameter = 0; } },
     SignatureInformation: class { constructor(label, doc) { this.label = label; this.documentation = doc; this.parameters = []; } },
@@ -217,6 +221,10 @@ test("vscode: activates, drives the server and colours the boundary", async () =
       "documentSymbol", "foldingRange", "formatting", "hover", "inlayHint",
       "references", "rename", "selectionRange", "signatureHelp", "typeDefinition", "workspaceSymbol",
     ]);
+    const commandNames = env.commands.map(([name]) => name);
+    for (const name of ["flow.importSymbol", "flow.moveSymbol", "flow.organizeImports"]) {
+      assert.ok(commandNames.includes(name), `registers ${name}`);
+    }
   } finally {
     ext.deactivate();
     restore();
@@ -349,6 +357,16 @@ test("vscode: package.json and grammar are valid and complete", () => {
   }
   const restart = pkg.contributes.commands.find((c) => c.command === "flow.restart");
   assert.ok(restart, "Flow: Restart Language Server is contributed");
+  for (const command of ["flow.importSymbol", "flow.moveSymbol", "flow.organizeImports"]) {
+    assert.ok(pkg.contributes.commands.some((c) => c.command === command), `contributes ${command}`);
+  }
+
+  const language = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "language-configuration.json"), "utf8"));
+  const pairs = language.autoClosingPairs.map((p) => p.open);
+  for (const open of ["{", "[", "(", "\"", "'", "/*"]) {
+    assert.ok(pairs.includes(open), `auto-closes ${open}`);
+  }
+  assert.ok(Array.isArray(language.onEnterRules) && language.onEnterRules.length >= 1, "markup enter rules");
 
   const grammar = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "syntaxes", "flow.tmLanguage.json"), "utf8"));
   assert.equal(grammar.scopeName, "source.flow");
@@ -557,6 +575,77 @@ test("vscode: compiler saves restart the language server without reinstalling", 
   } finally {
     ext.deactivate();
     assert.equal(ext._internals.serverRunning(), false, "deactivate stops the server");
+    restore();
+  }
+});
+
+test("vscode: markup completion inserts a tag snippet over the typed prefix", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-markup-"));
+  fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  const file = path.join(dir, "src", "main.flow");
+  const source = `main :: Html
+main = <di
+`;
+  fs.writeFileSync(file, source);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const doc = { languageId: "flow", uri: env.mock.Uri.file(file), version: 1, getText: () => source };
+    env.handlers.open(doc);
+    await waitUntil(() => env.registered.length >= 15, 5000, "providers");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const provider = env.registered.find((r) => r[0] === "completion")[1];
+    const res = await provider.provideCompletionItems(doc, new env.mock.Position(1, 10));
+    const div = res.items.find((i) => i.label === "div");
+    assert.ok(div, "tag completion");
+    assert.ok(div.range, "completion replaces the typed prefix");
+    assert.equal(div.range.start.character, 7);
+    assert.ok(div.insertText && typeof div.insertText.value === "string", "snippet inserted");
+    assert.match(div.insertText.value, /<div>\$\{0\}<\/div>/);
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: refactor commands are exposed as code actions", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-vsc-refactor-"));
+  fs.writeFileSync(path.join(dir, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  const file = path.join(dir, "src", "main.flow");
+  const source = `answer :: Int -> Int
+answer x = x + 1
+
+main :: Html
+main = <p>{"x"}</p>
+`;
+  fs.writeFileSync(file, source);
+
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const doc = { languageId: "flow", uri: env.mock.Uri.file(file), version: 1, getText: () => source };
+    env.handlers.open(doc);
+    await waitUntil(() => env.registered.length >= 15, 5000, "providers");
+    await new Promise((r) => setTimeout(r, 300));
+
+    const provider = env.registered.find((r) => r[0] === "codeAction")[1];
+    const actions = await provider.provideCodeActions(
+      doc,
+      new env.mock.Range(0, 1, 0, 1),
+      { diagnostics: [] },
+    );
+    const commands = actions.filter((a) => a.command).map((a) => a.command.command);
+    assert.ok(commands.includes("flow.importSymbol"), JSON.stringify(commands));
+    assert.ok(commands.includes("flow.moveSymbol"), JSON.stringify(commands));
+    assert.ok(commands.includes("flow.organizeImports"), JSON.stringify(commands));
+  } finally {
+    ext.deactivate();
     restore();
   }
 });

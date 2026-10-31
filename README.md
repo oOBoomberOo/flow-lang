@@ -221,7 +221,10 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   `import` forms; no `::` paths to remember
 * **Data and records** — `data Shape = Circle Float | Rect Float Float`, `type P = { x :: Int }`
 * **Classes and instances** — `class Show a where`, `instance Show Int where`, contexts
-  (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: f a -> (a -> b) -> f b`)
+  (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: (a -> b) -> f a -> f b`)
+* **Editing and refactors** — tag/attribute snippets with closing tags, bracket/quote/comment
+  auto-closing, rename that updates imports, Import Symbol, Move Symbol to Module and Organize
+  Imports in the VS Code extension
 * **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
   `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
   iteration, JSON, dates and paths ship in the language

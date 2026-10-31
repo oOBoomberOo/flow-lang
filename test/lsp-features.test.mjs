@@ -405,11 +405,38 @@ test("lsp: markup completion offers tags, attributes and components", async () =
     });
     assert.ok(tags.items.some((i) => i.label === "div"), "tag names");
     assert.ok(tags.items.some((i) => i.detail === "component"), "components are offered");
+    const div = tags.items.find((i) => i.label === "div");
+    assert.equal(div.insertTextFormat, 2, "tags insert a snippet");
+    assert.match(div.textEdit.newText, /<div>\$\{0\}<\/div>/, "the closing tag is inserted");
+    const input = tags.items.find((i) => i.label === "input");
+    assert.match(input.textEdit.newText, /<input \$\{0\} \/>/, "void tags are self-closed");
+    const label = tags.items.find((i) => i.label === "Label");
+    assert.match(label.textEdit.newText, /<Label \$\{0\}><\/Label>/, "components get a closing tag");
 
     const attrPos = pos(text, "<Label ", 7);
     const attrs = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: attrPos });
     assert.ok(attrs.items.some((i) => i.label === "class"), "attributes");
     assert.ok(attrs.items.some((i) => i.label === "onClick"), "event attributes");
+    const cls = attrs.items.find((i) => i.label === "class");
+    assert.match(cls.textEdit.newText, /class="\$\{0\}"/, "string attributes get quotes");
+    const click = attrs.items.find((i) => i.label === "onClick");
+    assert.match(click.textEdit.newText, /onClick=\{\$\{0\}\}/, "event attributes get a block");
+
+    const closing = packageWith({
+      "main.flow": `main :: Html
+main = <div>
+  <section>
+    <p>{"x"}</p>
+  </
+`,
+    });
+    const ctext = await open(c, closing.entry);
+    const closePos = pos(ctext, "</", 2);
+    const closeItems = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(closing.entry) }, position: closePos,
+    });
+    assert.ok(closeItems.items.some((i) => i.label === "</section>"), "the innermost open tag is offered");
+    assert.ok(closeItems.items.some((i) => i.label === "</div>"), "outer open tags are offered");
   } finally { c.proc.kill(); }
 });
 
@@ -867,5 +894,166 @@ main = do
     assert.match(declMain.contents.value, /main :: Html/);
     const declId = cases.find(([label]) => label === "decl id")[1];
     assert.match(declId.contents.value, /id :: a -> a/);
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: rename updates references and import lists", async () => {
+  const { root, entry } = packageWith({
+    "main.flow": `import Util (double)
+
+main :: Html
+main = <p>{str (double 2)}</p>
+`,
+    "util.flow": `module Util (double) where
+
+double :: Int -> Int
+double x = x * 2
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const res = await c.request("textDocument/rename", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, "double 2", 1),
+      newName: "triple",
+    });
+    const mainEdits = Object.entries(res.changes).find(([u]) => u.endsWith("main.flow"))?.[1] ?? [];
+    const utilEdits = Object.entries(res.changes).find(([u]) => u.endsWith("util.flow"))?.[1] ?? [];
+    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === 0), "import member renamed");
+    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === 3), "use renamed");
+    assert.ok(utilEdits.some((e) => e.newText === "triple"), "declaration renamed");
+    assert.ok(fs.existsSync(path.join(root, "src", "util.flow")));
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: import symbol lists candidates and inserts an import", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = <p>{"x"}</p>
+`,
+    "util.flow": `module Util where
+
+double :: Int -> Int
+double x = x * 2
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const cands = await c.request("flow/importCandidates", { uri: uri(entry) });
+    assert.ok(cands.some((x) => x.name === "double" && x.module === "Util"), JSON.stringify(cands));
+    const res = await c.request("flow/importSymbol", { uri: uri(entry), name: "double", module: "Util" });
+    const edits = Object.values(res.changes)[0];
+    assert.ok(edits.some((e) => /import Util \(double\)/.test(e.newText)), JSON.stringify(edits));
+
+    const mergedEntry = packageWith({
+      "main.flow": `import Util (other)
+
+main :: Html
+main = <p>{"x"}</p>
+`,
+      "util.flow": `module Util where
+
+other :: Int
+other = 1
+
+double :: Int -> Int
+double x = x * 2
+`,
+    });
+    const c2 = startServer();
+    try {
+      await c2.request("initialize", { rootUri: null, capabilities: {} });
+      await open(c2, mergedEntry.entry);
+      const merged = await c2.request("flow/importSymbol", { uri: uri(mergedEntry.entry), name: "double", module: "Util" });
+      const mergedEdits = Object.values(merged.changes)[0];
+      assert.ok(mergedEdits.some((e) => e.newText === ", double"), JSON.stringify(mergedEdits));
+    } finally { c2.proc.kill(); }
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: move symbol removes the declaration and fixes imports", async () => {
+  const { root, entry } = packageWith({
+    "main.flow": `answer :: Int -> Int
+answer x = x + 1
+
+main :: Html
+main = <p>{str (answer 2)}</p>
+`,
+    "util.flow": `module Util where
+`,
+  });
+  const target = path.join(root, "src", "util.flow");
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const res = await c.request("flow/moveSymbol", {
+      uri: uri(entry), position: pos(text, "answer ::", 1), targetUri: uri(target),
+    });
+    assert.ok(!res.error, res.error);
+    const mainEdits = Object.entries(res.changes).find(([u]) => u.endsWith("main.flow"))?.[1] ?? [];
+    const utilEdits = Object.entries(res.changes).find(([u]) => u.endsWith("util.flow"))?.[1] ?? [];
+    assert.ok(mainEdits.some((e) => e.newText === ""), "declaration removed from the source");
+    assert.ok(mainEdits.some((e) => /import Util \(answer\)/.test(e.newText)), JSON.stringify(mainEdits));
+    assert.ok(utilEdits.some((e) => /answer :: Int -> Int/.test(e.newText)), JSON.stringify(utilEdits));
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: organize imports merges and sorts", async () => {
+  const { entry } = packageWith({
+    "main.flow": `import Util (b, a)
+import Http (get)
+import Util (c)
+
+main :: Html
+main = <p>{"x"}</p>
+`,
+    "util.flow": `module Util (a, b, c) where
+
+a :: Int
+a = 1
+b :: Int
+b = 2
+c :: Int
+c = 3
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const res = await c.request("flow/organizeImports", { uri: uri(entry) });
+    const edits = Object.values(res.changes)[0];
+    assert.equal(edits.length, 1, JSON.stringify(edits));
+    assert.equal(edits[0].newText, "import Http (get)\nimport Util (a, b, c)\n");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: refactor commands are offered as code actions", async () => {
+  const { entry } = packageWith({
+    "main.flow": `answer :: Int -> Int
+answer x = x + 1
+
+main :: Html
+main = <p>{"x"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const actions = await c.request("textDocument/codeAction", {
+      textDocument: { uri: uri(entry) },
+      range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+      context: { diagnostics: [] },
+    });
+    const commands = actions.filter((a) => a.command).map((a) => a.command.command);
+    assert.ok(commands.includes("flow.importSymbol"), JSON.stringify(commands));
+    assert.ok(commands.includes("flow.moveSymbol"), JSON.stringify(commands));
+    assert.ok(commands.includes("flow.organizeImports"), JSON.stringify(commands));
   } finally { c.proc.kill(); }
 });

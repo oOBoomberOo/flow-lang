@@ -191,7 +191,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.5.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.6.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `stdlib/` instead. Turn
@@ -202,6 +202,34 @@ Changing the **client** (`extension.js`, `vscode-extension/package.json`, the gr
 still needs `npm run extension:install` and a window reload, because VS Code loads the
 extension host code once per window. Compiler/stdlib work does not.
 
+
+### Completion and refactors
+
+**Brackets and markup.** Brackets, quotes and block comments auto-close. Inside
+markup, typing `<di` offers `div` and inserts `<div></div>` with the cursor
+between the tags; void tags (`<input>`, `<br>`, `<img>`, …) insert self-closed
+with the cursor in the attribute position; components insert
+`<Card ></Card>`. Typing `</` offers `</tag>` for the innermost open tag and every
+enclosing tag. Attributes are suggested inside a tag with the right shape:
+`class="${0}"`, `onClick={${0}}`, `checked={${0}}`. Opening tags indent, closing
+tags outdent.
+
+**Rename.** F2 renames a local or a package-wide symbol and now also rewrites
+`import Module (name)` lists, so renaming a public function does not leave broken
+imports behind.
+
+**Refactors.** Available from the lightbulb menu and the command palette:
+
+| command | effect |
+|---|---|
+| `Flow: Import Symbol` | quick-pick an unimported public symbol and insert `import Module (name)` |
+| `Flow: Move Symbol to Module` | move the top-level declaration at the cursor to another `.flow` file, adding the target import in the source and the needed imports in the target |
+| `Flow: Organize Imports` | sort the leading import block, merge duplicate module imports and de-duplicate names |
+
+Code actions also offer `Import symbol…`, `Move 'name' to another module…` and
+`Organize imports` directly. Move Symbol refuses declarations that use private
+helpers from their old module (the error names them) so a move cannot silently
+break.
 
 ### What you see
 
@@ -235,6 +263,9 @@ extension host code once per window. Compiler/stdlib work does not.
 | `Flow: Explain Boundary` | runs `flow explain` into an output channel |
 | `Flow: Toggle Boundary Colouring` | flips decorations |
 | `Flow: Restart Language Server` | restarts the process |
+| `Flow: Import Symbol` | add an import for an unimported public symbol |
+| `Flow: Move Symbol to Module` | move a top-level declaration to another file, fixing imports |
+| `Flow: Organize Imports` | sort and merge the import block |
 
 ---
 
@@ -243,9 +274,9 @@ extension host code once per window. Compiler/stdlib work does not.
 | file | covers |
 |---|---|
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
-| `test/lsp-features.test.mjs` | completion (3 kinds), definition, references, highlights, rename, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, code lens, multi-error reporting |
+| `test/lsp-features.test.mjs` | completion (3 kinds), markup tag/attribute snippets, closing-tag completion, definition, references, highlights, rename with imports, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, import/move/organize refactors, code lens, multi-error reporting |
 | `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
-| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, and auto-restart on compiler saves |
+| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
 
 ```
 $ node --test test/lsp.test.mjs test/lsp-features.test.mjs test/vscode-extension.test.mjs

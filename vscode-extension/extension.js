@@ -294,7 +294,12 @@ function registerProviders(context) {
         if (it.detail) item.detail = it.detail;
         if (it.documentation) item.documentation = typeof it.documentation === "string" ? it.documentation : it.documentation.value;
         if (it.sortText) item.sortText = it.sortText;
-        if (it.insertTextFormat === 2 && it.insertText && vscode.SnippetString) {
+        if (it.textEdit) {
+          item.range = R(it.textEdit.range);
+          item.insertText = it.insertTextFormat === 2 && vscode.SnippetString
+            ? new vscode.SnippetString(it.textEdit.newText)
+            : it.textEdit.newText;
+        } else if (it.insertTextFormat === 2 && it.insertText && vscode.SnippetString) {
           item.insertText = new vscode.SnippetString(it.insertText);
         } else if (it.insertText) {
           item.insertText = it.insertText;
@@ -306,7 +311,7 @@ function registerProviders(context) {
       }
       return list;
     },
-  }, ".", ":", "@"));
+  }, ".", ":", "@", "<", "/"));
 
   push(vscode.languages.registerHoverProvider("flow", {
     async provideHover(document, position) {
@@ -442,16 +447,36 @@ function registerProviders(context) {
         context: { diagnostics: ctx.diagnostics.map((d) => ({ message: d.message })) },
       }, []);
       return (actions || []).map((a) => {
-        const action = new vscode.CodeAction(a.title, a.kind === "quickfix" ? vscode.CodeActionKind.QuickFix : vscode.CodeActionKind.RefactorRewrite);
-        const edit = new vscode.WorkspaceEdit();
-        for (const [uri, edits] of Object.entries(a.edit.changes || {})) {
-          for (const e of edits) edit.replace(vscode.Uri.parse(uri), R(e.range), e.newText);
+        const kind = a.kind === "quickfix"
+          ? vscode.CodeActionKind.QuickFix
+          : a.kind === "source.organizeImports"
+            ? (vscode.CodeActionKind.SourceOrganizeImports ?? vscode.CodeActionKind.Source)
+            : vscode.CodeActionKind.RefactorRewrite;
+        const action = new vscode.CodeAction(a.title, kind);
+        if (a.command) {
+          action.command = {
+            title: a.command.title ?? a.title,
+            command: a.command.command,
+            arguments: a.command.arguments,
+          };
         }
-        action.edit = edit;
+        if (a.edit) {
+          const edit = new vscode.WorkspaceEdit();
+          for (const [uri, edits] of Object.entries(a.edit.changes || {})) {
+            for (const e of edits) edit.replace(vscode.Uri.parse(uri), R(e.range), e.newText);
+          }
+          action.edit = edit;
+        }
         return action;
       });
     },
-  }, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.RefactorRewrite] }));
+  }, {
+    providedCodeActionKinds: [
+      vscode.CodeActionKind.QuickFix,
+      vscode.CodeActionKind.RefactorRewrite,
+      ...(vscode.CodeActionKind.SourceOrganizeImports ? [vscode.CodeActionKind.SourceOrganizeImports] : []),
+    ],
+  }));
 
   push(vscode.languages.registerCodeLensProvider("flow", {
     async provideCodeLenses(document) {
@@ -727,6 +752,9 @@ function activate(context) {
       output?.appendLine("[flow] restart requested");
       await restart(context);
     }),
+    vscode.commands.registerCommand("flow.importSymbol", () => importSymbol()),
+    vscode.commands.registerCommand("flow.moveSymbol", () => moveSymbol()),
+    vscode.commands.registerCommand("flow.organizeImports", () => organizeImports()),
   );
 
   registerProviders(context);
@@ -771,6 +799,82 @@ function explainCurrent() {
     if (stderr) output.appendLine(stderr);
     if (err) output.appendLine(`exit ${err.code}`);
   });
+}
+
+async function applyChanges(changes) {
+  if (!changes) return false;
+  const edit = new vscode.WorkspaceEdit();
+  let any = false;
+  for (const [uri, edits] of Object.entries(changes)) {
+    for (const e of edits) {
+      edit.replace(vscode.Uri.parse(uri), R(e.range), e.newText);
+      any = true;
+    }
+  }
+  return any ? vscode.workspace.applyEdit(edit) : false;
+}
+
+function activeFlowEditor() {
+  const ed = vscode.window.activeTextEditor;
+  return ed && ed.document.languageId === "flow" ? ed : null;
+}
+
+async function importSymbol() {
+  const ed = activeFlowEditor();
+  if (!ed || !client) return;
+  const uri = ed.document.uri.toString();
+  const candidates = await ask("flow/importCandidates", { uri }, []);
+  if (!candidates.length) {
+    vscode.window.showInformationMessage("Flow: no unimported symbols are available.");
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(
+    candidates.map((c) => ({ label: c.name, description: c.module, detail: c.kind })),
+    { placeHolder: "Import which symbol?" },
+  );
+  if (!pick) return;
+  const res = await ask("flow/importSymbol", { uri, name: pick.label, module: pick.description }, null);
+  if (res && await applyChanges(res.changes)) {
+    vscode.window.showInformationMessage(`Flow: imported ${pick.label} from ${pick.description}.`);
+  }
+}
+
+async function moveSymbol() {
+  const ed = activeFlowEditor();
+  if (!ed || !client) return;
+  const uri = ed.document.uri.toString();
+  const files = await vscode.workspace.findFiles("**/*.flow");
+  const items = files
+    .filter((f) => f.toString() !== uri)
+    .map((f) => ({
+      label: vscode.workspace.asRelativePath ? vscode.workspace.asRelativePath(f) : f.fsPath,
+      uri: f,
+    }));
+  if (!items.length) {
+    vscode.window.showInformationMessage("Flow: no other .flow file to move the symbol to.");
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(items, { placeHolder: "Move the symbol to which file?" });
+  if (!pick) return;
+  const res = await ask("flow/moveSymbol", {
+    uri, position: backPos(ed.selection.active), targetUri: pick.uri.toString(),
+  }, null);
+  if (res?.error) {
+    vscode.window.showErrorMessage(`Flow: ${res.error}`);
+    return;
+  }
+  if (await applyChanges(res?.changes)) {
+    vscode.window.showInformationMessage(`Flow: moved the symbol into ${pick.label}.`);
+  }
+}
+
+async function organizeImports() {
+  const ed = activeFlowEditor();
+  if (!ed || !client) return;
+  const res = await ask("flow/organizeImports", { uri: ed.document.uri.toString() }, null);
+  if (await applyChanges(res?.changes)) {
+    vscode.window.showInformationMessage("Flow: imports organized.");
+  }
 }
 
 function deactivate() {
