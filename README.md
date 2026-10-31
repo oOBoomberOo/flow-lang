@@ -124,9 +124,9 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` — **232 tests** across grammar, layout, types, boundaries, modules, packages,
-the standard library, algebraic effects, cell sugar, monads, currying, qualified paths, trait
-bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
+Tests: `npm test` — **252 tests** across grammar, layout, types, boundaries, modules, packages,
+registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
+trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
 ## Feature list
 
@@ -141,6 +141,13 @@ bounds, higher-kinded types, local handlers, the language server and the VS Code
 * **Data and records** — `data Shape = Circle Float | Rect Float Float`, `type P = { x :: Int }`
 * **Classes and instances** — `class Show a where`, `instance Show Int where`, contexts
   (`Eq a => Ord a`), higher-kinded parameters (`class Functor f where map :: (a -> b) -> f a -> f b`)
+* **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
+  `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
+  iteration, JSON, dates and paths ship in the language
+* **Packages and registries** — `flow install` resolves from the default
+  [flow-registry](https://github.com/oOBoomberOo/flow-registry) git registry; registries can be
+  set per dependency, per project or globally, and dependencies may be `path:` directories or
+  `git:`/`github:` repositories
 * **Effects are capabilities** — `effect Server @ server where`, `provide`, `handle`
 * **Algebraic effects** — `algebraic effect State where get :: () -> Int`, resumed with `resume`
 * **Cell sugar** — `cell.value`, `cell := e`, `cell += n`, `cell.update`

@@ -105,13 +105,75 @@ own name joins the path). Hyphenated package names are fine.
 ```
 
 ```bash
-flow install     # resolve, vendor into flow_modules/, write flow.lock
-flow add flow-time
-flow verify      # check the vendored tree against the lockfile
+flow install            # resolve, vendor into flow_modules/, write flow.lock
+flow install --refresh  # re-fetch git registries and git dependencies
+flow add flow-time      # add the newest matching version
+flow verify             # check the vendored tree against the lockfile
+flow registry           # the active registry and its packages
 ```
 
 Inside the package, `import Util` resolves to `src/util.flow`; `import FlowTime.Format`
 resolves to the dependency's `src/format.flow`.
+
+### Registries
+
+The default registry is **[flow-registry](https://github.com/oOBoomberOo/flow-registry.git)**.
+It is a git repository containing `index.json` and `packages/<name>/<version>/`; Flow clones it
+into a cache (`~/.flow/cache/registries`, overridable with `FLOW_CACHE`) and refreshes on
+`--refresh`.
+
+A registry can also be a **directory on disk**. You can choose one at three levels, with the
+strongest winning:
+
+```json
+// project: flow.json — applies to this project
+{ "registry": "https://github.com/oOBoomberOo/flow-registry.git" }
+
+// a git registry at a ref, or a local directory
+{ "registry": { "url": "https://github.com/me/flow-pkgs.git", "ref": "main" } }
+{ "registry": { "path": "../my-registry" } }
+```
+
+```json
+// global: ~/.config/flow/config.json (or %USERPROFILE%\.config\flow\config.json)
+{ "registry": "github:me/flow-pkgs#main" }
+```
+
+```bash
+FLOW_REGISTRY=../my-registry flow install   # environment
+```
+
+Order: **dependency override → project → global config → `FLOW_REGISTRY` → default**.
+`flow registry --verbose` prints the chain, the cache path and every version.
+
+### Dependency specs
+
+```json
+{
+  "dependencies": {
+    "flow-time": "^1.2.0",
+    "shapes": "path:../shapes",
+    "tool": "git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0",
+    "widgets": "github:me/flow-widgets#main",
+    "internal": { "range": "^2.0.0", "registry": "git:https://github.com/me/flow-pkgs.git" }
+  }
+}
+```
+
+* `path:…` / `file:…` — a package directory on disk. It is linked, not copied, so edits are live;
+  `flow verify` checks that the directory still has a `flow.json`.
+* `git:<url>#<ref>` and `github:owner/repo#<ref>` — cloned into the cache and copied into
+  `flow_modules`, with the ref recorded in `flow.lock`.
+* `{ "range": …, "registry": … }` — a registry dependency pinned to a different registry.
+* a bare semver range — resolved against the active registry.
+
+`flow.lock` records each package's `version`, `integrity`, and where it came from
+(`source: "registry" | "git" | "path"` plus the resolved URL or directory).
+
+```bash
+flow add shapes path:../shapes
+flow add tool git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0
+```
 
 ## The prelude
 

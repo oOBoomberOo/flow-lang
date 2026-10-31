@@ -16,11 +16,21 @@ import crypto from "node:crypto";
 import { FlowError } from "./lexer.ts";
 import { readManifest } from "./modules.ts";
 import type { Manifest } from "./modules.ts";
+import {
+  parseDependency, resolveRegistry, fetchGit, registryDirFor, DEFAULT_REGISTRY_URL,
+  type DependencyValue, type RegistryConfig,
+} from "./registry.ts";
+
+export type DependencySource = "registry" | "path" | "git";
 
 export interface LockEntry {
   version: string;
   integrity: string;
-  dependencies: Record<string, string>;
+  /** where the code came from, so an install can be reproduced */
+  source?: DependencySource;
+  /** registry url/path, git url, or local directory */
+  resolved?: string;
+  dependencies: Record<string, string | DependencyValue>;
 }
 
 export interface Lockfile {
@@ -28,10 +38,26 @@ export interface Lockfile {
   packages: Record<string, LockEntry>;
 }
 
+/** The registry that applies to `root`, honouring project/global/env settings. */
+export function registryFor(root: string, manifest?: Manifest | null, refresh = false) {
+  return resolveRegistry({
+    root,
+    project: manifest?.registry,
+    refresh,
+    quiet: false,
+  });
+}
+
+/** Directory of a local registry shipped with the repo, for offline development. */
 export const DEFAULT_REGISTRY = path.join(import.meta.dirname, "..", "registry");
 
-export function registryDir(): string {
-  return process.env.FLOW_REGISTRY ?? DEFAULT_REGISTRY;
+export function registryDir(root = process.cwd()): string {
+  return registryFor(root).dir;
+}
+
+export interface InstallOptions {
+  /** re-fetch git registries and git dependencies */
+  refresh?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,44 +186,88 @@ function copyTree(from: string, to: string) {
 export interface InstallReport {
   installed: { name: string; version: string; integrity: string }[];
   fromPath: { name: string; dir: string }[];
+  fromGit: { name: string; url: string; ref?: string; dir: string }[];
 }
 
-export function install(root: string): InstallReport {
+export function install(root: string, opts: InstallOptions = {}): InstallReport {
   const manifest = readManifest(root);
   if (!manifest) throw new FlowError(`no flow.json in ${root}`, { code: "E_PKG" });
 
   const lock: Lockfile = { lockfileVersion: 1, packages: {} };
-  const report: InstallReport = { installed: [], fromPath: [] };
-  const queue: { name: string; range: string; parent: string }[] = Object.entries(manifest.dependencies)
-    .map(([name, range]) => ({ name, range, parent: manifest.name }));
+  const report: InstallReport = { installed: [], fromPath: [], fromGit: [] };
+  const queue: { name: string; spec: DependencyValue; parent: string }[] = Object.entries(manifest.dependencies)
+    .map(([name, spec]) => ({ name, spec, parent: manifest.name }));
   const done = new Set<string>();
 
   while (queue.length) {
-    const { name, range, parent } = queue.shift()!;
+    const { name, spec, parent } = queue.shift()!;
     if (done.has(name)) continue;
     done.add(name);
+    const dep = parseDependency(name, spec);
 
-    if (range.startsWith("path:")) {
-      const dir = path.resolve(root, range.slice(5));
+    if (dep.kind === "path") {
+      const dir = path.resolve(root, dep.dir);
+      if (!fs.existsSync(path.join(dir, "flow.json"))) {
+        throw new FlowError(`dependency '${name}' not found at ${dir}`, { code: "E_PKG" });
+      }
       report.fromPath.push({ name, dir });
-      // still hoist its own registry deps
       const sub = readManifest(dir);
+      lock.packages[name] = {
+        version: sub?.version ?? "0.0.0",
+        integrity: treeIntegrity(dir),
+        source: "path",
+        resolved: dep.dir,
+        dependencies: sub?.dependencies ?? {},
+      };
       for (const [n, r] of Object.entries(sub?.dependencies ?? {})) {
-        queue.push({ name: n, range: r, parent: name });
+        queue.push({ name: n, spec: r, parent: name });
       }
       continue;
     }
 
-    const { version, dir } = resolveFromRegistry(name, range);
+    if (dep.kind === "git") {
+      const cached = fetchGit(dep.url, dep.ref, { refresh: opts.refresh });
+      const sub = readManifest(cached);
+      if (!sub) throw new FlowError(`git dependency '${name}' (${dep.url}) has no flow.json`, { code: "E_PKG" });
+      const dest = path.join(root, "flow_modules", name);
+      copyTree(cached, dest);
+      lock.packages[name] = {
+        version: sub.version,
+        integrity: treeIntegrity(dest),
+        source: "git",
+        resolved: `${dep.url}${dep.ref ? `#${dep.ref}` : ""}`,
+        dependencies: sub.dependencies ?? {},
+      };
+      report.fromGit.push({ name, url: dep.url, ref: dep.ref, dir: dest });
+      for (const [n, r] of Object.entries(sub.dependencies ?? {})) {
+        queue.push({ name: n, spec: r, parent: name });
+      }
+      continue;
+    }
+
+    const registry = resolveRegistry({
+      root,
+      project: manifest.registry,
+      override: dep.registry,
+      refresh: opts.refresh,
+      quiet: false,
+    });
+    const { version, dir } = resolveFromRegistry(name, dep.range, registry.dir);
     const integrity = treeIntegrity(dir);
     const dest = path.join(root, "flow_modules", name);
     copyTree(dir, dest);
     const sub = readManifest(dest);
-    lock.packages[name] = { version, integrity, dependencies: sub?.dependencies ?? {} };
+    lock.packages[name] = {
+      version,
+      integrity,
+      source: "registry",
+      resolved: registry.source,
+      dependencies: sub?.dependencies ?? {},
+    };
     report.installed.push({ name, version, integrity });
 
     for (const [n, r] of Object.entries(sub?.dependencies ?? {})) {
-      if (!r.startsWith("path:")) queue.push({ name: n, range: r, parent: name });
+      if (!String(r).startsWith("path:")) queue.push({ name: n, spec: r, parent: name });
     }
   }
 
@@ -211,6 +281,12 @@ export function verifyLock(root: string): string[] {
   const lock = JSON.parse(fs.readFileSync(lockFile, "utf8")) as Lockfile;
   const problems: string[] = [];
   for (const [name, entry] of Object.entries(lock.packages)) {
+    // path dependencies are linked from their directory, not vendored
+    if (entry.source === "path") {
+      const dir = entry.resolved ? path.resolve(root, entry.resolved) : path.join(root, "flow_modules", name);
+      if (!fs.existsSync(path.join(dir, "flow.json"))) problems.push(`${name}: path dependency missing at ${dir}`);
+      continue;
+    }
     const dir = path.join(root, "flow_modules", name);
     if (!fs.existsSync(dir)) { problems.push(`${name}: not installed`); continue; }
     const actual = treeIntegrity(dir);
@@ -219,14 +295,46 @@ export function verifyLock(root: string): string[] {
   return problems;
 }
 
+/**
+ * `flow add <name>[@range]`, `flow add path:../x`, `flow add git:<url>#<ref>`.
+ * A path/git spec takes its name from the dependency's flow.json.
+ */
 export function add(root: string, spec: string): { name: string; version: string } {
+  const manifestFile = path.join(root, "flow.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as Manifest;
+
+  if (spec.startsWith("path:") || spec.startsWith("file:") || spec.startsWith("git:") || spec.startsWith("github:")) {
+    const probe = parseDependency("", spec);
+    let name: string;
+    let version: string;
+    let value: DependencyValue = spec;
+    if (probe.kind === "path") {
+      const dir = path.resolve(root, probe.dir);
+      const sub = readManifest(dir);
+      if (!sub) throw new FlowError(`no flow.json at ${dir}`, { code: "E_PKG" });
+      name = sub.name;
+      version = sub.version;
+    } else if (probe.kind === "git") {
+      const dir = fetchGit(probe.url, probe.ref, {});
+      const sub = readManifest(dir);
+      if (!sub) throw new FlowError(`no flow.json in ${probe.url}`, { code: "E_PKG" });
+      name = sub.name;
+      version = sub.version;
+      value = spec;
+    } else {
+      throw new FlowError(`unsupported spec '${spec}'`, { code: "E_PKG" });
+    }
+    manifest.dependencies = { ...(manifest.dependencies ?? {}), [name]: value };
+    fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
+    install(root);
+    return { name, version };
+  }
+
   const at = spec.lastIndexOf("@");
   const name = at > 0 ? spec.slice(0, at) : spec;
   const range = at > 0 ? spec.slice(at + 1) : "*";
-  const { version } = resolveFromRegistry(name, range);
+  const { version } = resolveFromRegistry(name, range, registryFor(root, manifest).dir);
 
-  const manifestFile = path.join(root, "flow.json");
-  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as Manifest;
   manifest.dependencies = { ...(manifest.dependencies ?? {}), [name]: `^${version}` };
   fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2) + "\n");
   install(root);

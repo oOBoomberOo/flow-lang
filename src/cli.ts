@@ -4,9 +4,11 @@ import { compileFile } from "./compile.ts";
 import { parse } from "./parser.ts";
 import { printProgram } from "./printer.ts";
 import { migrateSource } from "./migrate.ts";
+import { readManifest } from "./modules.ts";
 import { createHost } from "./host.ts";
 import { FlowError } from "./lexer.ts";
-import { install, add, verifyLock, readRegistry, registryDir } from "./pkg.ts";
+import { install, add, verifyLock, readRegistry, registryFor } from "./pkg.ts";
+import { describeRegistryChain, readUserConfig } from "./registry.ts";
 import {
   makeStyle, renderError, renderErrors, status, formatDuration,
   timestamp, clearScreen, relativePath, relevantWatchPath, watchTree,
@@ -97,7 +99,7 @@ export async function main(argv: string[]): Promise<void> {
       case "install": return cmdInstall(rest, style, g.quiet);
       case "add": return cmdAdd(rest, style);
       case "verify": return cmdVerify(rest, style);
-      case "registry": return cmdRegistry(style);
+      case "registry": return cmdRegistry(rest, style);
       case "version": stdout(`flow ${VERSION}\n`); return;
       default: return unknownCommand(cmd, style);
     }
@@ -146,10 +148,10 @@ ${b("Commands:")}
   explain   Print inferred placement and boundary cuts
   fmt       Format a file with the Flow pretty printer
   migrate   Rewrite Rust-style Flow source into the Haskell-style syntax
-  install   Resolve dependencies and vendor them
+  install   Resolve dependencies and vendor them (--refresh re-fetches git)
   add       Add a dependency from the registry
   verify    Verify installed packages against the lockfile
-  registry  List packages in the registry
+  registry  Show the active registry and its packages (--refresh, -v)
   help      Print this message or help for a command
 
 ${b("Options:")}
@@ -631,21 +633,24 @@ function cmdInstall(argv: string[], style: Style, quiet: boolean): void {
   const dir = pkgDir(argv);
   const t0 = Date.now();
   if (!quiet) stderr(`${status(style, "Installing", "dependencies")}\n`);
-  const report = install(dir);
+  const report = install(dir, { refresh: argv.includes("--refresh") });
   for (const p of report.installed) stdout(`  ${p.name}@${p.version}  ${p.integrity.slice(0, 23)}…\n`);
+  for (const p of report.fromGit) stdout(`  ${p.name} (git) ${p.url}${p.ref ? `#${p.ref}` : ""}\n`);
   for (const p of report.fromPath) stdout(`  ${p.name} (path) -> ${p.dir}\n`);
-  if (!report.installed.length && !report.fromPath.length) stdout("  (no dependencies)\n");
+  if (!report.installed.length && !report.fromPath.length && !report.fromGit.length) stdout("  (no dependencies)\n");
   if (!quiet) {
     stderr(`${status(style, "Finished", `install in ${formatDuration(Date.now() - t0)} (${path.join(dir, "flow_modules")})`)}\n`);
   }
 }
 
 function cmdAdd(argv: string[], style: Style): void {
+  // the spec may be a name, name@range, path:…, git:… or github:…
   const spec = argv.find((a) => !a.startsWith("-") && !a.startsWith(".") && !path.isAbsolute(a));
-  if (!spec) throw new FlowError("add: missing <name>[@range]", { code: "E_CLI" });
+  if (!spec) throw new FlowError("add: missing <name>[@range] | path:<dir> | git:<url>[#ref]", { code: "E_CLI" });
   const dir = pkgDir(argv.filter((a) => a !== spec));
   const { name, version } = add(dir, spec);
-  stdout(`added ${name}@^${version} to ${path.join(dir, "flow.json")}\n`);
+  void style;
+  stdout(`added ${name}@${version} to ${path.join(dir, "flow.json")}\n`);
 }
 
 function cmdVerify(argv: string[], style: Style): void {
@@ -659,12 +664,29 @@ function cmdVerify(argv: string[], style: Style): void {
   stdout("ok: flow_modules matches flow.lock\n");
 }
 
-function cmdRegistry(style: Style): void {
-  const index = readRegistry();
-  stdout(`registry: ${registryDir()}\n`);
-  for (const [name, info] of Object.entries(index.packages)) {
-    stdout(`  ${name.padEnd(20)} ${Object.keys(info.versions).sort().join(", ")}\n`);
+function cmdRegistry(argv: string[], style: Style): void {
+  const verbose = argv.includes("--verbose");
+  const dir = pkgDir(argv);
+  const manifest = readManifestSafe(dir);
+  const active = registryFor(dir, manifest, argv.includes("--refresh"));
+  const chain = describeRegistryChain(dir, manifest?.registry);
+  stdout(`registry: ${active.source}  (${active.origin})\n`);
+  if (verbose) {
+    stdout("sources (strongest first):\n");
+    for (const s of chain) stdout(`  ${s.label.padEnd(9)} ${s.value}\n`);
+    stdout(`cache:   ${active.dir}\n`);
+    const cfg = readUserConfig();
+    if (cfg.registry) stdout(`global:  ${typeof cfg.registry === "string" ? cfg.registry : cfg.registry.path ?? cfg.registry.url}\n`);
   }
+  const index = readRegistry(active.dir);
+  for (const [name, info] of Object.entries(index.packages)) {
+    const versions = Object.keys(info.versions).sort();
+    stdout(`  ${name.padEnd(20)} ${verbose ? versions.join(", ") : versions[versions.length - 1]}\n`);
+  }
+}
+
+function readManifestSafe(dir: string) {
+  try { return readManifest(dir); } catch { return null; }
 }
 
 function emit(result: ReturnType<typeof compileFile>, outDir: string): void {

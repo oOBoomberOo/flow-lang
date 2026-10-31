@@ -7,6 +7,9 @@ import { compileFile } from "../src/compile.ts";
 import { install, verifyLock, satisfies, bestVersion, add } from "../src/pkg.ts";
 import { FlowError } from "../src/lexer.ts";
 
+// The package tests use the registry that ships with this repo, not the network.
+process.env.FLOW_REGISTRY = path.join(import.meta.dirname, "..", "registry");
+
 /** Build a throwaway package with the given files. */
 function packageWith(files, deps = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-pkg-"));

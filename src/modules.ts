@@ -16,13 +16,16 @@ import path from "node:path";
 import { parse } from "./parser.ts";
 import { FlowError } from "./lexer.ts";
 import type { Decl, Expr, FnSig, HtmlNode, Pattern, Program, Span, TypeExpr } from "./ast.ts";
+import { parseDependency, fetchGit, type DependencyValue, type RegistryConfig } from "./registry.ts";
 
 export const STDLIB_DIR = path.join(import.meta.dirname, "..", "stdlib");
 
 export interface Manifest {
   name: string;
   version: string;
-  dependencies: Record<string, string>;
+  dependencies: Record<string, DependencyValue>;
+  /** where this project's packages come from; see src/registry.ts */
+  registry?: string | RegistryConfig;
 }
 
 export interface Package {
@@ -119,6 +122,7 @@ export function readManifest(dir: string): Manifest | null {
     name: m.name,
     version: m.version,
     dependencies: m.dependencies ?? {},
+    ...(m.registry !== undefined ? { registry: m.registry } : {}),
   };
 }
 
@@ -174,9 +178,10 @@ export function packageAt(root: string): Package {
 
 /** `path:../x` is the only spec form in 0.1; `flow install` vendors registry
  *  packages into `flow_modules/<name>` and rewrites the lock, not the manifest. */
-export function resolveDependency(root: string, name: string, spec: string): string {
-  if (spec.startsWith("path:")) {
-    const dir = path.resolve(root, spec.slice(5));
+export function resolveDependency(root: string, name: string, spec: DependencyValue): string {
+  const dep = parseDependency(name, spec);
+  if (dep.kind === "path") {
+    const dir = path.resolve(root, dep.dir);
     if (!fs.existsSync(path.join(dir, "flow.json"))) {
       throw new FlowError(`dependency '${name}' not found at ${dir}`, { code: "E_PKG" });
     }
@@ -184,8 +189,16 @@ export function resolveDependency(root: string, name: string, spec: string): str
   }
   const vendored = path.join(root, "flow_modules", name);
   if (fs.existsSync(path.join(vendored, "flow.json"))) return vendored;
+  if (dep.kind === "git") {
+    const dir = path.join(root, "flow_modules", name);
+    if (fs.existsSync(path.join(dir, "flow.json"))) return dir;
+    throw new FlowError(
+      `dependency '${name}' is a git dependency (${dep.url}) that is not installed — run 'flow install'`,
+      { code: "E_PKG" },
+    );
+  }
   throw new FlowError(
-    `dependency '${name}' (${spec}) is not installed — run 'flow install'`,
+    `dependency '${name}' (${dep.range}) is not installed — run 'flow install'`,
     { code: "E_PKG" },
   );
 }
