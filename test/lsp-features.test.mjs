@@ -746,6 +746,27 @@ main = <p>{str count} {if True then "y" else "n"}</p>
   } finally { c.proc.kill(); }
 });
 
+test("lsp: hover shows the declared serve signature", async () => {
+  const { entry } = packageWith({
+    "main.flow": `import Http (serve)
+
+main :: ()
+main = serve { page = \\_ -> <p>{"x"}</p>, routes = [] }
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const hover = await c.request("textDocument/hover", {
+      textDocument: { uri: uri(entry) },
+      position: pos(text, "serve {", 1),
+    });
+    assert.ok(hover?.contents?.value, "serve has hover information");
+    assert.match(hover.contents.value, /serve :: AppConfig -> \(\) @server/);
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: hover covers variables, calls, parameters and declarations", async () => {
   const { entry } = packageWith({
     "main.flow": `double :: Int -> Int

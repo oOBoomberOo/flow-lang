@@ -1479,10 +1479,14 @@ reader.onMessage((msg) => {
         return;
       }
       const sym = node.ident ? symbolForName(node.ident) : undefined;
+      const sig = sym ? lastAnalysis?.signatures.get(sym.finalName) : undefined;
+      const sigLine = sig
+        ? `\`${sig.name} :: ${[...sig.params.map((x) => x.type), sig.ret].join(" -> ")}\`\n\n`
+        : "";
       const eff = node.effects.length ? `\n\nEffects: \`{${node.effects.join(", ")}}\`` : "";
       const origin = sym ? `\n\nDeclared in \`${sym.display}\` (${sym.kind})` : "";
       reply(id, {
-        contents: { kind: "markdown", value: `**${node.type}**\n\nPlacement: \`${node.place}\`${eff}${origin}` },
+        contents: { kind: "markdown", value: `${sigLine}**${node.type}**\n\nPlacement: \`${node.place}\`${eff}${origin}` },
         range: node.range,
       });
       return;
