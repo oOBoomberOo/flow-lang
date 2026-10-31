@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -62,7 +63,7 @@ main = <p>{"fs"}</p>
 async function withFsHost(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-fs-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, SOURCE);
+  fs.writeFileSync(entry, withModule(SOURCE));
   const outDir = path.join(root, "build");
   const result = compileFile(entry);
   emit(result, outDir);

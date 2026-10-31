@@ -1,4 +1,4 @@
-module Client (log, now, state) where
+module Flow.Client (log, now, state) where
 
 -- Client-side authority. These are ordinary functions: each body reaches a
 -- client-only primitive, so its placement is client and calling one from server

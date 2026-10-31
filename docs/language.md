@@ -45,11 +45,11 @@ main = <p>{if ready then "yes" else "no"}</p>
 ## 2. Declarations
 
 ```flow
-module Shapes (Shape(..), area) where   -- exports; everything else is private
+module Shapes (Shape(..), area) where   -- required; exports control what is public
 
-import List (filter)                    -- bring a name into scope
-import Option as O                      -- qualified access as O.map
-import Http (get as httpGet)            -- rename on import
+import Flow.List (filter)               -- bring a name into scope
+import Flow.Option as O                 -- qualified access as O.map
+import Flow.Http (get as httpGet)       -- rename on import
 
 data Shape = Circle Float | Rect Float Float
 type Point = { x :: Float, y :: Float }
@@ -60,7 +60,8 @@ area (Circle r) = 3.14 * r * r
 area (Rect w h) = w * h
 ```
 
-A file without a `module` header exports everything. `pub` does not exist.
+Every `.flow` file starts with a `module` header whose dotted name mirrors its path; a module
+without an export list exports everything. `pub` does not exist.
 
 ### Signatures are optional
 
@@ -269,7 +270,7 @@ log msg = server_write msg
 Calling one from the other side is a cut, exactly like any other crossing:
 
 ```flow
-import Http (servePage)
+import Flow.Http (servePage)
 
 main :: ()
 main = do
@@ -419,44 +420,50 @@ attribute takes `Str`.
 See [`modules.md`](modules.md). In short:
 
 ```flow
-import Option (withDefault)
-import List as L
+module Main where
+
+import Flow.Option (withDefault)
+import Flow.List as L
 
 best = withDefault 0 (map (\x -> x * 2) (Option.Some 3))
 sorted = L.sortBy (\a b -> a - b) [3, 1, 2]
 ```
 
-Any public name can be reached by its module qualifier without an import: `Option.withDefault`,
-`List.sortBy`, `Http.textResponse`. `module M (a, b) where` controls what is public.
+Any public name can be reached by its module qualifier without an import:
+`Flow.Option.withDefault`, `Flow.List.sortBy`, `Flow.Http.textResponse`. The short names
+(`Option`, `List`, `Http`) resolve to std when no local or dependency module claims them, and
+`Flow.*` always names the standard library. `module M (a, b) where` controls what is public.
 The monad family is a prelude export, so `map`/`pure`/`return`/`empty` need no qualifier.
 
 ### 7.1 The standard library
 
-The standard library is meant to be a one-stop toolkit: reach for it before the FFI.
+The standard library is meant to be a one-stop toolkit: reach for it before the FFI. Its modules
+live under the reserved `Flow` namespace; the short names below are accepted when no local
+module claims them.
 
 | Module | What it gives you |
 |---|---|
-| `Prelude` | injected everywhere: `str`, `len`, `head`, `tail`, `push`, `concat`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `cons`, `makeCell`, `Cell`, `Option` |
-| `List` | `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
-| `Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
-| `Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `mapWithKey`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
-| `Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `mapWith`, `filter`, `intSet`, `stringSet` |
-| `Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
-| `Option` | `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
-| `Result` | `Ok`/`Err` with `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
-| `String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
-| `Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
-| `Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |
-| `Reflect` | `meta`, `root`, `defs`, `lookup`, `typeName`, `describe`, `describeAll`; `TypeInfo` metadata for primitives, containers, records and data types |
-| `Serialize` | `encode`/`decode` (static type) and `encodeWith`/`decodeWith`/`toJsonWith`/`fromJsonWith` (explicit `Reflected`): reflection-driven JSON with `Result` errors and field paths |
-| `Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
-| `Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
-| `Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
-| `Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List` and `Cell`, plus `>>=`/`do` |
-| `Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
-| `Client` / `Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
-| `State`, `Exn`, `Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
-| `Fs`, `Net`, `Http`, `Random`, `Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
+| `Flow.Prelude` | injected everywhere: `str`, `len`, `head`, `tail`, `push`, `concat`, `trim`, `upper`, `lower`, `split`, `join`, `chars`, `strLen`, `int`, `float`, `eq`, `neq`, `not`, `cons`, `makeCell`, `Cell`, `Option` |
+| `Flow.List` | `filter`, `fold`, `take`, `drop`, `range`, `zip`, `sortBy`, `sortInts`, `sortStrings`, `any`, `all`, `contains`, `indexOfItem` (`map` comes from Functor) |
+| `Flow.Iter` | `enumerate`, `zipWith`, `takeWhile`, `dropWhile`, `partition`, `groupBy`, `chunks`, `interleave`, `product2`, `find`, `count`, `minimum`, `maximum`, `average`, `scanl` |
+| `Flow.Dict` | an ordered map: `fromList`, `insert`, `lookup`, `remove`, `keys`, `values`, `mapWithKey`, `filter`, `union`, `intersect`, `difference`, plus `string*` helpers |
+| `Flow.Set` | `fromList`, `insert`, `member`, `remove`, `union`, `intersect`, `difference`, `mapWith`, `filter`, `intSet`, `stringSet` |
+| `Flow.Tuple` | `fst`, `snd`, `swap`, `both`, `mapFirst`, `mapSecond`, `curry`, `uncurry`, `zip3`, `unzip` |
+| `Flow.Option` | `withDefault`, `isSome`, `isNone`, `toList` (`map` comes from Functor) |
+| `Flow.Result` | `Ok`/`Err` with `mapOk`, `mapError`, `andThen`, `withDefault`, `toOption`, `fromOption`, `map2`, `all`, `first`, `firstOr` |
+| `Flow.String` | `length`, `joinWith`, `repeat`, `padLeft`, `padRight`, `words`, `startsWith`, `endsWith`, `indexOf`, `splitOnce`, `capitalize`, `isDigit`, `isAlpha`, `isAlphaNum`, `isSpace`, `isUpper`, `isLower`, `toUpper`, `toLower` |
+| `Flow.Math` | `sqrt`, `pow`, `floor`, `ceil`, `round`, `abs`, `div`, `mod`, `minInt`, `maxInt`, `clamp`, `sum`, `product`, `sign`, `toFloat`, `toInt`, `isEven`, `isOdd`, `powInt`, `roundTo`, `pi`, `e`, trig and logs |
+| `Flow.Json` | `Json` (`JNull`/`JBool`/`JNum`/`JStr`/`JList`/`JObject`), `encode`, `decode`, `decodeSafe`, `field`, `getPath`, `at`, `asString`, `asInt`, `asBool`, `asList` |
+| `Flow.Reflect` | `meta`, `root`, `defs`, `lookup`, `typeName`, `describe`, `describeAll`; `TypeInfo` metadata for primitives, containers, records and data types |
+| `Flow.Serialize` | `encode`/`decode` (static type) and `encodeWith`/`decodeWith`/`toJsonWith`/`fromJsonWith` (explicit `Reflected`): reflection-driven JSON with `Result` errors and field paths |
+| `Flow.Time` | `now`, `nowMillis`, `nowPrecise`, `addSeconds`, `addDays`, `diffSeconds`, `formatIso`, `formatDate`, `formatClock`, `weekday`, `month`, `duration`, `hms` |
+| `Flow.Path` | `join`, `basename`, `dirname`, `extension`, `normalize`, `isAbsolute`, `separator` |
+| `Flow.Env` | `get`, `getOr`, `exists`, `all`, `args`, `name`, `platform` (`@server`) |
+| `Flow.Monad` | the `Functor`/`Applicative`/`Monad`/`Alternative` family re-exported by the prelude, with instances for `Option`, `List` and `Cell`, plus `>>=`/`do` |
+| `Flow.Cell` | `pure`, `make`, `read`, `write` — cells are neutral reactive values and monads |
+| `Flow.Client` / `Flow.Server` | `log`, `now`, `state` / `log`, `now`, `random`, placed by their bodies |
+| `Flow.State`, `Flow.Exn`, `Flow.Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
+| `Flow.Fs`, `Flow.Net`, `Flow.Http`, `Flow.Random`, `Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
 
 Containers are ordinary values, so they work on both sides of the boundary:
 `Dict.stringLookup "k" d` in a render function reads a server-built map through a cut.
@@ -464,9 +471,9 @@ Reflection (`Reflect.meta`) and the JSON serialization standard built on it are
 described in [`serialize.md`](serialize.md).
 
 ```flow
-import Dict
-import Iter
-import Json (Json(..), encode, decodeSafe, getPath)
+import Flow.Dict
+import Flow.Iter
+import Flow.Json (Json(..), encode, decodeSafe, getPath)
 
 scores = Dict.stringDict [("ada", 36), ("grace", 85)]
 

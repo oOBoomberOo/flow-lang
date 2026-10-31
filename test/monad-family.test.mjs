@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 /**
  * The Functor / Applicative / Monad / Alternative family: one `map`, `pure`,
@@ -31,7 +32,7 @@ function emit(result, outDir) {
 async function withHost(source, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-monad-"));
   const file = path.join(dir, "main.flow");
-  fs.writeFileSync(file, source);
+  fs.writeFileSync(file, withModule(source));
   const result = compileFile(file);
   const outDir = path.join(dir, "build");
   emit(result, outDir);

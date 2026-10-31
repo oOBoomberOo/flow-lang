@@ -1,3 +1,5 @@
+module Effects where
+
 -- User-defined effects are *capabilities*. The provider's placement decides
 -- where every call runs — the boundary follows the authority.
 effect Audit where

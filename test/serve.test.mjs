@@ -7,6 +7,7 @@ import { compileFile } from "../src/compile.ts";
 import { analyze } from "../src/analysis.ts";
 import { createHost } from "../src/host.ts";
 import { createRuntime } from "../src/runtime/core.js";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 /**
  * The server-first entry model:
@@ -40,7 +41,7 @@ function packageWith(files) {
   for (const [rel, src] of Object.entries(files)) {
     const f = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, src);
+    fs.writeFileSync(f, withModule(src, moduleNameFor(rel)));
   }
   return path.join(root, "src", "main.flow");
 }

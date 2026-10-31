@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 /**
  * CLI integration tests: spawn the real `flow` command and check Cargo-style
@@ -37,7 +38,7 @@ function run(args, opts = {}) {
 function write(dir, name, text) {
   const file = path.join(dir, name);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text);
+  fs.writeFileSync(file, name.endsWith(".flow") ? withModule(text, moduleNameFor(name.replace(/^src[\\/]/, ""))) : text);
   return file;
 }
 
@@ -102,12 +103,12 @@ main = <p>{f ()} {g ()}</p>
   const r = await run(["check", file, "--color", "never"]);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /error\[E_TYPE\]: unknown type 'Strr'/);
-  assert.match(r.stderr, /--> .*bad\.flow:1:12/);
-  assert.match(r.stderr, /1 \| f :: \(\) -> Strr/);
+  assert.match(r.stderr, /--> .*bad\.flow:3:12/);
+  assert.match(r.stderr, /3 \| f :: \(\) -> Strr/);
   assert.match(r.stderr, /\| {12}\^\^\^\^/);
   assert.match(r.stderr, /did you mean 'Str'\?/);
   assert.match(r.stderr, /return type mismatch in fn g: expected Str, got Int/);
-  assert.match(r.stderr, /5 \| g \(\) = 42/);
+  assert.match(r.stderr, /7 \| g \(\) = 42/);
   assert.match(r.stderr, /due to 2 previous errors/);
   assert.doesNotMatch(r.stderr, /\x1b\[/, "no color when piped");
 });

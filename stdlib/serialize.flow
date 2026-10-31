@@ -1,4 +1,4 @@
-module Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith, toJsonWith, fromJsonWith) where
+module Flow.Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith, toJsonWith, fromJsonWith) where
 
 -- std::serialize - a reflection-driven JSON standard.
 --
@@ -23,9 +23,9 @@ module Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith, toJs
 --                           single field has that value, and 2+ fields use an
 --                           array. This is unambiguous for nested options.
 --   * Int                -> an integer JSON number (decoding rejects fractions)
-import Reflect (Reflected, TypeInfo, TypeDef, Variant)
-import Json (Json)
-import Result
+import Flow.Reflect (Reflected, TypeInfo, TypeDef, Variant)
+import Flow.Json (Json)
+import Flow.Result
 
 -- ---------------------------------------------------------------- reflection runtime
 foreign import js unsafe "__flow.host.reflectField" {

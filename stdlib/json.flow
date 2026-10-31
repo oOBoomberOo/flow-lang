@@ -1,3 +1,5 @@
+module Flow.Json where
+
 -- std::json — a `Json` value, an encoder and a decoder.
 --
 --   import Json (Json(..), encode, decodeSafe)
@@ -9,9 +11,9 @@
 -- Values keep their shape: objects become `JObject`, arrays `JList`, numbers
 -- `JNum`, strings `JStr`, booleans `JBool` and `null` `JNull`.
 
-import Dict
-import Result
-import String
+import Flow.Dict
+import Flow.Result
+import Flow.String
 
 data Json
   = JNull

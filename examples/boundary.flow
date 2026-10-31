@@ -1,3 +1,5 @@
+module Boundary where
+
 
 -- The `if` lives on the client (its branches produce Html, which is client-only).
 -- The then-branch contains a server computation, so the compiler cuts exactly

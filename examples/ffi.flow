@@ -1,3 +1,5 @@
+module Ffi where
+
 -- Everything here is std code on top of `unsafe extern js` — logging, timing
 -- and arithmetic are no longer compiler builtins.
 import Log (info, value)

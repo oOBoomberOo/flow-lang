@@ -95,6 +95,8 @@ function tmpFlow(src) {
 const uri = (file) => `file:///${path.resolve(file).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
 const GOOD = `
+module Main where
+
 main :: Html
 main = do
   let n = Client.state 0
@@ -105,7 +107,9 @@ main = do
   </div>
 `;
 
-const BAD = `main :: Html
+const BAD = `module Main where
+
+main :: Html
 main = <p>{1 + "a"}</p>
 `;
 

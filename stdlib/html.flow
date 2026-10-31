@@ -1,4 +1,4 @@
-module Html (classNames, text, Card, Badge, Page, Button, Items) where
+module Flow.Html (classNames, text, Card, Badge, Page, Button, Items) where
 
 -- std::html — markup helpers and ready-made components.
 classNames :: List Str -> Str

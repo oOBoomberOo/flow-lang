@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 /**
  * Exercises the IDE surface of the language server: completion, navigation,
@@ -82,7 +83,7 @@ function packageWith(files) {
   for (const [rel, src] of Object.entries(files)) {
     const f = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, src);
+    fs.writeFileSync(f, withModule(src, moduleNameFor(rel)));
   }
   return { root, entry: path.join(root, "src", "main.flow") };
 }
@@ -341,7 +342,7 @@ main = <p>{str (tally [1])}</p>`,
 
     const acts = await c.request("textDocument/codeAction", {
       textDocument: { uri: uri(entry) },
-      range: { start: { line: 2, character: 3 }, end: { line: 2, character: 3 } },
+      range: { start: { line: 4, character: 3 }, end: { line: 4, character: 3 } },
       context: { diagnostics: [] },
     });
     assert.ok(acts.some((a) => /Export 'helper' from this module/.test(a.title)), "make public");
@@ -351,7 +352,7 @@ main = <p>{str (tally [1])}</p>`,
 main = <p>{str (tally [1])}</p>
 `;
     const f3 = path.join(root, "src", "third.flow");
-    fs.writeFileSync(f3, bad);
+    fs.writeFileSync(f3, withModule(bad, "Third"));
     await open(c, f3);
     const fixes = await c.request("textDocument/codeAction", {
       textDocument: { uri: uri(f3) },
@@ -366,7 +367,7 @@ main = <p>{str (tally [1])}</p>
 
 test("lsp: every type error is reported, not just the first", async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "flow-multi-")), "main.flow");
-  fs.writeFileSync(file, `a :: () -> Int
+  fs.writeFileSync(file, withModule(`a :: () -> Int
 a () = 1 + "x"
 
 b :: () -> Int
@@ -374,7 +375,7 @@ b () = True + 1
 
 main :: Html
 main = <p>{"ok"}</p>
-`);
+`));
   const c = startServer();
   try {
     await c.request("initialize", { rootUri: null, capabilities: {} });
@@ -440,6 +441,89 @@ main = <div>
   } finally { c.proc.kill(); }
 });
 
+test("lsp: a missing module header is a diagnostic with a quick fix", async () => {
+  const { entry } = packageWith({ "main.flow": `main :: Html
+main = <p>{"x"}</p>
+` });
+  fs.writeFileSync(entry, `main :: Html
+main = <p>{"x"}</p>
+`);
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = fs.readFileSync(entry, "utf8");
+    c.notify("textDocument/didOpen", { textDocument: { uri: uri(entry), languageId: "flow", version: 1, text } });
+    const note = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+    const diags = note.params.diagnostics;
+    assert.ok(diags.some((d) => /must start with `module Main where`/.test(d.message)), JSON.stringify(diags));
+    const notes = await c.request("textDocument/codeAction", {
+      textDocument: { uri: uri(entry) },
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      context: { diagnostics: diags.map((d) => ({ message: d.message })) },
+    });
+    const add = notes.find((a) => /Add `module Main where`/.test(a.title));
+    assert.ok(add, JSON.stringify(notes.map((x) => x.title)));
+    const edits = Object.values(add.edit.changes)[0];
+    assert.equal(edits[0].newText, "module Main where\n\n");
+    assert.deepEqual(edits[0].range.start, { line: 0, character: 0 });
+    assert.ok(text.startsWith("main :: Html"), "the file really has no header");
+
+    // A wrong header gets a rename action instead.
+    const wrongText = `module Wrong where
+
+main :: Html
+main = <p>{"x"}</p>
+`;
+    c.notify("textDocument/didChange", {
+      textDocument: { uri: uri(entry), version: 2 },
+      contentChanges: [{ text: wrongText }],
+    });
+    const note2 = await c.waitFor((m) => m.method === "textDocument/publishDiagnostics"
+      && m.params.diagnostics.some((d) => /does not match this file/.test(d.message)));
+    const fixes = await c.request("textDocument/codeAction", {
+      textDocument: { uri: uri(entry) },
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      context: { diagnostics: note2.params.diagnostics.map((d) => ({ message: d.message })) },
+    });
+    const rename = fixes.find((a) => /Rename the module to `Main`/.test(a.title));
+    assert.ok(rename, JSON.stringify(fixes.map((x) => x.title)));
+    const renameEdits = Object.values(rename.edit.changes)[0];
+    assert.equal(renameEdits[0].newText, "Main");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: std modules complete under Flow.* and their short names", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = do
+  let a = Flow.
+  let b = Flow.List.
+  let c = List.
+  <p>{"x"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = async (needle, offset = 1, nth = 0) =>
+      c.request("textDocument/completion", {
+        textDocument: { uri: uri(entry) },
+        position: pos(text, needle, offset, nth),
+      });
+    const flow = await at("Flow.", 5);
+    const listMod = flow.items.find((i) => i.label === "List");
+    assert.ok(listMod, JSON.stringify(flow.items.map((i) => i.label)).slice(0, 400));
+    assert.equal(listMod.detail, "Flow.List");
+
+    const members = await at("Flow.List.", 10);
+    assert.ok(members.items.some((i) => i.label === "fold"), "Flow.List members");
+
+    const short = await at("List.", 5, 1);
+    assert.ok(short.items.some((i) => i.label === "fold"), "short List members");
+  } finally { c.proc.kill(); }
+});
+
 test("lsp: document links point at the imported module", async () => {
   const { entry } = packageWith({ "main.flow": MAIN, "util.flow": UTIL });
   const c = startServer();
@@ -479,7 +563,7 @@ rank p = case p of
     const td = await c.request("textDocument/typeDefinition", { textDocument: { uri: uri(entry) }, position: at });
     assert.ok(td, "type definition");
     assert.ok(td.uri.endsWith("util.flow"));
-    assert.match(text.split("\n")[0], /Priority/);
+    assert.ok(text.split("\n").some((l) => /Priority/.test(l)), "the imported type is in the source");
   } finally { c.proc.kill(); }
 });
 
@@ -537,7 +621,7 @@ main = <p>{str (hypot 3.0 4.0)}</p>
     const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
     assert.ok(def, "definition found");
     assert.equal(path.basename(new URL(def.uri).pathname), "main.flow");
-    assert.equal(def.range.start.line, 0);
+    assert.equal(def.range.start.line, text.split("\n").findIndex((l) => l.startsWith("foreign import")));
     const syms = await c.request("textDocument/documentSymbol", { textDocument: { uri: uri(entry) } });
     assert.ok(syms.some((s) => s.name === "hypot"), "extern appears in the outline");
   } finally { c.proc.kill(); }
@@ -579,12 +663,13 @@ main = do
     const local = await defAt("Local.ping", 1);
     assert.ok(local, "effect name has a definition");
     assert.equal(path.basename(new URL(local.uri).pathname), "main.flow");
-    assert.ok(local.range.start.line <= 1, 'the effect declaration');
+    const effLine = text.split("\n").findIndex((l) => l.startsWith("effect Local"));
+    assert.equal(local.range.start.line, effLine, 'the effect declaration');
 
     const ping = await defAt("ping ()", 1, 0);
     assert.ok(ping, "effect operation has a definition");
     assert.equal(path.basename(new URL(ping.uri).pathname), "main.flow");
-    assert.equal(ping.range.start.line, 1);
+    assert.equal(ping.range.start.line, effLine + 1);
 
     const typeDef = await c.request("textDocument/typeDefinition", {
       textDocument: { uri: uri(entry) },
@@ -986,8 +1071,10 @@ double x = x * 2
     });
     const mainEdits = Object.entries(res.changes).find(([u]) => u.endsWith("main.flow"))?.[1] ?? [];
     const utilEdits = Object.entries(res.changes).find(([u]) => u.endsWith("util.flow"))?.[1] ?? [];
-    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === 0), "import member renamed");
-    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === 3), "use renamed");
+    const importLine = text.split("\n").findIndex((l) => l.startsWith("import"));
+    const useLine = text.split("\n").findIndex((l) => l.includes("double 2"));
+    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === importLine), "import member renamed");
+    assert.ok(mainEdits.some((e) => e.newText === "triple" && e.range.start.line === useLine), "use renamed");
     assert.ok(utilEdits.some((e) => e.newText === "triple"), "declaration renamed");
     assert.ok(fs.existsSync(path.join(root, "src", "util.flow")));
   } finally { c.proc.kill(); }
@@ -1110,10 +1197,10 @@ main = <p>{"x"}</p>
   const c = startServer();
   try {
     await c.request("initialize", { rootUri: null, capabilities: {} });
-    await open(c, entry);
+    const text = await open(c, entry);
     const actions = await c.request("textDocument/codeAction", {
       textDocument: { uri: uri(entry) },
-      range: { start: { line: 0, character: 1 }, end: { line: 0, character: 1 } },
+      range: { start: pos(text, "answer ::", 1), end: pos(text, "answer ::", 1) },
       context: { diagnostics: [] },
     });
     const commands = actions.filter((a) => a.command).map((a) => a.command.command);

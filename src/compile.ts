@@ -90,7 +90,7 @@ export function compileProgram(
 /** A program that exists only in memory. It links exactly like a file, so
  *  `import List (map)` and `List.map` behave the same way they do on disk. */
 export function compileSource(src: string, file = "input.flow", opts: CompileOptions = {}): CompileResult {
-  const linked = new Linker({ recover: opts.recover }).linkSource(src, file);
+  const linked = new Linker({ recover: opts.recover, requireModule: false }).linkSource(src, file);
   const result = compileProgram(
     linked.program,
     linked.entry.file,

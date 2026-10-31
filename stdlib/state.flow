@@ -1,9 +1,11 @@
+module Flow.State where
+
 -- std::state — mutable state as an algebraic effect.
 --
 -- `State` suspends at `get`/`put`; `withState`/`runState` install a handler that
 -- keeps the current value in a local `Ref`, so the same code runs on the client
 -- or the server.
-import Ref (Ref, newRef)
+import Flow.Ref (Ref, newRef)
 
 algebraic effect State where
   get :: () -> Int

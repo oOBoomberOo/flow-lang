@@ -29,7 +29,7 @@ serveApi  :: List Route -> () @server  -- a server-only API
 ```
 
 ```flow
-import Http (RequestObject, serve, get, jsonResponse)
+import Flow.Http (RequestObject, serve, get, jsonResponse)
 
 main :: ()
 main = serve
@@ -70,7 +70,7 @@ that `matchPage` filled in.
 Pages are values, so a page table is an ordinary list:
 
 ```flow
-import Http (RequestObject, PageRoute, page, matchPage, pathParam, servePage)
+import Flow.Http (RequestObject, PageRoute, page, matchPage, pathParam, servePage)
 
 pages :: List PageRoute
 pages =
@@ -107,7 +107,7 @@ The page handler is a normal client callback, so it can use cells, events and
 components:
 
 ```flow
-import Http (servePage)
+import Flow.Http (servePage)
 
 main :: ()
 main = servePage (\_ ->
@@ -127,7 +127,7 @@ the browser bundle. Put server values behind a top-level server function or the
 Put server responses in the same app object:
 
 ```flow
-import Http (RequestObject, serve, get, post, jsonResponse, textResponse)
+import Flow.Http (RequestObject, serve, get, post, jsonResponse, textResponse)
 
 main :: ()
 main = serve
@@ -174,7 +174,7 @@ the reusable in-language dispatcher.
 `serveApi` takes the route list directly; it gets no browser page:
 
 ```flow
-import Http (serveApi, get, textResponse)
+import Flow.Http (serveApi, get, textResponse)
 
 main :: ()
 main = serveApi [ get "/api" (\_ -> textResponse "ok") ]

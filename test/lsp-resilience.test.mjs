@@ -99,7 +99,9 @@ const pos = (text, needle, offset = 1, nth = 0) => {
 };
 
 test("lsp: module-path completion works without imports", async () => {
-  const text = `main :: Html
+  const text = `module Main where
+
+main :: Html
 main = <p>{"x"}</p>
 
 probe :: Int
@@ -125,7 +127,9 @@ probe = List.
 });
 
 test("lsp: a syntax error keeps the other declarations analysable", async () => {
-  const text = `good :: () -> Int
+  const text = `module Main where
+
+good :: () -> Int
 good () = 2
 
 bad () = 1 +
@@ -165,7 +169,9 @@ main = <p>{str (good ())}</p>
 });
 
 test("lsp: a type error in one function keeps symbols and completion for the rest", async () => {
-  const text = `bad :: () -> Int
+  const text = `module Main where
+
+bad :: () -> Int
 bad () = "x"
 
 good :: () -> Int
@@ -201,7 +207,9 @@ main = <p>{str (good ())} {str (bad ())}</p>
 });
 
 test("lsp: a broken import keeps the file analysable", async () => {
-  const text = `import Nope.Missing (x)
+  const text = `module Main where
+
+import Nope.Missing (x)
 
 good :: () -> Int
 good () = 2
@@ -222,7 +230,9 @@ main = <p>{str (good ())}</p>
 });
 
 test("lsp: a burst of keystrokes is coalesced into one analysis", async () => {
-  const text = `main :: Html
+  const text = `module Main where
+
+main :: Html
 main = <p>{"x"}</p>
 `;
   const file = fileWith(text);
@@ -252,7 +262,9 @@ main = <p>{"x"}</p>
 });
 
 test("lsp: cell dot completion offers value/get/set/update", async () => {
-  const text = `main :: Html
+  const text = `module Main where
+
+main :: Html
 main = do
   let c = Client.state 0
   <p>{c.value}</p>

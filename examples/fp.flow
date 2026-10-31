@@ -1,3 +1,5 @@
+module Fp where
+
 -- Functional style: inferred lambda params, currying, pipes and combinators.
 import Fn (compose, flip, pipe, applyTwice)
 import List (filter, range)

@@ -1,4 +1,4 @@
-module List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
+module Flow.List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem) where
 
 -- std::list — list transforms, written in Flow itself. Operations take their
 -- function/index first and the list last, so `xs |> map f` works.

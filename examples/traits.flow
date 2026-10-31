@@ -1,3 +1,5 @@
+module Traits where
+
 -- Traits: type-directed dictionary dispatch, with a generic instance.
 type Money = { cents :: Int, currency :: Str }
 

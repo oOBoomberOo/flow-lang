@@ -1,4 +1,4 @@
-module Fs (FileInfo, Fs, readText, tryReadText, writeText, appendText, exists, listDir, makeDir, removeFile, removeDir, stat, tmpDir) where
+module Flow.Fs (FileInfo, Fs, readText, tryReadText, writeText, appendText, exists, listDir, makeDir, removeFile, removeDir, stat, tmpDir) where
 
 -- std::fs — server-side filesystem access.
 --

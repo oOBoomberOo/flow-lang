@@ -1,3 +1,5 @@
+module Flow.Iter where
+
 -- std::iter — the everyday list algorithms: enumerate, scan, partition, group.
 --
 -- These are the functions a program reaches for most often; `List` keeps the core

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile, compileSource } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -25,7 +26,7 @@ function emit(result, outDir) {
 async function withHost(source, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-alg-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, source);
+  fs.writeFileSync(entry, withModule(source));
   const result = compileFile(entry);
   const outDir = path.join(root, "build");
   emit(result, outDir);
@@ -272,14 +273,14 @@ main = <p>{str (f ())}</p>
 test("algebraic: an effectful callback needs an effect row on the consumer", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-alg-cb-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, `import State (State)
+  fs.writeFileSync(entry, withModule(`import State (State)
 
 f :: () -> List Int
 f () = map (\\(x :: Int) -> State.get () + x) [1]
 
 main :: Html
 main = <p>{str (f ())}</p>
-`);
+`));
   try {
     assert.throws(
       () => compileFile(entry),

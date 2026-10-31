@@ -1,8 +1,8 @@
-module Prelude (not, cons, Option(..), Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, Cell(..), at, makeCell, Functor, Applicative, Monad, Alternative) where
+module Flow.Prelude (not, cons, Option(..), Store, len, isEmpty, push, concat, head, tail, reverse, trim, upper, lower, split, replace, contains, join, chars, strLen, str, eq, neq, int, float, CellOps, Cell(..), at, makeCell, Functor, Applicative, Monad, Alternative) where
 
 -- the monad family is part of the prelude surface: `map`, `pure`, `return`,
 -- `bind` and `empty` are available without an import
-import Monad (Functor, Applicative, Monad, Alternative)
+import Flow.Monad (Functor, Applicative, Monad, Alternative)
 
 -- std::prelude — the language surface that used to be compiler-injected.
 --

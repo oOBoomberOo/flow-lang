@@ -10,8 +10,10 @@ provider needs. Where placements disagree, the compiler cuts the program into a 
 and a server bundle, and turns the seam into a wire.
 
 ```flow
-import Server
-import Client
+module Main where
+
+import Flow.Server
+import Flow.Client
 
 greeting :: Str -> Html
 greeting name = <p>{"Hello, " + name}</p>
@@ -39,8 +41,10 @@ plain app object: `page` is the client `Request -> Html` handler, and `routes` i
 a plain list of server response routes.
 
 ```flow
-import Http (RequestObject, PageRoute, serve, page, matchPage, get, jsonResponse)
-import Prelude (Store)
+module Main where
+
+import Flow.Http (RequestObject, PageRoute, serve, page, matchPage, get, jsonResponse)
+import Flow.Prelude (Store)
 
 pages :: List PageRoute
 pages =
@@ -69,12 +73,12 @@ See [docs/http.md](docs/http.md).
 
 `Reflect.meta value` returns `TypeInfo` metadata resolved from the static type:
 records, data constructors, lists, tuples, options, generics and recursive types.
-`std::serialize` uses that metadata for a JSON standard with paths in its errors.
+`Flow.Serialize` uses that metadata for a JSON standard with paths in its errors.
 
 ```flow
-import Reflect
-import Serialize
-import Result
+import Flow.Reflect
+import Flow.Serialize
+import Flow.Result
 
 type User = { name :: Str, tags :: List Str }
 
@@ -102,8 +106,8 @@ shape (tagged constructors, tuples, dictionaries, error paths and limits).
 ```flow
 module Shapes (Shape(..), area, main) where
 
-import List (filter)
-import Option as O
+import Flow.List (filter)
+import Flow.Option as O
 
 -- data, records and aliases
 data Shape = Circle Float | Rect Float Float
@@ -148,9 +152,9 @@ markup suspend layout, so multi-line literals just work.
 ## Modules are namespaces
 
 ```flow
-import Option (withDefault)
-import List as L
-import Http (get, Router, textResponse)
+import Flow.Option (withDefault)
+import Flow.List as L
+import Flow.Http (get, Router, textResponse)
 
 main :: Html
 main = <p>{str (withDefault 0 (map (\x -> x + 1) (Option.Some 3)))}</p>
@@ -158,12 +162,18 @@ main = <p>{str (withDefault 0 (map (\x -> x + 1) (Option.Some 3)))}</p>
 
 * `import Module (a, b)` brings names into scope.
 * `import Module as M` (or just mentioning `Module.x`) lets you write `M.x`.
-* Qualified names work **without any import**: `Option.withDefault`, `List.sortBy`,
-  `Http.textResponse`. The linker loads the module on demand and checks its export list.
+* Qualified names work **without any import**: `Flow.Option.withDefault`, `Flow.List.sortBy`,
+  `Flow.Http.textResponse`. The linker loads the module on demand and checks its export list.
   The monad family (`map`, `pure`, `return`, `empty`) comes from the prelude.
+* Every `.flow` file starts with a `module` header that mirrors its path:
+  `src/util.flow` is `module Util where`, `src/shapes/circle.flow` is `module Shapes.Circle where`.
+  A standalone script uses its file name (`hello.flow` is `module Hello where`).
+* The standard library lives under the reserved `Flow` namespace (`Flow.List`, `Flow.Http`, …).
+  Short names such as `List` and `Http` still resolve to std when no local or dependency module
+  claims them, and `Flow.List` always means the standard library.
 
-`module Name (exports) where` makes everything else private. A file without a header exports
-everything.
+`module Name (exports) where` makes everything else private; a module without an export list
+exports everything.
 
 ## Commands
 

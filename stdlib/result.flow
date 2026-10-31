@@ -1,3 +1,5 @@
+module Flow.Result where
+
 -- std::result — `Result a e`: a value that either succeeded (`Ok`) or failed (`Err`).
 --
 -- Use it for parsing and validation, where an error message must survive:

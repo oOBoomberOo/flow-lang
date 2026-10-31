@@ -44,7 +44,7 @@ main = <p>{nope}</p>`, /unbound name 'nope'/);
 
 test("an unbound serve points at the Http import", () => {
   bad(`main :: ()
-main = serve (\\_ -> <p>{"x"}</p>)`, /import Http \(serve\)/);
+main = serve (\\_ -> <p>{"x"}</p>)`, /import Flow\.Http \(serve\)/);
 });
 
 /* ------------------------- ADTs ------------------------- */

@@ -1,22 +1,24 @@
+module Main where
+
 -- Package entry: `use` resolves across packages and modules.
 -- Try importing `secretSauce` from demo::util — it is private and rejected.
 import Util (Priority, describe, priorities, priorityLabel)
-import List (map, range)
-import Math (sum, clamp)
-import String (padLeft, words)
-import Html (Card, Badge)
+import Flow.List (range)
+import Flow.Math (sum, clamp)
+import Flow.String (padLeft, words)
+import Flow.Html (Card, Badge)
 
 label :: Priority -> Html
 label p = <Badge label={priorityLabel p} />
 
 main :: Html
 main = do
-  let nums = map (range 6) (\(n :: Int) -> n * n)
+  let nums = map (\(n :: Int) -> n * n) (range 6)
   <Card title={"Modules & packages"}>
     <p class="sum">{"sum of squares: "} {sum nums}</p>
     <p class="clamp">{"clamped: "} {clamp 42 0 10}</p>
     <p class="words">{"words: "} {str (len (words "  flow is a   language "))}</p>
-    <p class="pad">{"padded: "} {padLeft "7" 3 "0"}</p>
-    {map (priorities ()) label}
+    <p class="pad">{"padded: "} {padLeft 3 "0" "7"}</p>
+    {map label (priorities ())}
     <p class="desc">{"describe: "} {describe High}</p>
   </Card>

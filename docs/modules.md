@@ -1,29 +1,41 @@
 # Flow — modules, packages and namespacing
 
 A **package** is a directory with a `flow.json` manifest and a `src/` tree of `.flow` files. A
-**module** is one file. Modules are namespaces: `Option`, `List`, `Http`, and so on.
+**module** is one file, and every file starts with a `module` header whose dotted name mirrors
+its path inside `src/`:
 
 ```
 flow.json
 src/
-  main.flow        -- the entry module (defines main, serve and/or routes)
-  util.flow        -- module Util
+  main.flow        module Main          -- the entry (defines main, serve and/or routes)
+  util.flow        module Util
   shapes/
-    circle.flow    -- module Shapes.Circle
+    circle.flow    module Shapes.Circle
 ```
+
+The header is mandatory and is checked against the path, so a moved or renamed file cannot keep
+a stale namespace. The standard library reserves the `Flow` namespace: `stdlib/list.flow` is
+`module Flow.List`, `stdlib/http.flow` is `module Flow.Http`, and so on.
 
 ## Importing
 
 ```flow
-import List                          -- every export, unqualified
-import List (filter)                 -- only this name
-import List (filter as keep)         -- renamed
-import List as L                     -- qualified only: L.filter
-import Flow.Charts.Bar (Chart)       -- nested module paths
+import Flow.List                     -- every export, unqualified
+import Flow.List (filter)            -- only this name
+import Flow.List (filter as keep)    -- renamed
+import Flow.List as L                -- qualified only: L.filter
+import FlowCharts.Bar (Chart)        -- a dependency's module
+```
+
+Short std names still work, so existing code keeps compiling:
+
+```flow
+import List (filter)                 -- the local/dependency List if one exists, otherwise Flow.List
 ```
 
 `import` never fails silently: a missing module, a missing name or a name missing from the
-module's export list is an error at the import line.
+module's export list is an error at the import line. When a module and the standard library share
+a short name, the local/dependency module wins; write `Flow.List` to reach std unambiguously.
 
 ## Namespaces
 
@@ -31,16 +43,17 @@ Every public declaration can also be reached through its module qualifier, **wit
 import**:
 
 ```flow
-let sorted = List.sortBy (\a b -> a - b) [3, 1, 2]
+let sorted = Flow.List.sortBy (\a b -> a - b) [3, 1, 2]
 let o = map (\x -> x + 1) (Option.Some 1)
 let f = Option.withDefault "fallback" Option.None
 ```
 
 The linker sees the qualifier, loads the module on demand, checks visibility and rewrites the
-reference to the declaration. Members of the injected prelude are reachable through their
-conventional module, so `Option.Some` and `Option.None` work even though the `Option` type
-itself lives in the prelude; the monad family (`map`, `pure`, `return`, `bind`, `empty`) is
-part of the prelude surface as well.
+reference to the declaration. `List`, `Math`, `Http` and the other short std names keep working
+when no local module claims them; `Flow.*` always names the standard library. Members of the
+injected prelude are reachable through their conventional module, so `Option.Some` and
+`Option.None` work even though the `Option` type itself lives in the prelude; the monad family
+(`map`, `pure`, `return`, `bind`, `empty`) is part of the prelude surface as well.
 
 Qualified references work for values, constructors, effects, traits and types:
 
@@ -74,7 +87,7 @@ secretSauce :: () -> Str         -- private to this file
 secretSauce () = "sssh"
 ```
 
-A file **without** a header exports everything. `data Shape (..)` exports the type and all its
+A module with no export list exports everything. `data Shape (..)` exports the type and all its
 constructors; `data Shape (Circle)` exports only that constructor.
 
 Importing a private name reports:
@@ -91,9 +104,23 @@ Referencing a private name through the qualifier reports:
 
 ## Module names
 
-A file's qualifier is its path with each segment capitalised: `list.flow` → `List`,
-`http/response.flow` → `Http.Response`, `flow-charts/bar.flow` → `FlowCharts.Bar` (a package's
-own name joins the path). Hyphenated package names are fine.
+A file's qualifier is its path under `src/` with each segment capitalised, and the header must
+match it exactly:
+
+| file | header |
+|---|---|
+| `src/util.flow` | `module Util where` |
+| `src/shapes/circle.flow` | `module Shapes.Circle where` |
+| `src/main.flow` | `module Main where` |
+| a dependency `flow-charts/src/bar.flow` | `module Bar where` (displayed/imported as `FlowCharts.Bar`) |
+| `stdlib/list.flow` | `module Flow.List where` |
+
+A standalone file compiled outside a package (a script, an example) uses its own file name:
+`hello.flow` is `module Hello where`; `main.flow` is `module Main where`. Hyphenated and
+underscored segments become one capitalised word (`flow-charts/bar.flow` → `FlowCharts.Bar`).
+
+The `Flow` root is reserved for the standard library, so `import Flow.List` and
+`Flow.List.sortBy` always mean std even if a project defines its own `List` module.
 
 ## Packages
 
@@ -185,11 +212,19 @@ flow add tool git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0
 
 ## The prelude
 
-`std/prelude.flow` is injected into every module with the lowest priority: its declarations are
-available unqualified (`str`, `len`, `Some`, `None`, `True`, `False`, `not`, `concat`, `push`, …)
-and through the `Option` / `List` namespaces. A unit's own declarations and imports win.
+`stdlib/prelude.flow` (`module Flow.Prelude`) is injected into every module with the lowest
+priority: its declarations are available unqualified (`str`, `len`, `Some`, `None`, `True`,
+`False`, `not`, `concat`, `push`, …) and through the `Option` namespace. A unit's own
+declarations and imports win.
 
-The standard library ships as modules: `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `Math`, `Random`, `String`, `Html`, `Log`, `Time`, `Path`, `Env`, `Http`, `Net`, `Fs`, `State`, `Exn`, `Ref`, `Cell`, `Client`, `Server`, `Monad`, `Fn`, `Json`, `Reflect` and `Serialize`. The full catalogue is in [`language.md`](language.md) § 7.1; reflection and JSON are in [`serialize.md`](serialize.md).
+The standard library ships as modules under the reserved `Flow` namespace: `Flow.List`,
+`Flow.Iter`, `Flow.Dict`, `Flow.Set`, `Flow.Tuple`, `Flow.Option`, `Flow.Result`, `Flow.Math`,
+`Flow.Random`, `Flow.String`, `Flow.Html`, `Flow.Log`, `Flow.Time`, `Flow.Path`, `Flow.Env`,
+`Flow.Http`, `Flow.Net`, `Flow.Fs`, `Flow.State`, `Flow.Exn`, `Flow.Ref`, `Flow.Cell`,
+`Flow.Client`, `Flow.Server`, `Flow.Monad`, `Flow.Fn`, `Flow.Json`, `Flow.Reflect` and
+`Flow.Serialize`. Short names (`List`, `Math`, …) still resolve to these modules when nothing
+local claims them. The full catalogue is in [`language.md`](language.md) § 7.1; reflection and
+JSON are in [`serialize.md`](serialize.md).
 
 ## Everything is ordinary Flow
 
@@ -204,8 +239,10 @@ server-side state can be initialised there. `serve` takes a plain app object wit
 a browser page handler and a server route list:
 
 ```flow
-import Http (RequestObject, serve, page, matchPage, PageRoute, get, jsonResponse)
-import Prelude (Store)
+module Main where
+
+import Flow.Http (RequestObject, serve, page, matchPage, PageRoute, get, jsonResponse)
+import Flow.Prelude (Store)
 
 pages :: List PageRoute
 pages = [ page "/" (\_ -> <h1>{"Home"}</h1>) ]

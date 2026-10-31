@@ -1,3 +1,5 @@
+module Flow.Set where
+
 -- std::set — a persistent set over a sorted list.
 --
 -- Like Dict, the operations take the element comparison, so any type works.

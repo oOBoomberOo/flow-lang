@@ -1,7 +1,7 @@
-module Random (int, bool, chance, pick) where
+module Flow.Random (int, bool, chance, pick) where
 
 -- std::random — uniform helpers over the FFI-backed random source in std::math.
-import Math (random, floor, clamp)
+import Flow.Math (random, floor, clamp)
 
 -- / Uniform integer in [lo, hi]. Returns lo when the range is empty.
 int :: Int -> Int -> Int

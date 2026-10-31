@@ -42,6 +42,8 @@ export interface SourceUnit {
   pkg: string;
   pkgObj: Package;
   modulePath: string[];
+  /** declared module name (`Flow.List`), or the path-derived name in lenient mode */
+  moduleName: string[];
   file: string;
   program: Program;
   /** names this unit declares (simple names) */
@@ -53,11 +55,15 @@ export interface SourceUnit {
 const decap = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const cap = (s: string) => s.split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
 
-/** `std::list` -> `List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
-export function moduleDisplayName(unit: { pkg: string; modulePath: string[] }, currentPkg?: string): string {
-  const segs = unit.modulePath.map(cap);
-  if (unit.pkg === "std" || unit.pkg === currentPkg || unit.pkg === "main") return segs.join(".");
-  return [cap(unit.pkg), ...segs].join(".");
+/** `std::list` -> `Flow.List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
+export function moduleDisplayName(
+  unit: { pkg: string; modulePath: string[]; moduleName?: string[] },
+  currentPkg?: string,
+): string {
+  const declared = unit.moduleName
+    ?? (unit.pkg === "std" ? ["Flow", ...unit.modulePath.map(cap)] : unit.modulePath.map(cap));
+  if (unit.pkg === "std" || unit.pkg === currentPkg || unit.pkg === "main") return declared.join(".");
+  return [cap(unit.pkg), ...declared].join(".");
 }
 
 export type SymKind = "function" | "type" | "constructor" | "trait" | "effect" | "record" | "alias";
@@ -129,6 +135,8 @@ export function readManifest(dir: string): Manifest | null {
 /** Find the package containing `file` (walks up to a flow.json). */
 export function loadPackage(entryFile: string): Package {
   const abs = path.resolve(entryFile);
+  // A std file is part of the Flow namespace even when opened directly.
+  if (abs === STDLIB_DIR || abs.startsWith(STDLIB_DIR + path.sep)) return stdPackage();
 
   if (path.basename(abs) === "flow.json") {
     return packageAt(path.dirname(abs));
@@ -220,12 +228,15 @@ export class Linker {
   recover: boolean;
   /** editor mode: preload every std module so path completion works */
   allStd: boolean;
+  /** require every real .flow file to start with a matching `module A.B where` */
+  requireModule: boolean;
   errors: FlowError[] = [];
 
-  constructor(opts: { overlay?: Map<string, string>; recover?: boolean; allStd?: boolean } = {}) {
+  constructor(opts: { overlay?: Map<string, string>; recover?: boolean; allStd?: boolean; requireModule?: boolean } = {}) {
     this.overlay = opts.overlay ?? new Map();
     this.recover = Boolean(opts.recover);
     this.allStd = Boolean(opts.allStd);
+    this.requireModule = opts.requireModule !== false;
   }
 
   private read(file: string): string {
@@ -239,7 +250,7 @@ export class Linker {
     this.errors = [];
     const pkg = loadPackage(entryFile);
     const rel = pkg.singleFile
-      ? ["main"]
+      ? [path.basename(pkg.singleFile, ".flow")]
       : path.relative(pkg.srcDir, path.resolve(entryFile)).replace(/\.flow$/, "").split(/[\\/]/);
     return this.linkUnit(pkg, rel);
   }
@@ -307,13 +318,26 @@ export class Linker {
     const src = this.read(file);
     const program = parse(src, file, { recover: this.recover });
     if (program.errors?.length) this.errors.push(...program.errors);
+    const expected = this.expectedModuleName(pkg, modulePath);
+    if (this.requireModule) {
+      if (!program.module) {
+        this.reportModule(file, `every .flow file must start with \`module ${expected.join(".")} where\``);
+      } else if (program.module.join(".") !== expected.join(".")) {
+        this.reportModule(
+          file,
+          `module '${program.module.join(".")}' does not match this file; expected \`module ${expected.join(".")} where\``,
+          program.moduleSpan,
+        );
+      }
+    }
+    const moduleName = program.module ?? expected;
     const declares = new Map<string, Decl>();
     for (const d of program.decls) {
       if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
       declares.set(d.k === "Extern" ? d.sig.name : d.name, d);
       if (d.k === "Adt") for (const v of d.variants) declares.set(v.name, d);
     }
-    const unit: SourceUnit = { id, pkg: pkg.name, pkgObj: pkg, modulePath, file, program, declares, quals: new Map() };
+    const unit: SourceUnit = { id, pkg: pkg.name, pkgObj: pkg, modulePath, moduleName, file, program, declares, quals: new Map() };
     this.units.set(id, unit);
 
     // eagerly load imported modules so cycles work
@@ -336,11 +360,29 @@ export class Linker {
     return unit;
   }
 
-  /** `["List"]` / `["Shapes","Circle"]` / `["FlowCharts","Bar"]` -> the module file's package and path. */
+  /** `Flow.List` for std, `Shapes.Circle` for `src/shapes/circle.flow`. */
+  private expectedModuleName(pkg: Package, modulePath: string[]): string[] {
+    return pkg.name === "std"
+      ? ["Flow", ...modulePath.map(cap)]
+      : modulePath.map(cap);
+  }
+
+  private reportModule(file: string, msg: string, span?: { line?: number; col?: number }): void {
+    const err = new FlowError(msg, { file, line: span?.line ?? 1, col: span?.col ?? 1, code: "E_MODULE" });
+    if (this.recover) this.errors.push(err);
+    else throw err;
+  }
+
+  /** `["List"]` / `["Flow","List"]` / `["Shapes","Circle"]` / `["FlowCharts","Bar"]` -> the module file's package and path. */
   private findModule(pkg: Package, parts: string[]): { pkg: Package; modulePath: string[] } | null {
     const exists = (p: Package, mp: string[]) => {
       try { return mp.length > 0 && fs.existsSync(MODULE_FILE(p, mp)); } catch { return false; }
     };
+    // `Flow.*` is reserved for the standard library.
+    if (parts[0] === "Flow") {
+      const rest = parts.slice(1).map(decap);
+      return rest.length && exists(stdPackage(), rest) ? { pkg: stdPackage(), modulePath: rest } : null;
+    }
     const lower = parts.map(decap);
     // a lone file is a whole program: its neighbours in the directory are not modules
     if (!pkg.singleFile && exists(pkg, lower)) return { pkg, modulePath: lower };
@@ -349,6 +391,8 @@ export class Linker {
         return { pkg: dep, modulePath: lower.slice(1) };
       }
     }
+    // Short std names still work (`List`), but a local/dependency module with
+    // the same name wins; `Flow.List` is the unambiguous spelling.
     const std = stdPackage();
     if (exists(std, lower)) return { pkg: std, modulePath: lower };
     return null;
@@ -583,10 +627,15 @@ export class Linker {
       const values = new Map<string, string>();
       const types = new Map<string, string>();
       const unitName = moduleDisplayName(u, this.entry.pkg);
+      // Option is declared in the injected prelude but belongs to Flow.Option.
+      const displayFor = (n: string) =>
+        u.pkg === "std" && u.modulePath[0] === "prelude" && (n === "Option" || n === "None" || n === "Some")
+          ? `Flow.Option.${n}`
+          : `${unitName}.${n}`;
       for (const [n, d] of u.declares) {
         const final = finalName.get(`${u.id}::${n}`);
         if (!final) continue;
-        display.set(final, `${unitName}.${n}`);
+        display.set(final, displayFor(n));
         if (d.k === "Adt" || d.k === "RecordType" || d.k === "Alias") types.set(n, final);
         if (d.k === "Adt") for (const v of d.variants) values.set(v.name, finalName.get(`${u.id}::${v.name}`)!);
         if (d.k === "Fn" || d.k === "Extern" || d.k === "Trait" || d.k === "Effect") values.set(n, final);

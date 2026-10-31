@@ -1,3 +1,5 @@
+module Modules where
+
 -- Modules are namespaces: qualified names work without an import, and
 -- `import Module (name)` / `import Module as M` bring names into scope.
 --

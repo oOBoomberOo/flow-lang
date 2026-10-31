@@ -1,3 +1,5 @@
+module Algebraic where
+
 import State (withState, runState, State)
 import Exn (attempt, recoverWith, fail, recover, Exn)
 import String (length)

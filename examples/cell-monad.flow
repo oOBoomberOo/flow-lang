@@ -1,3 +1,5 @@
+module CellMonad where
+
 -- Cells are monads.
 --
 -- A cell can be read in a do block with `<-`, written with `:=` / `+=`, and a

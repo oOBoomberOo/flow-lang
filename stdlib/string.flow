@@ -1,4 +1,4 @@
-module String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower) where
+module Flow.String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower) where
 
 -- std::string
 --

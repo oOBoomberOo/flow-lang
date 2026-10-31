@@ -16,8 +16,8 @@ import { analyze, findNodeAt, readSource, offsetToPosition, spanRange, stdModule
 import { parse } from "../parser.ts";
 import { moduleDisplayName } from "../modules.ts";
 
-/** `std::list` -> `List` for the cheap std index, which carries only ids. */
-const moduleNameOf = (m: { id: string }) => m.id.split("::").slice(1).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
+/** `std::list` -> `Flow.List` for the cheap std index, which carries only ids. */
+const moduleNameOf = (m: { id: string }) => "Flow." + m.id.split("::").slice(1).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
 import type { Token } from "../lexer.ts";
@@ -887,15 +887,29 @@ function completion(file: string, pos: Position) {
     // to `Module.` (private helpers stay inside their module)
     for (const s of a?.symbols ?? []) {
       if (!s.public && s.unit !== curUnit?.id) continue;
-      if (!s.display.startsWith(q)) continue;
-      const rest = s.display.slice(q.length);
+      const short = s.display.startsWith("Flow.") ? s.display.slice(5) : null;
+      const display = s.display.startsWith(q) ? s.display : short && short.startsWith(q) ? short : null;
+      if (!display) continue;
+      const rest = display.slice(q.length);
       if (!rest || rest.includes(".")) continue;
       add(s.name, symbolKind(s.kind), s.display, "0");
     }
-    // std modules the program has not imported yet come from the cheap index
+    // `Flow.` lists the std modules; `Flow.Li` narrows them.
+    if (q === "Flow.") {
+      for (const m of modules) {
+        const disp = moduleNameOf(m);
+        const rest = disp.slice(q.length);
+        if (!rest || rest.includes(".")) continue;
+        add(rest, 9, disp, "1");
+      }
+      if (items.length) return { isIncomplete: false, items };
+    }
+    // std modules the program has not imported yet come from the cheap index,
+    // under either `Flow.List.` or the short `List.`.
     for (const m of modules) {
       const disp = moduleNameOf(m);
-      if (`${disp}.` !== q) continue;
+      const short = disp.startsWith("Flow.") ? disp.slice(5) : disp;
+      if (`${disp}.` !== q && `${short}.` !== q) continue;
       for (const mem of m.members) add(mem.name, symbolKind(mem.kind), `${disp}.${mem.name}`, "0");
     }
     return { isIncomplete: false, items };
@@ -1342,6 +1356,46 @@ function codeActions(file: string, range: Range, diagnostics: { message: string 
   const actions: unknown[] = [];
   const text = textOf(file);
   const lines = text.split("\n");
+
+  // Missing or wrong module header: offer the exact declaration the path wants.
+  for (const d of diagnostics ?? []) {
+    const missing = /must start with `module ([A-Za-z0-9_.]+) where`/.exec(d.message);
+    if (missing) {
+      actions.push({
+        title: `Add \`module ${missing[1]} where\``,
+        kind: "quickfix",
+        edit: {
+          changes: {
+            [pathToUri(file)]: [{
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+              newText: `module ${missing[1]} where\n\n`,
+            }],
+          },
+        },
+      });
+      break;
+    }
+    const wrong = /module '[^']+' does not match this file; expected `module ([A-Za-z0-9_.]+) where`/.exec(d.message);
+    const header = /^(\s*module\s+)([A-Z][A-Za-z0-9_.]*)/.exec(lines[0] ?? "");
+    if (wrong && header) {
+      actions.push({
+        title: `Rename the module to \`${wrong[1]}\``,
+        kind: "quickfix",
+        edit: {
+          changes: {
+            [pathToUri(file)]: [{
+              range: {
+                start: { line: 0, character: header[1]!.length },
+                end: { line: 0, character: header[1]!.length + header[2]!.length },
+              },
+              newText: wrong[1]!,
+            }],
+          },
+        },
+      });
+      break;
+    }
+  }
 
   // "make it public": the declaration whose span covers the cursor line
   const startLine = range?.start?.line ?? 0;

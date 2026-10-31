@@ -1,3 +1,5 @@
+module Lists where
+
 -- Sorting and searching are std functions over the FFI (`@sort`), not compiler
 -- intrinsics: the host sorts, the compiler never sees a special case.
 import List (sortInts, sortStrings, contains, indexOfItem, sortBy)

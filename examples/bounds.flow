@@ -1,3 +1,5 @@
+module Bounds where
+
 -- Generic trait bounds and dictionary dispatch.
 --
 -- `Show<a>` is implemented for Int, Str and — with a bound — for List<a>.

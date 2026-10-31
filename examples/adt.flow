@@ -1,3 +1,5 @@
+module Adt where
+
 -- Algebraic data types, pattern matching, and exhaustiveness checking.
 data Shape = Circle Float | Rect Float Float | Triangle Float Float Float
 

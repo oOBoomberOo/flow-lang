@@ -1,3 +1,5 @@
+module Flow.Option where
+
 -- std::option
 withDefault :: a -> Option a -> a
 withDefault fallback o = case o of

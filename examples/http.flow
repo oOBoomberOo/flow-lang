@@ -1,3 +1,5 @@
+module Http where
+
 -- std::http — request and routing effect capabilities, provided by the host.
 --
 -- `routes()` is called once at server startup. `Request` is an effect

@@ -6,6 +6,7 @@ import path from "node:path";
 import { compileSource } from "../src/compile.ts";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -26,7 +27,7 @@ function emit(result, outDir) {
 async function withHost(source, fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-cm-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, source);
+  fs.writeFileSync(entry, withModule(source));
   const result = compileFile(entry);
   const outDir = path.join(root, "build");
   emit(result, outDir);
@@ -149,7 +150,7 @@ main = <p>{"monads"}</p>
 function compileInTemp(src, name = "main.flow") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-cm-src-"));
   const file = path.join(dir, name);
-  fs.writeFileSync(file, src);
+  fs.writeFileSync(file, withModule(src, moduleNameFor(name)));
   try {
     return compileFile(file);
   } finally {

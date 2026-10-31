@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -25,7 +26,7 @@ function emit(result, outDir) {
 async function withHost(source, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-q-"));
   const file = path.join(dir, "main.flow");
-  fs.writeFileSync(file, source);
+  fs.writeFileSync(file, withModule(source));
   const result = compileFile(file);
   const outDir = path.join(dir, "build");
   emit(result, outDir);
@@ -44,7 +45,7 @@ function packageWith(files) {
   for (const [rel, src] of Object.entries(files)) {
     const f = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, src);
+    fs.writeFileSync(f, withModule(src, moduleNameFor(rel)));
   }
   return { root, entry: path.join(root, "src", "main.flow") };
 }
@@ -133,6 +134,6 @@ main = do
   });
   assert.throws(
     () => compileFile(missing.entry),
-    /module List has no member 'nope'/,
+    /module Flow.List has no member 'nope'/,
   );
 });

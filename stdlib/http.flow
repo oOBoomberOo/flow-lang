@@ -1,7 +1,7 @@
-module Http (RequestObject, Response, Handler, Route, Page, PageRoute, AppConfig, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch, serve, servePage, serveApi, page, pagePost, pagePut, pagePatch, pageDelete, matchPath, matchPage) where
+module Flow.Http (RequestObject, Response, Handler, Route, Page, PageRoute, AppConfig, Request, Router, textResponse, htmlResponse, jsonResponse, withStatus, withHeader, redirect, notFoundResponse, route, get, post, put, patch, del, queryParam, pathParam, header, dispatch, serve, servePage, serveApi, page, pagePost, pagePut, pagePatch, pageDelete, matchPath, matchPage) where
 
-import List (filter, length)
-import String (startsWith)
+import Flow.List (filter, length)
+import Flow.String (startsWith)
 
 -- std::http — request/response data, request and routing capabilities, and
 -- easy route construction. Everything here is ordinary Flow over host

@@ -1,3 +1,5 @@
+module Flow.Exn where
+
 -- std::exn — abortive algebraic effects.
 --
 -- `Exn.fail` suspends; a handler may resume (recovering) or return a fallback,

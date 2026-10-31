@@ -1,3 +1,5 @@
+module Web where
+
 -- A multi-page app with the server-first entry model.
 --
 -- `main :: ()` runs exactly once on the server, before any request: that is

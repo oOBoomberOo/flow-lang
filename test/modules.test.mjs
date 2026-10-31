@@ -6,6 +6,7 @@ import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { install, verifyLock, satisfies, bestVersion, add } from "../src/pkg.ts";
 import { FlowError } from "../src/lexer.ts";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 // The package tests use the registry that ships with this repo, not the network.
 process.env.FLOW_REGISTRY = path.join(import.meta.dirname, "..", "registry");
@@ -17,7 +18,7 @@ function packageWith(files, deps = {}) {
   for (const [rel, src] of Object.entries(files)) {
     const file = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, src);
+    fs.writeFileSync(file, withModule(src, moduleNameFor(rel)));
   }
   return { root, entry: path.join(root, "src", "main.flow") };
 }
@@ -74,6 +75,59 @@ main :: Html
 main = <p>{"x"}</p>`,
   });
   assert.throws(() => compileFile(entry), /not found/);
+});
+
+test("modules: every file must declare the module its path names", () => {
+  const { root, entry } = packageWith({
+    "main.flow": `import Util (x)
+
+main :: Html
+main = <p>{str x}</p>`,
+    "util.flow": `x :: Int
+x = 1`,
+  });
+  const util = path.join(root, "src", "util.flow");
+  fs.writeFileSync(util, fs.readFileSync(util, "utf8").replace(/^module [^\n]*\n\n/, ""));
+  assert.throws(() => compileFile(entry), /every \.flow file must start with `module Util where`/);
+
+  fs.writeFileSync(util, `module Wrong where
+
+x :: Int
+x = 1
+`);
+  assert.throws(() => compileFile(entry), /module 'Wrong' does not match this file; expected `module Util where`/);
+});
+
+test("modules: std is namespaced under Flow", () => {
+  const { entry } = packageWith({
+    "main.flow": `import Flow.List (range)
+
+main :: Html
+main = <p>{str (Flow.List.fold Math.maxInt 0 (range 4))}</p>`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /function main/);
+
+  const bad = packageWith({
+    "main.flow": `import Flow.List (nope)
+
+main :: Html
+main = <p>{"x"}</p>`,
+  });
+  assert.throws(() => compileFile(bad.entry), /'nope' is not exported by module Flow.List/);
+});
+
+test("modules: a local module may reuse a std name; Flow.List stays std", () => {
+  const { entry } = packageWith({
+    "main.flow": `import List (value)
+
+main :: Html
+main = <p>{str value}{str (Flow.List.fold Math.maxInt 0 (Flow.List.range 3))}</p>`,
+    "list.flow": `value :: Int
+value = 7`,
+  });
+  const r = compileFile(entry);
+  assert.match(r.client, /function main/);
 });
 
 test("modules: a missing export is reported", () => {
@@ -260,11 +314,11 @@ Bar props = <div class="bar-fill">{"bar"}</div>
     registry: { path: "./registry" },
   }, null, 2));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "src", "main.flow"), `import FlowCharts.Bar (Bar)
+  fs.writeFileSync(path.join(dir, "src", "main.flow"), withModule(`import FlowCharts.Bar (Bar)
 
 main :: Html
 main = <div><Bar label={"a"} value={2} max={4} /></div>
-`);
+`));
   install(dir);
   const r = compileFile(path.join(dir, "src", "main.flow"));
   assert.match(r.client, /bar-fill/);
@@ -276,8 +330,8 @@ test("packages: missing dependency produces an actionable error", () => {
     name: "consumer", version: "0.1.0", dependencies: { "flow-charts": "^1.0.0" },
   }, null, 2));
   fs.mkdirSync(path.join(dir, "src"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "src", "main.flow"), `main :: Html
-main = <p>{"x"}</p>`);
+  fs.writeFileSync(path.join(dir, "src", "main.flow"), withModule(`main :: Html
+main = <p>{"x"}</p>`));
   assert.throws(() => compileFile(path.join(dir, "src", "main.flow")), /flow install/);
 });
 

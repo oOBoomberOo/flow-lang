@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileSource, compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -159,14 +160,14 @@ main = do
 test("callback UX: a callback value that must cross still fails clearly", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-ux-err-"));
   const file = path.join(dir, "main.flow");
-  fs.writeFileSync(file, `make :: () -> () -> Int
+  fs.writeFileSync(file, withModule(`make :: () -> () -> Int
 make () = \\() -> Server.now ()
 
 main :: Html
 main = do
   let f = make ()
   <p>{str (f ())}</p>
-`);
+`));
   try {
     assert.throws(() => compileFile(file), (e) => {
       assert.match(e.message, /cannot cross the/);

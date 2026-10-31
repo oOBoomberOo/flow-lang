@@ -1,4 +1,4 @@
-module Log (info, warn, error, debug, value) where
+module Flow.Log (info, warn, error, debug, value) where
 
 -- std::log — logging through the host console, built on the FFI.
 --

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { parse } from "../src/parser.ts";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 /**
  * The FFI/std end-state:
@@ -22,7 +23,7 @@ function packageWith(files) {
   for (const [rel, src] of Object.entries(files)) {
     const file = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, src);
+    fs.writeFileSync(file, rel.endsWith(".flow") ? withModule(src, moduleNameFor(rel)) : src);
   }
   return { root, entry: path.join(root, "src", "main.flow") };
 }

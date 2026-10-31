@@ -10,7 +10,7 @@ import type {
 } from "./ast.ts";
 
 export interface PrintOptions {
-  /** module name for the `module X (...) where` header (only written when something is private) */
+  /** module name when the source has no parsed header (used by migrate) */
   moduleName?: string;
   /** comment lines to emit above the declaration that starts on a given line */
   comments?: Map<number, string[]>;
@@ -389,10 +389,14 @@ export function printProgram(p: Program, opts: PrintOptions = {}): string {
   const allPublic = exportable.every((d) => (d as { pub: boolean }).pub);
   // a module that exports nothing explicitly (no `pub` anywhere) exports everything
   const anyPublic = exportable.some((d) => (d as { pub: boolean }).pub);
-  const hasModuleHeader = anyPublic && !allPublic;
-  if (hasModuleHeader) {
+  const hasExportList = anyPublic && !allPublic;
+  // Every file has a header now; keep the declared name when the source has one.
+  const moduleName = p.module?.join(".") ?? opts.moduleName ?? "Main";
+  if (hasExportList) {
     const names = exportable.filter((d) => (d as { pub: boolean }).pub).map((d) => exportName(d)!);
-    out.push(`module ${opts.moduleName ?? "Main"} (${names.join(", ")}) where\n`);
+    out.push(`module ${moduleName} (${names.join(", ")}) where\n`);
+  } else {
+    out.push(`module ${moduleName} where\n`);
   }
 
   let prevUse = false;

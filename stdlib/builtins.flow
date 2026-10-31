@@ -1,5 +1,7 @@
+module Flow.Builtins where
+
 // Flow built-in types. This file is documentation for editor navigation; it is
-// not imported by programs and is not compiled as a module.
+// not imported by programs and is skipped by the linker.
 //
 // Html — client-rendered markup tree
 // Int — integer

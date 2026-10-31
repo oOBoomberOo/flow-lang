@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 /**
  * End-to-end HTTP capability tests: the std::http Request/Router effects are
@@ -90,14 +91,14 @@ test("http: the client bundle and runtime remain served", async () => {
 test("http: dispatch is a reusable in-language capability handler", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-http-handle-"));
   const file = path.join(root, "main.flow");
-  fs.writeFileSync(file, `import Http (get, dispatch, RequestObject, Response, textResponse)
+  fs.writeFileSync(file, withModule(`import Http (get, dispatch, RequestObject, Response, textResponse)
 
 main :: Html
 main = do
   let routes = [get "/x" (\\(req :: RequestObject) -> textResponse req.path)]
   let request = { method = "GET", path = "/x", query = "", body = "", headers = [], params = [] }
   <p>{(dispatch routes request).body}</p>
-`);
+`));
   const r = compileFile(file);
   assert.deepEqual(r.diagnostics, []);
   assert.ok(r.client.includes("dispatch("), "the pure handler is compiled");

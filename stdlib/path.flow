@@ -1,4 +1,4 @@
-module Path (join, basename, dirname, extension, normalize, isAbsolute, separator) where
+module Flow.Path (join, basename, dirname, extension, normalize, isAbsolute, separator) where
 
 -- std::path — portable path manipulation, neutral (works on both sides).
 

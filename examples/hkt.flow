@@ -1,3 +1,5 @@
+module Hkt where
+
 -- The Functor / Applicative / Monad family lives in std::monad and is
 -- re-exported by the prelude. `map` dispatches on the receiver's type
 -- constructor, so the same call works for List and Option.

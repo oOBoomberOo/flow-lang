@@ -1,3 +1,5 @@
+module Stdlib where
+
 -- The standard library as a one-stop toolkit: containers, results, iteration,
 -- JSON, time, paths and the environment — no FFI needed.
 

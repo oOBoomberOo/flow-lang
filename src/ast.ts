@@ -112,4 +112,12 @@ export type Decl =
     }
   | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
 
-export interface Program { decls: Decl[]; file: string; errors?: FlowError[] }
+export interface Program {
+  decls: Decl[];
+  file: string;
+  errors?: FlowError[];
+  /** the declared `module A.B.C` name, when the file has one */
+  module?: string[];
+  /** the `module` token span, for diagnostics */
+  moduleSpan?: Span;
+}

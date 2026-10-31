@@ -5,7 +5,7 @@
    (smaller column). Brackets, list literals, records and `{expr}` holes suspend
    layout. *)
 
-program         = [ module-header ] { declaration } ;
+program         = module-header { declaration } ;
 module-header   = 'module' module-name [ '(' export-list ')' ] 'where' ;
 module-name     = con { '.' con } ;
 export-list     = export { ',' export } ;

@@ -320,7 +320,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         const start = offsetToPosition(builtins, at);
         symbols.push({
           name,
-          display: `std::builtins::${name}`,
+          display: `Flow.Builtins.${name}`,
           finalName: name,
           kind: "type",
           file: builtinsFile,
@@ -337,7 +337,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       for (const [name, fn] of result.mod.fns) {
         if (fn.synthetic) continue;
         const origin = result.display?.get(name) ?? name;
-        if (origin.startsWith("std::")) continue;
+        if (origin.startsWith("std::") || origin.startsWith("Flow.")) continue;
         const h = result.codegen.home(fn.body);
         if (h === "neutral") continue;
         const src = srcFor(fn.body.span.file ?? abs);

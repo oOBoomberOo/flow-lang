@@ -1,3 +1,5 @@
+module Flow.Fn where
+
 -- std::fn — the usual functional combinators, curry-friendly.
 identity :: a -> a
 identity x = x

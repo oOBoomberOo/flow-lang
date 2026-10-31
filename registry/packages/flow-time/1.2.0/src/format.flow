@@ -1,3 +1,5 @@
+module Format where
+
 -- flow-time 1.2.0 — clock formatting helpers.
 pad2 :: Int -> Str
 pad2 n = if n < 0 then "00" else if n < 10 then "0" + str n else str n

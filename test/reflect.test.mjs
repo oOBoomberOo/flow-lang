@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule, moduleNameFor } from "./helpers.mjs";
 
 /**
  * Reflection and the JSON serialization standard.
@@ -37,7 +38,7 @@ function packageWith(files) {
   for (const [rel, src] of Object.entries(files)) {
     const f = path.join(root, "src", rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, src);
+    fs.writeFileSync(f, withModule(src, moduleNameFor(rel)));
   }
   return path.join(root, "src", "main.flow");
 }

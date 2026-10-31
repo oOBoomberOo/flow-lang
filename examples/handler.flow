@@ -1,3 +1,5 @@
+module Handler where
+
 -- Local capability handlers. `provide` is file-level; `handle Effect with { … }`
 -- installs a scoped provider for the body and nests/restores correctly.
 effect Local @ client where

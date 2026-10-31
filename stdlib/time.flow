@@ -1,4 +1,4 @@
-module Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration, addSeconds, addDays, diffSeconds, formatIso, formatDate, formatClock, weekday, month, fromMillis) where
+module Flow.Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration, addSeconds, addDays, diffSeconds, formatIso, formatDate, formatClock, weekday, month, fromMillis) where
 
 -- std::time — instants in milliseconds since the epoch, plus formatting.
 --
@@ -9,8 +9,8 @@ module Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, 
 --
 -- Instants are `Int` milliseconds so arithmetic is ordinary integer arithmetic.
 
-import Math (div, mod, floor)
-import String (padLeft)
+import Flow.Math (div, mod, floor)
+import Flow.String (padLeft)
 
 foreign import js unsafe "Date.now" {
   host_now :: () -> Float

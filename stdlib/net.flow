@@ -1,4 +1,4 @@
-module Net (NetResult, Net, request, get, post, put, del, getText) where
+module Flow.Net (NetResult, Net, request, get, post, put, del, getText) where
 
 -- std::net — network requests through the placement-neutral `Net` capability.
 --

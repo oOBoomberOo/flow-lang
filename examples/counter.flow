@@ -1,3 +1,5 @@
+module Counter where
+
 
 -- Components are functions taking a record and returning Html.
 -- A tag starting with an upper-case letter is a component call.

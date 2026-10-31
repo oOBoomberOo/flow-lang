@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
 import { createHost } from "../src/host.ts";
+import { withModule } from "./helpers.mjs";
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
 
@@ -68,7 +69,7 @@ test("net: the Net effect is placement-neutral and runs on the server", async ()
   const upstreamPort = await listen(upstream);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-net-"));
   const entry = path.join(root, "main.flow");
-  fs.writeFileSync(entry, source(upstreamPort));
+  fs.writeFileSync(entry, withModule(source(upstreamPort)));
   const result = compileFile(entry);
   const outDir = path.join(root, "build");
   emit(result, outDir);

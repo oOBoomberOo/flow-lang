@@ -227,15 +227,21 @@ export class Parser {
     const items: TopItem[] = [];
     const errors: FlowError[] = [];
     let exportSpec: ExportSpec | null = null;
+    let modulePath: string[] | undefined;
+    let moduleSpan: Span | undefined;
 
     try {
       if (this.raw.kind === "kw" && this.raw.value === "module") {
+        const start = this.raw;
         this.next();
-        this.moduleName();
+        modulePath = this.moduleName();
+        moduleSpan = this.spanFrom(start);
         if (this.atSym("(")) exportSpec = this.parseExportList();
         this.expectKw("where");
       }
     } catch (e) {
+      modulePath = undefined;
+      moduleSpan = undefined;
       if (!this.recover || !(e instanceof FlowError)) throw e;
       errors.push(e);
       while (this.raw.kind !== "eof" && !(this.raw.kind === "kw" && this.raw.value === "where")) this.pos++;
@@ -277,7 +283,12 @@ export class Parser {
       seen.add(key);
       return true;
     });
-    return { decls, file: this.file, ...(all.length ? { errors: all } : {}) };
+    return {
+      decls,
+      file: this.file,
+      ...(modulePath ? { module: modulePath, moduleSpan } : {}),
+      ...(all.length ? { errors: all } : {}),
+    };
   }
 
   /** Skip to the next line that starts at the top-level indentation. */

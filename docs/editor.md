@@ -25,7 +25,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
 | `textDocument/hover` | resolved type (inferred types included, for local `let` bindings, function and lambda parameters and `case` pattern variables), placement, effect row, and where a symbol is declared; works on variables, parameters and local bindings, constructors, function declarations (showing the inferred signature), type names (built-in description or `data`/`type`/`class`/`effect` definition) and imported names |
-| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **a module's public members after `Module.` or `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
+| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **the std module list after `Flow.`**, **a module's public members after `Module.` / `Flow.List.` / `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
@@ -36,7 +36,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/selectionRange` | the AST ancestor chain at the cursor |
 | `textDocument/documentHighlight` | occurrences of the symbol under the cursor |
 | `textDocument/formatting` | re-indent by nesting depth (idempotent) |
-| `textDocument/codeAction` | *Export 'f' from this module*, *Import 'x' from Module* |
+| `textDocument/codeAction` | *Export 'f' from this module*, *Import 'x' from Module*, *Add `module X where`* / *Rename the module to `X`* for a missing or mismatched header |
 | `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
 | `flow/boundary` | placement regions for the whole package, one entry per file |
@@ -60,8 +60,8 @@ Typing must never wait for a full compile:
   entry does not import (or a file in another package) still gets diagnostics,
   symbols, completion and boundary colouring.
 * **No std preload.** Analysis compiles only the modules the program imports.
-  Completion's view of `List.`, `Option.` and the other std namespaces comes from a cached
-  index that parses the std
+  Completion's view of `Flow.List.`, `Flow.Option.` and the other std namespaces comes from a
+  cached index that parses the std
   library once (`stdModules()`), instead of type-checking all of it on every
   keystroke.
 * **No shared unification state.** Type variables and their bindings are reset at
@@ -85,9 +85,10 @@ completion therefore keep working while the buffer has errors; the diagnostic li
 still shows them. `flow check` / `build` keep the strict behaviour and fail on the
 first error.
 
-Paths work without imports: `List.length xs` loads the `List` module on demand,
-and completion offers module members after `List.` / `Option.` even
-before any `use` is written.
+Paths work without imports: `Flow.List.length xs` (or the short `List.length xs` when nothing
+local claims `List`) loads the module on demand, and completion offers module members after
+`Flow.List.` / `List.` / `Option.` even before any `import` is written. Typing `Flow.` lists
+the std modules.
 
 `flow/boundary` is the Flow-specific piece: LSP tokens can colour a *token*, but the
 thing worth seeing is a **region** — "these twelve lines run on the server".
@@ -191,7 +192,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.6.4 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.7.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `stdlib/` instead. Turn

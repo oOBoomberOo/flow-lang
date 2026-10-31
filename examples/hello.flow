@@ -1,3 +1,5 @@
+module Hello where
+
 main :: Html
 main =
   <div class="card">

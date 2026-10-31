@@ -1,3 +1,5 @@
+module Reflect where
+
 -- Reflection and the JSON serialization standard.
 --
 -- `Reflect.meta value` is resolved from the static type, so it describes

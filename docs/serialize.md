@@ -2,9 +2,9 @@
 
 Flow has two layers:
 
-1. **Reflection** (`std::reflect`) turns the *static* type of a value into
+1. **Reflection** (`Flow.Reflect`) turns the *static* type of a value into
    `TypeInfo` metadata.
-2. **Serialization** (`std::serialize`) walks that metadata and converts values
+2. **Serialization** (`Flow.Serialize`) walks that metadata and converts values
    to and from JSON.
 
 Both are ordinary Flow modules. The compiler only resolves the type in
@@ -13,9 +13,9 @@ Both are ordinary Flow modules. The compiler only resolves the type in
 ## Reflection
 
 ```flow
-import Reflect
-import Serialize
-import Result
+import Flow.Reflect
+import Flow.Serialize
+import Flow.Result
 
 type User =
   { name :: Str
@@ -95,9 +95,9 @@ Helpers:
 `Reflected` value from the caller:
 
 ```flow
-import Reflect
-import Serialize
-import Result
+import Flow.Reflect
+import Flow.Serialize
+import Flow.Result
 
 encodePair :: Reflect.Reflected -> (a, b) -> Result Str Str
 encodePair info value = Serialize.encodeWith info value

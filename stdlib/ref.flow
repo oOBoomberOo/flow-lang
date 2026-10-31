@@ -1,4 +1,4 @@
-module Ref (Ref, newRef, get, set, modify) where
+module Flow.Ref (Ref, newRef, get, set, modify) where
 
 -- std::ref — a small mutable box that works on either side of the boundary.
 --

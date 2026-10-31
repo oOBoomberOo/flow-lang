@@ -1,3 +1,5 @@
+module Flow.Dict where
+
 -- std::dict — a persistent dictionary (an ordered association list).
 --
 -- Operations take the key's comparison function, so any key type works:
@@ -10,7 +12,7 @@
 -- Entries are kept sorted by key, so `keys` and `toList` are ordered and
 -- `lookup` can stop early. `stringDict` helpers hide the comparison for Str keys.
 
-import Tuple (fst, snd)
+import Flow.Tuple (fst, snd)
 
 type Dict k v = List (k, v)
 

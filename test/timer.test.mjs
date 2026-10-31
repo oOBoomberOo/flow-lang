@@ -4,11 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
+import { withModule } from "./helpers.mjs";
 
 function compileSource(source) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-timer-"));
   const file = path.join(dir, "main.flow");
-  fs.writeFileSync(file, source);
+  fs.writeFileSync(file, withModule(source));
   try {
     return compileFile(file).client;
   } finally {

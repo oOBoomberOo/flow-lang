@@ -406,7 +406,7 @@ export class Infer {
       return instantiate(tr.methods.get(name)!.ty, 0);
     }
     const hint = name === "serve"
-      ? " - add `import Http (serve)` or write `Http.serve`"
+      ? " - add `import Flow.Http (serve)` or write `Flow.Http.serve`"
       : "";
     this.fail(`unbound name '${name}'${hint}`, span);
   }
@@ -2464,7 +2464,7 @@ export class Infer {
   inferBinary(e: Expr & { k: "Binary" }): ResInfo {
     if (e.op === ">>=") {
       const monad = this.mod.traits.get("Monad");
-      if (!monad) this.fail("operator '>>=' needs the Monad trait: import std::monad::{Monad}", e.span);
+      if (!monad) this.fail("operator '>>=' needs the Monad trait: import Flow.Monad (Monad)", e.span);
       const bind = monad.methods.get("bind");
       if (!bind) this.fail("trait Monad has no 'bind' method", e.span);
       return this.inferTraitCall("Monad", "bind", bind.ty, [e.r, e.l], e);

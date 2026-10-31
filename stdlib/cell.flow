@@ -1,4 +1,4 @@
-module Cell (pure, make, read, write) where
+module Flow.Cell (pure, make, read, write) where
 
 -- Cells are neutral reactive values, and they are monads (see std/monad), so a
 -- do block reads them with `<-`:
