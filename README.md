@@ -124,7 +124,7 @@ examples/net.flow        outbound HTTP from the server
 examples/handler.flow    local algebraic handlers
 ```
 
-Tests: `npm test` — **252 tests** across grammar, layout, types, boundaries, modules, packages,
+Tests: `npm test` — **256 tests** across grammar, layout, types, boundaries, modules, packages,
 registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
@@ -144,7 +144,10 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
 * **Batteries included** — `List`, `Iter`, `Dict`, `Set`, `Tuple`, `Option`, `Result`, `String`,
   `Math`, `Json`, `Time`, `Path`, `Env`, `Cell`, `Client`/`Server`, `Monad`: containers,
   iteration, JSON, dates and paths ship in the language
-* **Packages and registries** — `flow install` resolves from the default
+* **FFI for libraries** - bind globals (`Math.floor`), methods (`@trim`) and your own JS/TS
+  modules with `foreign import js module "./shim.js" { … }`; shims are copied into the build and
+  served to the browser, so one file runs on both tiers
+* **Packages and registries** - `flow install` resolves from the default
   [flow-registry](https://github.com/oOBoomberOo/flow-registry) git registry; registries can be
   set per dependency, per project or globally, and dependencies may be `path:` directories or
   `git:`/`github:` repositories
