@@ -1,6 +1,6 @@
 module Fs where
 
--- std::fs — server-side filesystem access through the Fs effect capability.
+-- Flow.Fs — server-side filesystem access through the Fs effect capability.
 import Fs (tmpDir, makeDir, writeText, readText, tryReadText, exists, stat, listDir)
 
 demo :: () -> Str

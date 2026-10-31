@@ -16,7 +16,7 @@ import { analyze, findNodeAt, readSource, offsetToPosition, spanRange, stdModule
 import { parse } from "../parser.ts";
 import { moduleDisplayName } from "../modules.ts";
 
-/** `std::list` -> `Flow.List` for the cheap std index, which carries only ids. */
+/** `flow::list` -> `Flow.List` for the cheap std index, which carries only ids. */
 const moduleNameOf = (m: { id: string }) => "Flow." + m.id.split("::").slice(1).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import { lex } from "../lexer.ts";
@@ -1528,7 +1528,7 @@ const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function renameImportEdits(sym: SymbolInfo, newName: string): Record<string, unknown[]> {
   const out: Record<string, unknown[]> = {};
   const a = lastAnalysis;
-  if (!a || sym.unit === "std::prelude") return out;
+  if (!a || sym.unit === "flow::prelude") return out;
   const module = sym.display.split(".").slice(0, -1).join(".");
   if (!module) return out;
   for (const u of a.units) {
@@ -1640,7 +1640,7 @@ function importCandidates(file: string): { name: string; module: string; kind: s
   };
   for (const s of a.symbols) {
     if (!s.public || s.kind === "constructor") continue;
-    if (s.unit === cur?.id || s.unit === "std::prelude") continue;
+    if (s.unit === cur?.id || s.unit === "flow::prelude") continue;
     if (imported.has(s.finalName)) continue;
     add(s.name, s.display.split(".").slice(0, -1).join("."), s.kind);
   }

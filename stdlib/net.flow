@@ -1,6 +1,6 @@
 module Flow.Net (NetResult, Net, request, get, post, put, del, getText) where
 
--- std::net — network requests through the placement-neutral `Net` capability.
+-- Flow.Net — network requests through the placement-neutral `Net` capability.
 --
 -- The host provides `fetch` on both sides (browser `fetch`, Node `fetch`).
 -- `Net` has no fixed placement: a call is placed by its callback and arguments,

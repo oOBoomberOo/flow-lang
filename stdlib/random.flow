@@ -1,6 +1,6 @@
 module Flow.Random (int, bool, chance, pick) where
 
--- std::random — uniform helpers over the FFI-backed random source in std::math.
+-- Flow.Random — uniform helpers over the FFI-backed random source in Flow.Math.
 import Flow.Math (random, floor, clamp)
 
 -- / Uniform integer in [lo, hi]. Returns lo when the range is empty.

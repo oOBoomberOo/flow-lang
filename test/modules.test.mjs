@@ -24,7 +24,6 @@ function packageWith(files, deps = {}) {
   return { root, entry: path.join(root, "src", "main.flow") };
 }
 
-const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 /* ------------------------------------------------------------------ */
 /* modules                                                            */

@@ -1,9 +1,9 @@
 module Flow.Ref (Ref, newRef, get, set, modify) where
 
--- std::ref — a small mutable box that works on either side of the boundary.
+-- Flow.Ref — a small mutable box that works on either side of the boundary.
 --
 -- `Ref` is not reactive and not placed: it is a local mutable slot, used to
--- implement stateful algebraic handlers (`std::state`) on the client or server.
+-- implement stateful algebraic handlers (`Flow.State`) on the client or server.
 type Ref a = { get :: () -> a, set :: a -> () }
 
 foreign import js unsafe "__flow.host.refNew" {

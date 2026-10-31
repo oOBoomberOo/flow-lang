@@ -28,7 +28,6 @@ function packageWith(files) {
   return { root, entry: path.join(root, "src", "main.flow") };
 }
 
-const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 test("ffi: unsafe extern js reaches every JavaScript target form", () => {
   const { entry } = packageWith({
@@ -139,7 +138,7 @@ main = <p>{str pi} {str e}</p>`,
   assert.ok(r.client.includes('R.ffiCall("Math.E"'), "e reads Math.E");
 });
 
-test("std::random is built on the FFI-backed random source", () => {
+test("Flow.Random is built on the FFI-backed random source", () => {
   const { entry } = packageWith({
     "main.flow": `import Random (int, bool, pick, chance)
 

@@ -1,6 +1,6 @@
 module Net where
 
--- std::net — the Net capability has no fixed placement; this callback uses
+-- Flow.Net — the Net capability has no fixed placement; this callback uses
 -- client state, so the request runs on the client with browser fetch.
 import Net (get, NetResult)
 

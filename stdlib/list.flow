@@ -1,6 +1,6 @@
 module Flow.List (length, isEmptyList, filter, fold, forEach, headOf, take, drop, range, zip, any, all, sortBy, sortInts, sortStrings, contains, indexOfItem, len, isEmpty, push, concat, at, head, tail, reverse, cons) where
 
--- std::list — list transforms, written in Flow itself. Operations take their
+-- Flow.List — list transforms, written in Flow itself. Operations take their
 -- function/index first and the list last, so `xs |> map f` works.
 
 -- The prelude re-exports the everyday names.

@@ -1,6 +1,6 @@
 module Flow.Fs (FileInfo, Fs, readText, tryReadText, writeText, appendText, exists, listDir, makeDir, removeFile, removeDir, stat, tmpDir) where
 
--- std::fs — server-side filesystem access.
+-- Flow.Fs — server-side filesystem access.
 --
 -- `Fs` is a server effect capability. The server runtime provides it with
 -- Node's fs module; the client bundle never receives these primitives, so a

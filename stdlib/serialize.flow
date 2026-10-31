@@ -1,6 +1,6 @@
 module Flow.Serialize (encode, decode, toJson, fromJson, encodeWith, decodeWith, toJsonWith, fromJsonWith) where
 
--- std::serialize - a reflection-driven JSON standard.
+-- Flow.Serialize - a reflection-driven JSON standard.
 --
 -- The auto helpers take their TypeInfo from the *static* type at the call site:
 --

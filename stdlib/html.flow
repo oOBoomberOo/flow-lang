@@ -1,6 +1,6 @@
 module Flow.Html (classNames, text, Card, Badge, Page, Button, Items) where
 
--- std::html — markup helpers and ready-made components.
+-- Flow.Html — markup helpers and ready-made components.
 classNames :: List Str -> Str
 classNames xs = join " " xs
 

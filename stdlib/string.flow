@@ -1,6 +1,6 @@
 module Flow.String (length, isEmptyStr, joinWith, repeat, padLeft, padRight, words, startsWith, endsWith, indexOf, splitOnce, capitalize, take, drop, isDigit, isAlpha, isAlphaNum, isSpace, isUpper, isLower, toUpper, toLower, trim, upper, lower, split, replace, contains, join, chars, strLen, int, float) where
 
--- std::string: the primitive operations plus the composed helpers.
+-- Flow.String: the primitive operations plus the composed helpers.
 -- The prelude re-exports `trim`, `upper`, `lower`, `split`, `replace`,
 -- `contains`, `join`, `chars`, `strLen`, `int` and `float`.
 import Flow.List (concat, push)

@@ -169,7 +169,7 @@ export function stdModules(): ModuleIndex[] {
           default: break;
         }
       }
-      modules.push({ id: `std::${f.replace(/\.flow$/, "")}`, file, members });
+      modules.push({ id: `flow::${f.replace(/\.flow$/, "")}`, file, members });
     } catch { /* a broken std file must not disable completion */ }
   }
   STD_MODULES = modules;
@@ -337,7 +337,7 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
       for (const [name, fn] of result.mod.fns) {
         if (fn.synthetic) continue;
         const origin = result.display?.get(name) ?? name;
-        if (origin.startsWith("std::") || origin.startsWith("Flow.")) continue;
+        if (origin.startsWith("flow::") || origin.startsWith("Flow.")) continue;
         const h = result.codegen.home(fn.body);
         if (h === "neutral") continue;
         const src = srcFor(fn.body.span.file ?? abs);

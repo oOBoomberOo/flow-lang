@@ -291,7 +291,7 @@ main = <p>{str (f ())}</p>
   }
 });
 
-test("algebraic: std::exn aborts, maps failures, and recovers at the failure point", async () => {
+test("algebraic: Flow.Exn aborts, maps failures, and recovers at the failure point", async () => {
   const source = `import Exn (attempt, recoverWith, recover, fail, Exn)
 import Http (get as httpGet, Router, RequestObject, Response, textResponse)
 

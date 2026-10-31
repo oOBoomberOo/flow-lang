@@ -1,6 +1,6 @@
 module Flow.Path (join, basename, dirname, extension, normalize, isAbsolute, separator) where
 
--- std::path — portable path manipulation, neutral (works on both sides).
+-- Flow.Path — portable path manipulation, neutral (works on both sides).
 
 foreign import js unsafe "__flow.host.pathJoin" {
   host_join :: List Str -> Str

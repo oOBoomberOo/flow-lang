@@ -1,6 +1,6 @@
 module Flow.Monad where
 
--- std::monad — the Functor / Applicative / Monad / Alternative family.
+-- Flow.Monad — the Functor / Applicative / Monad / Alternative family.
 --
 -- Functions take their operation first and the value last, so the same `map`
 -- works for `List`, `Option` and `Cell` and pipes read left to right:

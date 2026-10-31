@@ -1,6 +1,6 @@
 module Flow.Math (sqrt, pow, floor, ceil, round, absF, minF, maxF, logF, expF, sinF, cosF, random, pi, e, abs, div, mod, minInt, maxInt, clamp, sum, product, sign, toFloat, toInt, isEven, isOdd, powInt, roundTo) where
 
--- std::math — Int helpers in Flow, float primitives through the FFI.
+-- Flow.Math — Int helpers in Flow, float primitives through the FFI.
 -- ---------------------------------------------------------------- float host ops
 -- These used to be compiler builtins; now they are ordinary std bindings.
 foreign import js unsafe "Math.sqrt" {

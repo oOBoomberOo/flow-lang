@@ -55,14 +55,14 @@ export interface SourceUnit {
 const decap = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const cap = (s: string) => s.split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
 
-/** `std::list` -> `Flow.List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
+/** `flow::list` -> `Flow.List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
 export function moduleDisplayName(
   unit: { pkg: string; modulePath: string[]; moduleName?: string[] },
   currentPkg?: string,
 ): string {
   const declared = unit.moduleName
-    ?? (unit.pkg === "std" ? ["Flow", ...unit.modulePath.map(cap)] : unit.modulePath.map(cap));
-  if (unit.pkg === "std" || unit.pkg === currentPkg || unit.pkg === "main") return declared.join(".");
+    ?? (unit.pkg === "flow" ? ["Flow", ...unit.modulePath.map(cap)] : unit.modulePath.map(cap));
+  if (unit.pkg === "flow" || unit.pkg === currentPkg || unit.pkg === "main") return declared.join(".");
   return [cap(unit.pkg), ...declared].join(".");
 }
 
@@ -362,7 +362,7 @@ export class Linker {
 
   /** `Flow.List` for std, `Shapes.Circle` for `src/shapes/circle.flow`. */
   private expectedModuleName(pkg: Package, modulePath: string[]): string[] {
-    return pkg.name === "std"
+    return pkg.name === "flow"
       ? ["Flow", ...modulePath.map(cap)]
       : modulePath.map(cap);
   }
@@ -452,7 +452,7 @@ export class Linker {
           let decl = target.declares.get(item.name);
           // The prelude is a re-export surface: importing a name from it
           // resolves through the module that actually declares the name.
-          if (!decl && target.id === "std::prelude") {
+          if (!decl && target.id === "flow::prelude") {
             const re = this.importTable(target).get(item.name);
             if (re) {
               actualUnit = re.unit;
@@ -564,8 +564,8 @@ export class Linker {
     const display = new Map<string, string>();
     const importedByFile = new Map<string, Set<string>>();
 
-    // exports of std::prelude, injected into every module with the lowest priority
-    const preludeUnit = this.units.get("std::prelude");
+    // exports of flow::prelude, injected into every module with the lowest priority
+    const preludeUnit = this.units.get("flow::prelude");
     const preludeValues = new Map<string, string>();
     const preludeTypes = new Map<string, string>();
     if (preludeUnit) {
@@ -582,7 +582,7 @@ export class Linker {
         }
       }
       // The prelude also re-exports what it imports: the Monad family is
-      // declared in std::monad but every module sees `Functor`, `Applicative`,
+      // declared in flow::monad but every module sees `Functor`, `Applicative`,
       // `Monad` and `Alternative` through the prelude.
       for (const [alias, ref] of this.importTable(preludeUnit)) {
         const final = finalName.get(`${ref.unit.id}::${ref.name}`);
@@ -600,7 +600,7 @@ export class Linker {
       }
     }
 
-    // `std::list::map` paths resolve through the same final names, visible only
+    // `flow::list::map` paths resolve through the same final names, visible only
     // when the declaration is `pub`.
     const qValues = new Map<string, string>();
     const qTypes = new Map<string, string>();
@@ -619,7 +619,7 @@ export class Linker {
 
     // The prelude is an import surface too: `Prelude.at` / `Flow.Prelude.at`
     // resolve to the module that actually declares the name.
-    const preludeQual = this.units.get("std::prelude");
+    const preludeQual = this.units.get("flow::prelude");
     if (preludeQual) {
       for (const [alias, ref] of this.importTable(preludeQual)) {
         const final = finalName.get(`${ref.unit.id}::${ref.name}`);
@@ -696,7 +696,7 @@ export class Linker {
 let _std: Package | null = null;
 export function stdPackage(): Package {
   if (_std) return _std;
-  _std = { name: "std", root: STDLIB_DIR, srcDir: STDLIB_DIR, deps: new Map(), manifest: { name: "std", version: "0.1.0", dependencies: {} } };
+  _std = { name: "flow", root: STDLIB_DIR, srcDir: STDLIB_DIR, deps: new Map(), manifest: { name: "flow", version: "0.1.0", dependencies: {} } };
   return _std;
 }
 

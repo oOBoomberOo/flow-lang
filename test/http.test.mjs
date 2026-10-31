@@ -8,7 +8,7 @@ import { createHost } from "../src/host.ts";
 import { withModule } from "./helpers.mjs";
 
 /**
- * End-to-end HTTP capability tests: the std::http Request/Router effects are
+ * End-to-end HTTP capability tests: the Flow.Http Request/Router effects are
  * provided by the host, routes() is called at startup, and real requests are
  * dispatched to Flow handlers.
  */

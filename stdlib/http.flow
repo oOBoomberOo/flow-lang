@@ -3,7 +3,7 @@ module Flow.Http (RequestObject, Response, Handler, Route, Page, PageRoute, AppC
 import Flow.List (filter, length)
 import Flow.String (startsWith)
 
--- std::http — request/response data, request and routing capabilities, and
+-- Flow.Http — request/response data, request and routing capabilities, and
 -- easy route construction. Everything here is ordinary Flow over host
 -- primitives; the host dispatches real HTTP requests to the routes registered
 -- by `Router.mount`.

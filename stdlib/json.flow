@@ -1,6 +1,6 @@
 module Flow.Json where
 
--- std::json — a `Json` value, an encoder and a decoder.
+-- Flow.Json — a `Json` value, an encoder and a decoder.
 --
 --   import Json (Json(..), encode, decodeSafe)
 --   let text = encode (JObject [("name", JStr "ada")])

@@ -10,7 +10,7 @@ main = do
   let strs = sortStrings ["pear", "apple", "fig"]
   let desc = sortBy (\(a :: Int) (b :: Int) -> b - a) ints
   <div class="card">
-    <h1>{"std::list sorting"}</h1>
+    <h1>{"Flow.List sorting"}</h1>
     <p class="sorted">{"asc: "} {str ints} {", desc: "} {str desc}</p>
     <p class="strings">{"strs: "} {str strs}</p>
     <p class="search">

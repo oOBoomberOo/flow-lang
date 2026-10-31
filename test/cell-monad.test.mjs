@@ -40,7 +40,6 @@ async function withHost(source, fn) {
   }
 }
 
-const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 test("cells: value/assignment/update sugar lowers to host get/set", () => {
   const src = `main :: Html

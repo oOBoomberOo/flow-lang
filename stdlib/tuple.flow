@@ -1,6 +1,6 @@
 module Flow.Tuple where
 
--- std::tuple — the small helpers every language ships for pairs.
+-- Flow.Tuple — the small helpers every language ships for pairs.
 
 fst :: (a, b) -> a
 fst pair = case pair of

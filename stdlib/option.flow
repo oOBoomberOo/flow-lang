@@ -1,6 +1,6 @@
 module Flow.Option where
 
--- std::option
+-- Flow.Option
 
 data Option a = None | Some a
 

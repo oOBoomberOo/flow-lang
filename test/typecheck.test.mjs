@@ -5,7 +5,6 @@ import { compileSource } from "../src/compile.ts";
 const ok = (src) => compileSource(src, "t.flow");
 const bad = (src, re) => assert.throws(() => compileSource(src, "t.flow"), re);
 
-const page = (body) => `fn main() -> Html { html { ${body} } }`;
 
 /* ------------------------- types ------------------------- */
 

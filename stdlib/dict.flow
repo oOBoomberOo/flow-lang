@@ -1,6 +1,6 @@
 module Flow.Dict where
 
--- std::dict — a persistent dictionary (an ordered association list).
+-- Flow.Dict — a persistent dictionary (an ordered association list).
 --
 -- Operations take the key's comparison function, so any key type works:
 --

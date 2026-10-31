@@ -1,6 +1,6 @@
 module Flow.Log (info, warn, error, debug, value) where
 
--- std::log — logging through the host console, built on the FFI.
+-- Flow.Log — logging through the host console, built on the FFI.
 --
 -- No compiler support: `console.log` is an ordinary `unsafe extern js` binding.
 foreign import js unsafe "console.log" {

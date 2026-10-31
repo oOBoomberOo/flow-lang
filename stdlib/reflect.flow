@@ -1,6 +1,6 @@
 module Flow.Reflect (Variant, TypeDef, Reflected, TypeInfo(..), meta, root, defs, lookup, typeName, describe, describeAll) where
 
--- std::reflect - metadata about a type.
+-- Flow.Reflect - metadata about a type.
 --
 --   import Reflect
 --   let info = Reflect.meta user

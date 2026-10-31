@@ -1,6 +1,6 @@
 module Flow.Time (now, nowMillis, nowMs, nowPrecise, elapsedSince, since, pad2, hms, duration, addSeconds, addDays, diffSeconds, formatIso, formatDate, formatClock, weekday, month, fromMillis) where
 
--- std::time — instants in milliseconds since the epoch, plus formatting.
+-- Flow.Time — instants in milliseconds since the epoch, plus formatting.
 --
 --   import Time
 --   let t = Time.nowMillis ()

@@ -484,7 +484,7 @@ function explain(argv: string[], style: Style): void {
   for (const [name, fn] of result.mod.fns) {
     if (fn.synthetic) continue;
     const from = origin(name);
-    if (from.startsWith("std::") || from.startsWith("Flow.")) continue;
+    if (from.startsWith("flow::") || from.startsWith("Flow.")) continue;
     const h = result.codegen!.home(fn.body);
     const eff = fn.scheme.k === "fun" ? [...fn.scheme.eff.labels].sort() : [];
     stdout(`  ${from.padEnd(34)} ${(h === "neutral" ? "both" : h).padEnd(8)} effects: {${eff.join(", ")}}\n`);

@@ -11,7 +11,7 @@ import { withModule, moduleNameFor } from "./helpers.mjs";
  * Reflection and the JSON serialization standard.
  *
  * Reflection metadata is produced by the compiler from the static type
- * (`Reflect.meta value`); std::serialize walks that metadata and the runtime
+ * (`Reflect.meta value`); Flow.Serialize walks that metadata and the runtime
  * representation. Server mains write their results to a file so the test can
  * assert on real encoded data and error paths without a browser.
  */

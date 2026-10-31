@@ -1081,7 +1081,7 @@ export class Codegen {
         if (!env.has(e.name)) {
           const ctor = this.mod.ctors.get(e.name);
           if (ctor) {
-            // A constructor referenced through a path (`std::option::Some`) is a
+            // A constructor referenced through a path (`flow::option::Some`) is a
             // value, not a JS function.
             if (ctor.arity === 0) return `R.ctor(${ev(e.name)}, [])`;
             return `((...$ctorArgs) => R.ctor(${ev(e.name)}, $ctorArgs))`;
