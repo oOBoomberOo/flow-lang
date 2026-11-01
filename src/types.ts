@@ -106,16 +106,10 @@ export function sendable(t: Type): { ok: true } | { ok: false; reason: string } 
     case "var": return { ok: true };
     case "fun": return { ok: false, reason: "functions are not serializable across the boundary" };
     case "con": {
-      if (p.name === "Cell") {
-        const side = p.place && p.place !== "neutral" ? ` (${p.place}-bound)` : "";
-        return {
-          ok: false,
-          reason:
-            `a Cell${side} cannot cross the boundary as a value; ` +
-            `declare it at the top level with an explicit type such as \`cell :: Cell Int @server\`, ` +
-            `then reads and writes become cuts`,
-        };
-      }
+      // A Cell crosses as a remote handle: reads are cached locally and writes
+      // travel back to the owning tier. There is nothing special to declare,
+      // but its contents still have to be values the wire can carry.
+      if (p.name === "Cell") return p.args[0] ? sendable(p.args[0]) : { ok: true };
       if (p.name === "Dom") return { ok: false, reason: "Dom handles cannot leave the client" };
       if (p.name === "Event") return { ok: false, reason: "Event handles cannot leave the client" };
       if (p.name === "Html") return { ok: false, reason: "Html can only be produced on the client" };

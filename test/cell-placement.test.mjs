@@ -9,8 +9,9 @@ import { withModule } from "./helpers.mjs";
 
 /**
  * Cell placement: `Cell a @client` and `Cell a @server` are explicit, and the
- * compiler turns reads/writes into cuts on the owning side. A cell never
- * crosses the boundary as a value; only its contents do.
+ * compiler turns reads/writes into cuts on the owning side. A cell crosses as
+ * a handle (never as a serialized cell object), so it can be created in any
+ * local scope on either tier.
  */
 
 const RUNTIME_FILES = ["core.js", "server.js", "dom.js", "client.js"];
@@ -214,14 +215,31 @@ main = <ul>{map (get state) $ \\n -> <li>{str n}</li>}</ul>`, "map-cut.flow");
   );
 });
 
-test("cells: a server-bound cell cannot be created inside client code", () => {
-  assert.throws(
-    () => compileSource(`main :: Html
+test("cells: a server-bound cell can be created inside client code", () => {
+  const r = compileSource(`main :: Html
 main = do
   let counter = Server.state 0
-  <p>{str counter.value}</p>`, "local-server-cell.flow"),
-    /declared .*top level|declare it at the top level/,
-  );
+  <p>{str counter.value}</p>`, "local-server-cell.flow");
+  assert.deepEqual(r.errors, []);
+  assert.match(r.client, /R\.remote\("/, "creating the cell crosses as a cut");
+  assert.match(r.client, /__flow\.get/, "the client reads through the handle");
+  assert.ok(!/function counter\(/.test(r.client), "the cell is not created in the browser");
+  assert.match(r.server, /state\$flow\$server|__flow\.host\.cell/, "the cell is created on the server");
+});
+
+test("cells: local client and server cells can share a tuple", () => {
+  const r = compileSource(`main :: Html
+main = <p>{"cells"}</p>
+
+hello :: () -> (Cell Int @client, Cell Bool @server, Cell Str @client)
+hello () =
+  let x = Client.state 0 in
+  let y = Server.state False in
+  let z = Client.state "" in
+  (x, y, z)`, "local-cell-tuple.flow");
+  assert.deepEqual(r.errors, []);
+  assert.match(r.client, /R\.remote\("/, "the server cell is a remote handle");
+  assert.match(r.server, /state\$flow\$server|__flow\.host\.cell/, "the server cell is created on the server");
 });
 
 test("cells: a server cell keeps its identity and streams updates", async () => {

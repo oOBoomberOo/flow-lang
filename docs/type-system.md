@@ -247,7 +247,7 @@ evaluated eagerly (Â§6.2) because a round trip is a one-shot value, not a stre
 a client-only type is itself client-only. This is what guarantees that a markup tree can never
 be built on the server â€” the server has no DOM.
 
-A `Cell a` is neutral by default. It may carry an explicit placement (`Cell a @client` or `Cell a @server`); `Client.state` returns the former and `Server.state` the latter. A server-bound cell lives in the server process, so client reads become reactive cuts and client writes become call cuts. The cell itself is not sent; only its element value crosses, so the element type must be sendable at every cut.
+A `Cell a` is neutral by default. It may carry an explicit placement (`Cell a @client` or `Cell a @server`); `Client.state` returns the former and `Server.state` the latter. A server-bound cell lives in the server process, so client reads become reactive cuts and client writes become call cuts. The cell crosses as a **handle**, not as a serialized value: the owner keeps the cell and the peer gets a Cell-shaped proxy with a cached value and a subscription. Cells can therefore be created in any local scope on either tier; only the element type must be sendable when its value crosses.
 
 ```
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -436,7 +436,8 @@ Two cuts, opposite directions, one expression â€” with no annotation anywhe
 **Guaranteed.**
 
 1. **No placement errors at runtime.** A value that cannot be serialized cannot cross; a
-   DOM value cannot be produced on the server. Both are compile errors.
+   DOM value cannot be produced on the server. Both are compile errors. A `Cell` is the
+   deliberate exception: it crosses as a handle whose values are still checked.
 2. **Every effect is handled.** A call outside a matching `handle` and without a
    default `provide` does not type-check.
 3. **Provider signatures match.** Each provider operation is checked against the declared

@@ -1301,24 +1301,6 @@ export class Codegen {
     return `${asyncKw}function${gen ? "*" : ""} ${name}(${allParams.join(", ")}) { return ${js}; }`;
   }
 
-  /** A binding may not create a cell bound to the other tier. */
-  private checkCellBinding(
-    name: string,
-    ty: Type | undefined,
-    side: Side,
-    span?: { line: number; col: number },
-  ) {
-    if (!ty) return;
-    const p = prune(ty);
-    if (p.k !== "con" || p.name !== "Cell") return;
-    if (!p.place || p.place === "neutral" || p.place === side) return;
-    this.fail(
-      `'${name}' is a ${p.place}-bound cell; declare it at the top level ` +
-        `(\`${name} :: ${typeStr(p)}\`) so reads and writes become ${p.place} cuts`,
-      span,
-    );
-  }
-
   /**
    * A `let` is a lazy signal only when its value is pure. Bindings that exist for
    * their effect must run in program order: `_`, `Unit`-typed values, and values
@@ -1431,7 +1413,6 @@ export class Codegen {
         return `(${this.val(e.cond, side, ctxHome, env)} ? ${this.emitExpr(e.then, side, ctxHome, env)} : ${this.emitExpr(e.else, side, ctxHome, env)})`;
       case "Match": return this.emitMatch(e, side, ctxHome, env);
       case "Let": {
-        this.checkCellBinding(e.name, this.mod.info.get(e.value)?.ty, side, e.value.span);
         const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
         if (gen) {
           if (this.hasCallCut(e)) this.fail("a block that performs an effect cannot also contain a request/response cut", e.span);
@@ -2028,7 +2009,6 @@ export class Codegen {
     const inner = new Set(env);
     for (const s of e.stmts) {
       if (s.k === "LetStmt") {
-        this.checkCellBinding(s.name, this.mod.info.get(s.value)?.ty, side, s.value.span);
         // a binder that shadows a top-level function would capture its own
         // initializer (`let args = Env.args ()`), so give the local a new name
         const shadows = !inner.has(s.name) && (this.mod.fns.has(s.name) || this.mod.ctors.has(s.name));

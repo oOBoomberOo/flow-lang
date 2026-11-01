@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and per-cut boundary colouring.",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },

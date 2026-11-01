@@ -318,8 +318,7 @@ A cell is reactive state, and its type names the side that owns it:
 | `Cell a @server` | `Server.state x` | server computations; shared by every client |
 | `Cell a` | `Cell.makeCell x` | neutral: lives where it is created and used |
 
-A server-bound cell must be declared at the top level so that it keeps its
-identity:
+A server-bound cell may be declared at the top level when it is shared:
 
 ```flow
 counter :: Cell Int @server
@@ -335,11 +334,22 @@ main = <div>
 </div>
 ```
 
-Client reads of `counter.value` become reactive cuts (the server pushes the
-current value when it changes); writes (`counter := ...`, `+=`, ...) become call
-cuts. The cell itself never crosses the wire, so its element type must be
-serializable when it is read from the other side. Creating a `Cell a @server`
-inside client code is rejected - declare it at the top level instead.
+It may equally be created in any local scope, on either tier:
+
+```flow
+page = do
+  let draft = Client.state ""
+  let local = Server.state False
+  <div>...</div>
+```
+
+Client reads of `counter.value` and `local.value` become reactive cuts (the owner
+pushes the current value when it changes); writes (`counter := ...`, `+=`, ...)
+become call cuts. A cell crosses as a **handle**, never as a serialized cell
+object: the owner keeps the cell, the other side gets a Cell-shaped proxy with a
+local value and a subscription. Creating `Server.state` inside client code (or
+`Client.state` inside server code) is therefore ordinary code. The element type
+must still be serializable when its value crosses.
 
 `cell.value` reads, `cell := e` writes, `cell += n` / `-=` / `*=` update, and
 `cell.update f` maps the current value; `cell.get ()` and `cell.set v` are the

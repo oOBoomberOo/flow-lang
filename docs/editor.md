@@ -209,7 +209,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.17.1 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.17.2 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `stdlib/` instead. Turn

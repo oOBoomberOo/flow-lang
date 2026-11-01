@@ -238,8 +238,9 @@ modules when nothing local claims them. The full catalogue is in [`language.md`]
 section 7.1; reflection and JSON are in [`serialize.md`](serialize.md).
 
 Cells are neutral by default (`Cell.makeCell`). `Client.state` returns a
-`Cell a @client` and `Server.state` a `Cell a @server`; declare a server-bound
-cell at the top level so its reads and writes become cuts.
+`Cell a @client` and `Server.state` a `Cell a @server`. A cell can be created in
+any local scope; reads and writes on the other tier become cuts, and the cell
+itself crosses as a handle.
 
 ## Everything is ordinary Flow
 

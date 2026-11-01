@@ -79,6 +79,101 @@ export function createRuntime() {
   let sendFn = () => {};
   let sid = "local";
 
+  /* ---------- remote cell handles ---------------------------------- */
+  // A Cell never crosses as a value. It crosses as a handle: the owning side
+  // keeps the real Cell, the other side gets a Cell-shaped proxy backed by
+  // cell-sub/cell-val/cell-set messages. This is why a Cell can be created in
+  // any local scope, on either tier, and still be read and written elsewhere.
+  const cellRefs = new Map();     // handle id -> local Cell (owner side)
+  const remoteCells = new Map();  // handle id -> proxy Cell (peer side)
+  const cellWatches = new Map();  // `${sid}:${id}` -> Node watching the owner
+  let cellSeq = 0;
+  const cellPrefix = `c${Math.random().toString(36).slice(2, 8)}`;
+
+  const plainObject = (v) => {
+    if (!v || typeof v !== "object") return false;
+    const proto = Object.getPrototypeOf(v);
+    return proto === Object.prototype || proto === null;
+  };
+
+  const encodeCells = (v) => {
+    if (v == null) return v;
+    if (v.__cell) {
+      let id = v.__remoteId;
+      if (!id) {
+        id = v.__refId;
+        if (!id) {
+          id = `${cellPrefix}${++cellSeq}`;
+          Object.defineProperty(v, "__refId", { value: id, enumerable: false, configurable: true });
+          cellRefs.set(id, v);
+        }
+      }
+      return { __flowCell: id, value: encodeCells(v.value) };
+    }
+    if (Array.isArray(v)) return v.map(encodeCells);
+    if (plainObject(v)) {
+      const out = {};
+      for (const [k, x] of Object.entries(v)) out[k] = encodeCells(x);
+      return out;
+    }
+    return v;
+  };
+
+  const setRemoteValue = (cell, value) => {
+    if (Object.is(cell.value, value)) return;
+    cell.value = value;
+    for (const s of cell.subs) s.invalidate();
+  };
+
+  const remoteCell = (id) => {
+    let cell = remoteCells.get(id);
+    if (cell) return cell;
+    cell = new Cell(undefined);
+    Object.defineProperty(cell, "__remoteId", { value: id, enumerable: false, configurable: true });
+    cell.set = (value) => {
+      if (Object.is(value, cell.value)) return;
+      setRemoteValue(cell, value);
+      sendMessage({ t: "cell-set", id, value });
+    };
+    remoteCells.set(id, cell);
+    sendMessage({ t: "cell-sub", id });
+    return cell;
+  };
+
+  const decodeCells = (v) => {
+    if (v == null) return v;
+    if (Array.isArray(v)) return v.map(decodeCells);
+    if (typeof v === "object") {
+      if (typeof v.__flowCell === "string") {
+        const local = cellRefs.get(v.__flowCell);
+        if (local) return local;
+        const cell = remoteCell(v.__flowCell);
+        if (v.value !== undefined) setRemoteValue(cell, decodeCells(v.value));
+        return cell;
+      }
+      if (plainObject(v)) {
+        const out = {};
+        for (const [k, x] of Object.entries(v)) out[k] = decodeCells(x);
+        return out;
+      }
+    }
+    return v;
+  };
+
+  const sendMessage = (msg) => sendFn(msg);
+
+  /** Send a cell notification to the session that subscribed, not whichever
+   *  session happens to be current when a watcher fires later. */
+  const sendAs = (owner, msg) => {
+    const prev = sid;
+    sid = owner ?? sid;
+    try {
+      sendMessage(msg);
+    } finally {
+      sid = prev;
+    }
+  };
+
   /**
    * Drive a cut body that may perform algebraic effects. A performed operation
    * is sent to the caller; the caller's handler replies resume/abort and the
@@ -427,7 +522,7 @@ export function createRuntime() {
     /* ---------- transport ---------- */
 
     _attach(send, sessionId) {
-      sendFn = send;
+      sendFn = (msg) => send(encodeCells(msg));
       if (sessionId) sid = sessionId;
     },
 
@@ -465,6 +560,7 @@ export function createRuntime() {
     /** Inbound message dispatch. Both sides use the same implementation. */
     async _receive(msg, reply) {
       if (!msg || typeof msg !== "object") return;
+      msg = decodeCells(msg);
       switch (msg.t) {
         case "sub": {
           const key = `${sid}:${msg.id}`;
@@ -536,6 +632,30 @@ export function createRuntime() {
           else p.resolve(msg.value);
           return;
         }
+        case "cell-sub": {
+          const cell = cellRefs.get(msg.id);
+          if (!cell) return;
+          const owner = sid;
+          const key = `${owner}:${msg.id}`;
+          if (!cellWatches.has(key)) {
+            const node = new Node(() => R.v(cell));
+            node.watch((value) => sendAs(owner, { t: "cell-val", id: msg.id, value }));
+            cellWatches.set(key, node);
+          }
+          const node = cellWatches.get(key);
+          sendAs(owner, { t: "cell-val", id: msg.id, value: node.get() });
+          return;
+        }
+        case "cell-set": {
+          const cell = cellRefs.get(msg.id);
+          if (cell) cell.set(msg.value);
+          return;
+        }
+        case "cell-val": {
+          const cell = remoteCells.get(msg.id);
+          if (cell) setRemoteValue(cell, msg.value);
+          return;
+        }
         default:
           if (reply) reply(msg);
       }
@@ -597,9 +717,15 @@ export function createRuntime() {
 
   function resolveArgs(obj) {
     const out = {};
-    // R.get dereferences nodes and cells to their current value *and* registers
-    // them as dependencies of the enclosing node, so a change re-sends the sub.
-    for (const [k, v] of Object.entries(obj ?? {})) out[k] = R.get(v);
+    // Dereference nodes, but keep a Cell as a Cell: it crosses as a handle.
+    // Register both with the enclosing node so a change re-sends the sub.
+    for (const [k, v] of Object.entries(obj ?? {})) {
+      let x = v;
+      let guard = 0;
+      while (x && (x.__node || x.__lazy) && guard++ < 32) x = R.v(x);
+      if (x && x.__cell && CURRENT) CURRENT.deps.add(x);
+      out[k] = x;
+    }
     return out;
   }
 

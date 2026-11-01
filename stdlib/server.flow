@@ -25,13 +25,14 @@ random :: () -> Float
 random () = server_random ()
 
 -- A server-bound cell: the state lives in the server process and is shared by
--- its readers. Declare it at the top level with its type:
+-- its readers. It may be declared at the top level or created in a local scope:
 --
 --   counter :: Cell Int @server
 --   counter = Server.state 0
 --
 -- Client reads become reactive cuts (the server pushes the current value when
--- it changes); client writes become call cuts.
+-- it changes); client writes become call cuts. The cell itself crosses as a
+-- handle, so `Server.state` is also valid inside client code.
 foreign import js unsafe "__flow.host.cell" {
   server_cell :: a -> Cell a @server
 }
