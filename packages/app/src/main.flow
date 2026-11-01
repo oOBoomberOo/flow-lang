@@ -1,4 +1,4 @@
-module Main where
+module App.Main where
 
 import Flow.Client
 import Flow.Server
@@ -7,9 +7,8 @@ import Flow.Http
 import Flow.Cell
 import Flow.Exn (Exn)
 
-import Todo
+import App.Todo
 import Math (div)
-import Flow.Builtins (Str)
 
 main :: ()
 main = do
@@ -31,31 +30,53 @@ pages =
   , page "/about" aboutPage
   ]
 
-state :: Cell (List Todo.Todo)
-state = Server.state $ empty
+type TodoId = Int
 
-f :: Str
-f = "Hello, Flow!"
+effect TodoList where
+  addItem :: Str -> TodoId
+  removeItem :: TodoId -> ()
+  toggleItem :: TodoId -> ()
+  getItems :: () -> List Todo
+
+type State = { todos :: List Todo, idCounter :: Int }
+
+state :: Cell State
+state = Server.state $ { todos = [], idCounter = 0}
+
+updateTodo :: Cell State -> (List Todo -> List Todo) -> ()
+updateTodo state updateFn = state := { todos = updateFn state.value.todos, idCounter = state.value.idCounter }
+
+provide TodoList where
+  addItem title = do
+      state := { todos = Todo.addTodo newItem state.value.todos, idCounter = nextId }
+      nextId
+    where
+      nextId = state.value.idCounter + 1
+      newItem = Todo { id = nextId, title = title, completed = False }
+
+  removeItem todoId =
+    updateTodo state $ Todo.removeTodo todoId
+
+  toggleItem todoId =
+    updateTodo state $ Todo.toggleTodo todoId
+
+  getItems () =
+    state.value.todos
 
 homePage req = 
   <div>
     <input type="text" placeholder="Add a todo" value={draft.value} onChange={\(e :: Event) -> draft := e.target.value}/>
-    <button onClick={
-      \(e :: Event) -> do
-        addItem draft.value
+    <button onClick={\(e :: Event) -> do
+        TodoList.addItem draft.value
         draft := ""
     }>{"+"}</button>
 
     {
-      map (get state) $ \todo ->
+      map (TodoList.getItems ()) $ \todo ->
         <div>
-          <input type="checkbox" checked={todo.completed} onChange={\(e :: Event) ->
-            handle Exn with
-              fail msg = Client.log ("caught: " + msg)
-            in state.update $ Todo.toggleTodo todo.id
-          } />
+          <button onClick={\(e :: Event) -> TodoList.removeItem todo.id}>{"Remove"}</button>
+          <input type="checkbox" checked={todo.completed} onChange={\(e :: Event) -> TodoList.toggleItem todo.id} />
           <span>{todo.title}</span>
-          <button onClick={\(e :: Event) -> state.update $ Todo.removeTodo todo.id}>{"Remove"}</button>
         </div>
     }
   </div>
@@ -63,20 +84,6 @@ homePage req =
   where
     draft = Client.state ""
 
-    addItem title =
-      state.update $
-        \todos -> Todo.addTodo (Todo { id = getLastId todos + 1, title = title, completed = False }) todos
-          where 
-            getLastId = List.fold Math.maxInt 0 . map \t -> t.id
-
 aboutPage req = <h1>About Page</h1>
 
-fallbackPage = <h1>Page Not Found</h1>
-
-
-
-hello =
-    let x = Client.state 0 in
-    -- let y = Server.state False in
-    let z = Client.state "" in
-    (x, z)
+fallbackPage = <h1>Page not Found</h1>

@@ -1,4 +1,4 @@
-module Todo where
+module App.Todo where
 
 import Flow.List (filter)
 import Flow.Math (random)
@@ -20,7 +20,5 @@ toggleTodo :: Int -> List Todo -> List Todo
 toggleTodo todoId = map \t ->
   if t.id == todoId then
     Todo { completed = not t.completed, id = t.id, title = t.title }
-  else if Math.random () < 0.5 then
-    Exn.fail "Random failure occurred"
   else
     t
