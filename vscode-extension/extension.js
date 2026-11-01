@@ -564,18 +564,18 @@ function workspaceRoots() {
   return (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
 }
 
-/** A Flow compiler checkout: the LSP source and the stdlib live side by side. */
+/** A Flow compiler checkout: the LSP source and the std package live side by side. */
 function isCompilerCheckout(root) {
   return Boolean(root)
     && fs.existsSync(path.join(root, "src", "lsp", "server.ts"))
-    && fs.existsSync(path.join(root, "stdlib", "http.flow"));
+    && fs.existsSync(path.join(root, "registry", "packages", "flow", "1.0.0", "src", "http.flow"));
 }
 
 /**
  * Which language server to run.
  *
  * A checkout of the compiler wins over the copy installed with the extension:
- * while working on Flow itself, `src/` and `stdlib/` must be the code being
+ * while working on Flow itself, `src/` and the `registry` std package must be the code being
  * edited, not the last packaged snapshot. Normal users have no checkout in
  * their workspace, so they keep running the bundled `vendor/` server.
  */
@@ -612,7 +612,7 @@ function insideExtensionBundle(context, file) {
   return path.resolve(file).startsWith(vendor);
 }
 
-/** Watch the checkout's compiler and stdlib; restart after a short pause. */
+/** Watch the checkout's compiler and std package; restart after a short pause. */
 function startDevWatch(context, serverPath) {
   devWatcher?.dispose();
   devWatcher = null;
@@ -622,7 +622,7 @@ function startDevWatch(context, serverPath) {
   if (!vscode.workspace.getConfiguration("flow").get("devWatch", true)) return;
   if (typeof vscode.RelativePattern !== "function") return;
 
-  const watchers = ["src/**/*.ts", "stdlib/**/*.flow"].map((pattern) => {
+  const watchers = ["src/**/*.ts", "registry/**/*.flow"].map((pattern) => {
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, pattern));
     const changed = (uri) => scheduleDevRestart(context, uri);
     watcher.onDidChange(changed);
@@ -638,7 +638,7 @@ function startDevWatch(context, serverPath) {
       for (const watcher of watchers) watcher.dispose();
     },
   };
-  output?.appendLine(`[flow] watching ${root} for compiler and stdlib changes`);
+  output?.appendLine(`[flow] watching ${root} for compiler and std package changes`);
 }
 
 function scheduleDevRestart(context, uri) {
@@ -675,7 +675,7 @@ async function start(context) {
   try {
     output?.appendLine(`[flow] extension ${require("./package.json").version} · server ${serverPath} (${found.kind})`);
     if (found.kind === "workspace" || found.kind === "setting") {
-      output?.appendLine("[flow] using the compiler checkout; edits under src/ and stdlib/ restart it automatically");
+      output?.appendLine("[flow] using the compiler checkout; edits under src/ and registry/ restart it automatically");
     }
   } catch { /* version is diagnostic only */ }
   startDevWatch(context, serverPath);

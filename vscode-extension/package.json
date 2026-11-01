@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and per-cut boundary colouring.",
-  "version": "0.17.2",
+  "version": "0.18.0",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -68,7 +68,7 @@
         "flow.devWatch": {
           "type": "boolean",
           "default": true,
-          "description": "Restart the language server automatically when files under the checkout's src/**.ts or stdlib/**.flow change. Applies only when running a compiler checkout, not the bundled server."
+          "description": "Restart the language server automatically when files under the checkout's src/**.ts or registry/**.flow change. Applies only when running a compiler checkout, not the bundled server."
         },
         "flow.cutPalette": {
           "type": "array",

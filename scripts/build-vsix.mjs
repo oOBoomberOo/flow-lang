@@ -3,7 +3,7 @@
  * Build a self-contained .vsix for the Flow extension.
  *
  * Stages:  build/vsix/extension/{package.json,extension.js,syntaxes,…}
- *          build/vsix/extension/vendor/{src,stdlib,registry,bin}
+ *          build/vsix/extension/vendor/{src,registry,bin}
  *          build/vsix/{[Content_Types].xml,extension.vsixmanifest}
  * Zips it with PowerShell's Compress-Archive (no npm dependencies).
  */
@@ -36,7 +36,7 @@ copyDir(EXT, extDir);
 
 // the compiler travels with the extension so it works outside the repo
 const vendor = path.join(extDir, "vendor");
-for (const part of ["src", "stdlib", "registry", "bin"]) {
+for (const part of ["src", "registry", "bin"]) {
   copyDir(path.join(ROOT, part), path.join(vendor, part));
 }
 fs.writeFileSync(

@@ -525,7 +525,7 @@ main = do
 });
 
 test("lsp: a std file opens as std, not as a duplicate entry module", async () => {
-  const file = path.join(import.meta.dirname, "..", "stdlib", "prelude.flow");
+  const file = path.join(import.meta.dirname, "..", "registry", "packages", "flow", "1.0.0", "src", "prelude.flow");
   const text = fs.readFileSync(file, "utf8");
   const c = startServer();
   try {
@@ -610,7 +610,7 @@ main = <p>{str 1} {str (len [1, 2])} {str (Some 3)}</p>
       const at = pos(text, needle, 1);
       const def = await c.request("textDocument/definition", { textDocument: { uri: uri(entry) }, position: at });
       assert.ok(def, `definition for ${name}`);
-      assert.match(new URL(def.uri).pathname, new RegExp(`stdlib/${file}$`), `${name} is std code`);
+      assert.match(new URL(def.uri).pathname, new RegExp(`registry/packages/flow/1\\.0\\.0/src/${file}$`), `${name} is std code`);
     }
   } finally { c.proc.kill(); }
 });

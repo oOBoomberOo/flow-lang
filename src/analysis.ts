@@ -18,6 +18,7 @@ import type { Param, Program, Span } from "./ast.ts";
 import type { Place } from "./types.ts";
 import type { SymKind } from "./modules.ts";
 import { printType } from "./printer.ts";
+import { STDLIB_DIR } from "./paths.ts";
 import { adtRecordFieldNames, domFieldNames } from "./infer.ts";
 
 export interface Position { line: number; character: number }
@@ -107,7 +108,6 @@ export interface Analysis {
   importedByFile?: Map<string, Set<string>>;
 }
 
-const STDLIB_DIR = path.join(import.meta.dirname, "..", "stdlib");
 const isStd = (file: string) => {
   const abs = path.resolve(file);
   return abs === STDLIB_DIR || abs.startsWith(STDLIB_DIR + path.sep);

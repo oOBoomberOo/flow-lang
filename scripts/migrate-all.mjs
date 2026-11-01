@@ -7,7 +7,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const jobs = [];
 const add = (file, pkg) => jobs.push({ file: path.join(root, file), pkg });
 
-for (const f of fs.readdirSync(path.join(root, "stdlib"))) if (f.endsWith(".flow") && f !== "builtins.flow") add(`stdlib/${f}`, "std");
+for (const f of fs.readdirSync(path.join(root, "registry", "packages", "flow", "1.0.0", "src"))) if (f.endsWith(".flow") && f !== "builtins.flow") add(`registry/packages/flow/1.0.0/src/${f}`, "std");
 for (const f of fs.readdirSync(path.join(root, "examples"))) if (f.endsWith(".flow")) add(`examples/${f}`, undefined);
 for (const f of ["main", "util"]) add(`packages/demo/src/${f}.flow`, "demo");
 add("packages/app/src/main.flow", "app");

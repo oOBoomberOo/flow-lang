@@ -1,0 +1,6 @@
+{
+  "name": "flow",
+  "version": "1.0.0",
+  "description": "The Flow standard library",
+  "dependencies": {}
+}

@@ -13,9 +13,10 @@ src/
     circle.flow    module Shapes.Circle
 ```
 
-The header is mandatory and is checked against the path, so a moved or renamed file cannot keep
-a stale namespace. The standard library reserves the `Flow` namespace: `stdlib/list.flow` is
-`module Flow.List`, `stdlib/http.flow` is `module Flow.Http`, and so on.
+The header is mandatory and is checked against the path (with an optional package-namespace
+prefix), so a moved or renamed file cannot keep a stale namespace. The standard library is the
+registry package `flow`: its `src/list.flow` is `module Flow.List`, `src/http.flow` is
+`module Flow.Http`, and so on.
 
 ## Importing
 
@@ -103,23 +104,30 @@ Referencing a private name through the qualifier reports:
 
 ## Module names
 
-A file's qualifier is its path under `src/` with each segment capitalised, and the header must
-match it exactly:
+A file's qualifier is its path under `src/` with each segment capitalised. The header may use
+the short path name or prefix it with the package namespace:
 
 | file | header |
 |---|---|
-| `src/util.flow` | `module Util where` |
-| `src/shapes/circle.flow` | `module Shapes.Circle where` |
-| `src/main.flow` | `module Main where` |
-| a dependency `flow-charts/src/bar.flow` | `module Bar where` (displayed/imported as `FlowCharts.Bar`) |
-| `stdlib/list.flow` | `module Flow.List where` |
+| `src/util.flow` | `module Util where` or `module App.Util where` |
+| `src/shapes/circle.flow` | `module Shapes.Circle where` or `module App.Shapes.Circle where` |
+| `src/main.flow` | `module Main where` or `module App.Main where` |
+| a dependency `flow-charts/src/bar.flow` | `module Bar where` or `module FlowCharts.Bar where` |
+| the standard library's `src/list.flow` | `module Flow.List where` |
+
+The namespace is the package name capitalised (`app` → `App`, `flow-charts` → `FlowCharts`,
+`flow` → `Flow`). Package-qualified imports work too: `import App.Util` and `import Util` name
+the same file inside package `app`.
 
 A standalone file compiled outside a package (a script, an example) uses its own file name:
 `hello.flow` is `module Hello where`; `main.flow` is `module Main where`. Hyphenated and
 underscored segments become one capitalised word (`flow-charts/bar.flow` → `FlowCharts.Bar`).
 
-The `Flow` root is reserved for the standard library, so `import Flow.List` and
-`Flow.List.sortBy` always mean std even if a project defines its own `List` module.
+The `Flow` root is the standard library package. It is an ordinary registry package named
+`flow`, shipped at `registry/packages/flow/1.0.0/` with a real `flow.json` and `src/` tree.
+`import Flow.List` and `Flow.List.sortBy` always mean std even if a project defines its own
+`List` module. A project may list `"flow": "1.0.0"` in `flow.json`; the compiler resolves it to
+the bundled package.
 
 ## Packages
 
@@ -211,7 +219,7 @@ flow add tool git:https://github.com/oOBoomberOo/flow-tool.git#v1.0.0
 
 ## The prelude
 
-`stdlib/prelude.flow` (`module Flow.Prelude`) is a **re-export surface**, injected into every
+`registry/packages/flow/1.0.0/src/prelude.flow` (`module Flow.Prelude`) is a **re-export surface**, injected into every
 module with the lowest priority. It declares nothing itself: it imports names from the real
 modules, and every unit sees them unqualified (`str`, `len`, `Some`, `None`, `not`, `concat`,
 `push`, ...) and through their namespaces. A unit's own declarations and imports win.

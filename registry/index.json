@@ -1,5 +1,10 @@
 {
   "packages": {
+    "flow": {
+      "versions": {
+        "1.0.0": { "path": "packages/flow/1.0.0" }
+      }
+    },
     "flow-charts": {
       "versions": {
         "1.0.0": { "path": "packages/flow-charts/1.0.0" }

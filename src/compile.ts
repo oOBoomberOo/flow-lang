@@ -3,7 +3,7 @@ import path from "node:path";
 import { parse } from "./parser.ts";
 import { Infer } from "./infer.ts";
 import { Codegen } from "./codegen.ts";
-import { Linker, STDLIB_DIR } from "./modules.ts";
+import { Linker } from "./modules.ts";
 import type { SymInfo } from "./modules.ts";
 import type { Decl, Program } from "./ast.ts";
 import type { Module, Infer as InferType } from "./infer.ts";

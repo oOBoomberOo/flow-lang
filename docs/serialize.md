@@ -181,8 +181,8 @@ of elements.
 
 ## Files
 
-* `stdlib/reflect.flow` - `TypeInfo`, `Reflected` and the metadata helpers.
-* `stdlib/serialize.flow` - the JSON encoder/decoder and error paths.
+* `registry/packages/flow/1.0.0/src/reflect.flow` - `TypeInfo`, `Reflected` and the metadata helpers.
+* `registry/packages/flow/1.0.0/src/serialize.flow` - the JSON encoder/decoder and error paths.
 * `examples/reflect.flow` - a page that prints metadata, encoded JSON and a
   round trip, plus a recursive tree.
 * `test/reflect.test.mjs` - metadata, round trips, recursive types, error paths

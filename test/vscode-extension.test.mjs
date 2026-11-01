@@ -578,7 +578,7 @@ test("vscode: compiler saves restart the language server without reinstalling", 
     const devWatches = env.watchers.filter((w) => w.pattern instanceof env.mock.RelativePattern);
     assert.deepEqual(
       devWatches.map((w) => w.pattern.pattern).sort(),
-      ["src/**/*.ts", "stdlib/**/*.flow"],
+      ["registry/**/*.flow", "src/**/*.ts"],
       "compiler and stdlib are watched",
     );
 

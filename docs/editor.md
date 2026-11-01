@@ -191,34 +191,34 @@ code --install-extension build/flow-language.vsix --force --profile "Minecraft D
 code --list-extensions --show-versions --profile "Minecraft Development" | grep flow
 ```
 
-The packaged extension carries `vendor/{src,stdlib,registry,bin}`, so it works in any
+The packaged extension carries `vendor/{src,registry,bin}`, so it works in any
 workspace — the server, the formatter and `Flow: Explain Boundary` all run from the
 bundle.
 
 ### Developing Flow itself (no rebuild loop)
 
 Open the Flow checkout in VS Code and the installed extension runs
-`<workspace>/src/lsp/server.ts` instead of its own bundled copy. Compiler and stdlib
+`<workspace>/src/lsp/server.ts` instead of its own bundled copy. Compiler and std package
 changes are therefore live without touching the VSIX:
 
 * resolution order is `flow.serverPath` → workspace compiler checkout → bundled vendor;
-* saving anything under `src/**/*.ts` or `stdlib/**/*.flow` restarts the language
+* saving anything under `src/**/*.ts` or `registry/**/*.flow` restarts the language
   server automatically (300 ms debounce) and re-opens the documents you have open;
 * `Flow: Restart Language Server` (command `flow.restart`) does the same restart on
   demand; changing `flow.serverPath`, `flow.useWorkspaceServer` or `flow.devWatch`
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.17.2 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
-watcher follows that checkout's `src/` and `stdlib/` instead. Turn
+watcher follows that checkout's `src/` and `registry/` instead. Turn
 `flow.useWorkspaceServer` off to compare against the packaged compiler, and
 `flow.devWatch` off to restart manually only.
 
 Changing the **client** (`extension.js`, `vscode-extension/package.json`, the grammar)
 still needs `npm run extension:install` and a window reload, because VS Code loads the
-extension host code once per window. Compiler/stdlib work does not.
+extension host code once per window. Compiler/std-package work does not.
 
 
 ### Completion and refactors
@@ -286,7 +286,7 @@ break.
 | `flow.enableDecorations` | `true` | toggle boundary symbols and cut markers |
 | `flow.serverPath` | `""` | explicit `src/lsp/server.ts`; overrides auto-detection |
 | `flow.useWorkspaceServer` | `true` | in a compiler checkout, run its server instead of the bundle |
-| `flow.devWatch` | `true` | restart the server when the checkout's compiler/stdlib changes |
+| `flow.devWatch` | `true` | restart the server when the checkout's compiler/std-package changes |
 
 Symbol colours are ordinary `editor.semanticTokenColorCustomizations` rules (`*.client`,
 `*.server`, `*.cut1`…`*.cut12`, `*.crossing`, `*.dependency`). The extension contributes

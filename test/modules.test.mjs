@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileFile } from "../src/compile.ts";
+import { stdPackage } from "../src/modules.ts";
 import { parse } from "../src/parser.ts";
 import { install, verifyLock, satisfies, bestVersion, add } from "../src/pkg.ts";
 import { FlowError } from "../src/lexer.ts";
@@ -78,7 +79,7 @@ main = <p>{"x"}</p>`,
 });
 
 test("modules: the prelude is a pure re-export surface", () => {
-  const preludeFile = path.join(import.meta.dirname, "..", "stdlib", "prelude.flow");
+  const preludeFile = path.join(import.meta.dirname, "..", "registry", "packages", "flow", "1.0.0", "src", "prelude.flow");
   const prelude = parse(fs.readFileSync(preludeFile, "utf8"), preludeFile);
   assert.ok(prelude.decls.length > 0);
   assert.ok(prelude.decls.every((d) => d.k === "Use"), "the prelude only imports");
@@ -448,4 +449,57 @@ main = <p>{str (7 / 2)}</p>
   const r = compileFile(entry);
   assert.match(r.client, /R\.ffiCall\("__flow\.divInt"/);
   assert.ok(!r.client.includes("Math.trunc"), "no direct library call");
+});
+
+test("modules: package-qualified headers and imports are accepted", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-ns-"));
+  fs.writeFileSync(path.join(root, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "main.flow"), `module App.Main where
+
+import App.Util (greet)
+import Util (answer)
+
+main :: Html
+main = <p>{greet "world"} {str (answer ())}</p>
+`);
+  fs.writeFileSync(path.join(root, "src", "util.flow"), `module App.Util where
+
+greet :: Str -> Str
+greet name = "Hello, " + name
+
+answer :: () -> Int
+answer () = 42
+`);
+  const r = compileFile(path.join(root, "src", "main.flow"));
+  assert.match(r.client, /Hello, /);
+  assert.match(r.client, /42/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("modules: a header with the wrong package namespace is rejected", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flow-ns-bad-"));
+  fs.writeFileSync(path.join(root, "flow.json"), JSON.stringify({ name: "app", version: "0.1.0", dependencies: {} }));
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "main.flow"), `module Other.Main where
+
+main :: Html
+main = <p>{"x"}</p>
+`);
+  assert.throws(
+    () => compileFile(path.join(root, "src", "main.flow")),
+    /does not match this file[\s\S]*App\.Main/,
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("stdlib: the standard library is the registry package named flow", () => {
+  const pkg = stdPackage();
+  assert.equal(pkg.name, "flow");
+  assert.equal(pkg.manifest?.name, "flow");
+  assert.ok(pkg.manifest?.version);
+  assert.ok(fs.existsSync(path.join(pkg.srcDir, "prelude.flow")));
+  assert.match(pkg.root, /registry[\\/]packages[\\/]flow[\\/]1\.0\.0$/);
+  const index = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "registry", "index.json"), "utf8"));
+  assert.ok(index.packages.flow?.versions?.["1.0.0"], "the registry advertises the flow package");
 });

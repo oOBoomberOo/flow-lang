@@ -841,9 +841,11 @@ function completion(file: string, pos: Position) {
     // to `Module.` (private helpers stay inside their module)
     for (const s of a?.symbols ?? []) {
       if (!s.public && s.unit !== curUnit?.id) continue;
-      const short = s.display.startsWith("Flow.") ? s.display.slice(5) : null;
-      const display = s.display.startsWith(q) ? s.display : short && short.startsWith(q) ? short : null;
-      if (!display) continue;
+      // A module may be addressed by its short path (`Util.`) or its package
+      // namespace (`App.Util.` / `Flow.List.`).
+      const at = s.display.startsWith(q) ? 0 : s.display.indexOf(`.${q}`);
+      if (at < 0) continue;
+      const display = at === 0 ? s.display : s.display.slice(at + 1);
       const rest = display.slice(q.length);
       if (!rest || rest.includes(".")) continue;
       add(s.name, symbolKind(s.kind), s.display, "0");

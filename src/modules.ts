@@ -18,7 +18,9 @@ import { FlowError } from "./lexer.ts";
 import type { Decl, Expr, FnSig, HtmlNode, Pattern, Program, Span, TypeExpr } from "./ast.ts";
 import { parseDependency, fetchGit, type DependencyValue, type RegistryConfig } from "./registry.ts";
 
-export const STDLIB_DIR = path.join(import.meta.dirname, "..", "stdlib");
+import { STD_PACKAGE_ROOT, STDLIB_DIR } from "./paths.ts";
+
+export { STDLIB_DIR };
 
 export interface Manifest {
   name: string;
@@ -54,16 +56,26 @@ export interface SourceUnit {
 
 const decap = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const cap = (s: string) => s.split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+/** The package namespace used in `module App.Main where` (none for scripts). */
+const namespaceOf = (pkg: Package): string | null =>
+  pkg.singleFile || pkg.name === "main" ? null : cap(pkg.name);
 
 /** `flow::list` -> `Flow.List`, `app::shapes::circle` -> `Shapes.Circle`, `flow-charts::bar` -> `FlowCharts.Bar` */
 export function moduleDisplayName(
   unit: { pkg: string; modulePath: string[]; moduleName?: string[] },
   currentPkg?: string,
 ): string {
-  const declared = unit.moduleName
+  let declared = unit.moduleName
     ?? (unit.pkg === "flow" ? ["Flow", ...unit.modulePath.map(cap)] : unit.modulePath.map(cap));
-  if (unit.pkg === "flow" || unit.pkg === currentPkg || unit.pkg === "main") return declared.join(".");
-  return [cap(unit.pkg), ...declared].join(".");
+  if (unit.pkg === "flow") {
+    // A std header may be written `Flow.List` or `List`; display it once.
+    if (declared[0] !== "Flow") declared = ["Flow", ...declared];
+    return declared.join(".");
+  }
+  if (unit.pkg === currentPkg || unit.pkg === "main") return declared.join(".");
+  const ns = cap(unit.pkg);
+  // The header may already include the package namespace (`FlowCharts.Bar`).
+  return declared[0] === ns ? declared.join(".") : [ns, ...declared].join(".");
 }
 
 export type SymKind = "function" | "type" | "constructor" | "trait" | "effect" | "record" | "alias";
@@ -177,9 +189,15 @@ export function packageAt(root: string): Package {
   const deps = new Map<string, Package>();
 
   for (const [name, spec] of Object.entries(manifest.dependencies)) {
+    // The standard library is bundled; listing it is optional but resolves to
+    // the registry package that ships with the compiler.
+    if (name === "flow") { deps.set("flow", stdPackage()); continue; }
     const dir = resolveDependency(root, name, spec);
     deps.set(name, packageAt(dir));
   }
+  // `flow` is the standard library package. Every package can resolve
+  // `Flow.List` through it without listing it as an explicit dependency.
+  if (manifest.name !== "flow") deps.set("flow", stdPackage());
 
   return { name: manifest.name, root, srcDir, manifest, deps };
 }
@@ -319,18 +337,28 @@ export class Linker {
     const program = parse(src, file, { recover: this.recover });
     if (program.errors?.length) this.errors.push(...program.errors);
     const expected = this.expectedModuleName(pkg, modulePath);
+    const accepted = this.acceptedModuleNames(pkg, modulePath);
+    const declaredName = program.module?.join(".");
     if (this.requireModule) {
       if (!program.module) {
-        this.reportModule(file, `every .flow file must start with \`module ${expected.join(".")} where\``);
-      } else if (program.module.join(".") !== expected.join(".")) {
+        const qualified = accepted[0]!.join(".");
         this.reportModule(
           file,
-          `module '${program.module.join(".")}' does not match this file; expected \`module ${expected.join(".")} where\``,
+          `every .flow file must start with \`module ${expected.join(".")} where\` ` +
+            `(the package-qualified form is \`module ${qualified} where\`)`,
+        );
+      } else if (!accepted.some((name) => name.join(".") === declaredName)) {
+        const qualified = accepted[0]!.join(".");
+        this.reportModule(
+          file,
+          `module '${declaredName}' does not match this file; expected \`module ${expected.join(".")} where\` ` +
+            `(the package-qualified form is \`module ${qualified} where\`)`,
           program.moduleSpan,
         );
       }
     }
-    const moduleName = program.module ?? expected;
+    let moduleName = program.module ?? expected;
+    if (pkg.name === "flow" && moduleName[0] !== "Flow") moduleName = ["Flow", ...moduleName];
     const declares = new Map<string, Decl>();
     for (const d of program.decls) {
       if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
@@ -367,6 +395,14 @@ export class Linker {
       : modulePath.map(cap);
   }
 
+  /** Headers may include the package namespace: `App.Main` or just `Main`. */
+  private acceptedModuleNames(pkg: Package, modulePath: string[]): string[][] {
+    const pathName = modulePath.map(cap);
+    const ns = namespaceOf(pkg);
+    if (pkg.name === "flow") return [["Flow", ...pathName], pathName];
+    return ns ? [[ns, ...pathName], pathName] : [pathName];
+  }
+
   private reportModule(file: string, msg: string, span?: { line?: number; col?: number }): void {
     const err = new FlowError(msg, { file, line: span?.line ?? 1, col: span?.col ?? 1, code: "E_MODULE" });
     if (this.recover) this.errors.push(err);
@@ -384,6 +420,12 @@ export class Linker {
       return rest.length && exists(stdPackage(), rest) ? { pkg: stdPackage(), modulePath: rest } : null;
     }
     const lower = parts.map(decap);
+    // The package namespace is optional in a path: `App.Util` and `Util` both
+    // name `src/util.flow` in package `app`.
+    const ns = namespaceOf(pkg);
+    if (!pkg.singleFile && ns && parts.length > 1 && parts[0] === ns && exists(pkg, lower.slice(1))) {
+      return { pkg, modulePath: lower.slice(1) };
+    }
     // a lone file is a whole program: its neighbours in the directory are not modules
     if (!pkg.singleFile && exists(pkg, lower)) return { pkg, modulePath: lower };
     for (const [name, dep] of pkg.deps) {
@@ -696,7 +738,8 @@ export class Linker {
 let _std: Package | null = null;
 export function stdPackage(): Package {
   if (_std) return _std;
-  _std = { name: "flow", root: STDLIB_DIR, srcDir: STDLIB_DIR, deps: new Map(), manifest: { name: "flow", version: "0.1.0", dependencies: {} } };
+  // The standard library is the ordinary registry package named `flow`.
+  _std = packageAt(STD_PACKAGE_ROOT);
   return _std;
 }
 
