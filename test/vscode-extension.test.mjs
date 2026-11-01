@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { CUT_PALETTE_SIZE } from "../src/lsp/semantic.ts";
+import { CUT_PALETTE_SIZE, SEMANTIC_LEGEND } from "../src/lsp/semantic.ts";
 
 /**
  * Loads the real VS Code extension against a mock `vscode` module, starts the
@@ -234,7 +234,7 @@ test("vscode: activates, drives the server and colours the boundary", async () =
 
     // every provider the server implements is registered with VS Code
     await waitUntil(() => env.registered.some((r) => r[0] === "semanticTokens"), 8000, "semantic tokens");
-    const names = env.registered.map((r) => r[0]).sort();
+    const names = [...new Set(env.registered.map((r) => r[0]))].sort();
     assert.deepEqual(names, [
       "codeAction", "codeLens", "completion", "definition", "documentHighlight", "documentLink",
       "documentSymbol", "foldingRange", "formatting", "hover", "inlayHint",
@@ -693,6 +693,7 @@ test("vscode: the cut palette matches the server legend and theme defaults", () 
   const { ext, restore } = loadExtension(env);
   try {
     assert.equal(ext._internals.cutSlots, CUT_PALETTE_SIZE, "the client and server agree on the palette size");
+    assert.deepEqual(ext._internals.semanticLegend, SEMANTIC_LEGEND, "the fallback legend matches the server's");
     assert.equal(ext._internals.cutPalette.length, CUT_PALETTE_SIZE, "a colour for every slot");
 
     const cutModifiers = pkg.contributes.semanticTokenModifiers.filter((m) => /^cut\d+$/.test(m.id));
@@ -736,6 +737,27 @@ test("vscode: toggle line comment inserts Flow's --, not //", async () => {
     await run();
     assert.equal(env.appliedEdits.length, 2);
     assert.ok(env.appliedEdits.every((e) => e.newText === ""), "a second toggle removes the comment");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: semantic colours stay on when cut markers are disabled", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-semoff-"));
+  const file = path.join(dir, "main.flow");
+  fs.writeFileSync(file, SRC);
+  const env = makeMock(REPO);
+  env.config.enableDecorations = false;
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    const doc = { languageId: "flow", uri: env.mock.Uri.file(file), version: 1, getText: () => SRC };
+    env.handlers.open(doc);
+    await waitUntil(() => env.registered.some((r) => r[0] === "semanticTokens"), 8000, "semantic tokens");
+    const sem = env.registered.find((r) => r[0] === "semanticTokens");
+    const tokens = await sem[1].provideDocumentSemanticTokens(doc);
+    assert.ok(tokens.data.length > 0, "semantic tokens are independent of marker decoration state");
   } finally {
     ext.deactivate();
     restore();

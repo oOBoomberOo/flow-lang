@@ -34,6 +34,19 @@ const CUT_PALETTE = [
   "#d16d9e", "#89ddff", "#b48ead", "#a3be8c", "#ebcb8b", "#7f9cf5",
 ];
 
+/* The server's legend, used to register the provider immediately at
+ * activation and re-registered from the initialize response once it arrives. */
+const SEMANTIC_LEGEND = {
+  tokenTypes: [
+    "keyword", "function", "variable", "type", "class", "string", "number",
+    "comment", "operator", "parameter", "property", "namespace",
+  ],
+  tokenModifiers: [
+    "client", "server", "cut", "crossing", "dependency",
+    ...Array.from({ length: CUT_SLOTS }, (_, i) => `cut${i + 1}`),
+  ],
+};
+
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
 /* ------------------------------------------------------------------ */
@@ -311,6 +324,9 @@ function registerSemanticTokens(context, legend) {
   };
   semanticRegistration = vscode.languages.registerDocumentSemanticTokensProvider("flow", provider, legend);
   context.subscriptions.push(semanticRegistration);
+  output?.appendLine(
+    `[flow] semantic tokens registered (${legend.tokenTypes.length} types, ${legend.tokenModifiers.length} modifiers)`,
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -320,6 +336,10 @@ function registerSemanticTokens(context, legend) {
 function registerProviders(context) {
   const doc = (d) => ({ uri: d.uri.toString() });
   const push = (d) => context.subscriptions.push(d);
+
+  // Register before the async initialize handshake; the server's own legend
+  // replaces this one as soon as it arrives.
+  registerSemanticTokens(context, SEMANTIC_LEGEND);
 
   push(vscode.languages.registerCompletionItemProvider("flow", {
     async provideCompletionItems(document, position) {
@@ -711,7 +731,15 @@ async function start(context) {
     return;
   }
   const legend = capabilities?.semanticTokensProvider?.legend;
-  if (legend) registerSemanticTokens(context, legend);
+  if (legend) {
+    try {
+      registerSemanticTokens(context, legend);
+    } catch (e) {
+      output?.appendLine(`[flow] semantic token registration failed: ${e.message}`);
+    }
+  } else {
+    output?.appendLine("[flow] server did not advertise semantic tokens");
+  }
   for (const doc of vscode.workspace.textDocuments) if (doc.languageId === "flow") openDoc(doc);
   const active = vscode.window.activeTextEditor;
   if (active && active.document.languageId === "flow") {
@@ -741,7 +769,11 @@ function activate(context) {
   statusBar.text = "$(radio-tower) Flow";
   statusBar.show();
   enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
-  semanticEnabled = enabled;
+  semanticEnabled = vscode.workspace.getConfiguration("flow").get("enableSemanticColors", true);
+  output.appendLine(
+    `[flow] semantic colours ${semanticEnabled ? "on" : "off"}; ` +
+    `editor.semanticHighlighting.enabled = ${String(vscode.workspace.getConfiguration("editor", { languageId: "flow" }).get("semanticHighlighting.enabled"))}`,
+  );
   makeDecorations();
 
   context.subscriptions.push(
@@ -779,7 +811,7 @@ function activate(context) {
       if (!e.affectsConfiguration("flow")) return;
       makeDecorations();
       enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
-      semanticEnabled = enabled;
+      semanticEnabled = vscode.workspace.getConfiguration("flow").get("enableSemanticColors", true);
       semanticEmitter?.fire();
       paintAll();
       // The server source is chosen from settings; re-resolve and re-arm the
@@ -805,10 +837,8 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("flow.toggleBoundary", () => {
       enabled = !enabled;
-      semanticEnabled = enabled;
       paintAll();
-      semanticEmitter?.fire();
-      vscode.window.setStatusBarMessage(`Flow boundary colouring ${enabled ? "on" : "off"}`, 2000);
+      vscode.window.setStatusBarMessage(`Flow cut markers ${enabled ? "on" : "off"}`, 2000);
     }),
     vscode.commands.registerCommand("flow.restart", async () => {
       output?.appendLine("[flow] restart requested");
@@ -1009,5 +1039,6 @@ module.exports = {
     serverRunning: () => Boolean(client),
     cutSlots: CUT_SLOTS,
     cutPalette: CUT_PALETTE,
+    semanticLegend: SEMANTIC_LEGEND,
   },
 };

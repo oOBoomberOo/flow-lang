@@ -213,7 +213,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.3 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.4 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn
@@ -287,7 +287,8 @@ break.
 |---|---|---|
 | `flow.cutPalette` | 12 colours | marker colours for cuts; the same slots theme the semantic tokens |
 | `flow.crossingColor` | grey | dotted marker for a crossing |
-| `flow.enableDecorations` | `true` | toggle boundary symbols and cut markers |
+| `flow.enableSemanticColors` | `true` | toggle symbol colours |
+| `flow.enableDecorations` | `true` | toggle cut underlines/gutter marks (symbol colours stay on) |
 | `flow.serverPath` | `""` | explicit `src/lsp/server.ts`; overrides auto-detection |
 | `flow.useWorkspaceServer` | `true` | in a compiler checkout, run its server instead of the bundle |
 | `flow.devWatch` | `true` | restart the server when the checkout's compiler/std-package changes |
@@ -301,7 +302,7 @@ matching defaults; override them in user or workspace settings to restyle the bo
 | command | effect |
 |---|---|
 | `Flow: Explain Boundary` | runs `flow explain` into an output channel |
-| `Flow: Toggle Boundary Colouring` | flips decorations |
+| `Flow: Toggle Cut Markers` | flips cut underlines/gutter marks; symbol colours stay on |
 | `Flow: Restart Language Server` | restarts the process |
 | `Flow: Import Symbol` | add an import for an unimported public symbol |
 | `Flow: Move Symbol to Module` | move a top-level declaration to another file, fixing imports |

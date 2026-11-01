@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and per-cut boundary colouring.",
-  "version": "0.18.3",
+  "version": "0.18.4",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -46,7 +46,7 @@
     ],
     "commands": [
       { "command": "flow.explain", "title": "Flow: Explain Boundary" },
-      { "command": "flow.toggleBoundary", "title": "Flow: Toggle Boundary Colouring" },
+      { "command": "flow.toggleBoundary", "title": "Flow: Toggle Cut Markers" },
       { "command": "flow.restart", "title": "Flow: Restart Language Server" },
       { "command": "flow.importSymbol", "title": "Flow: Import Symbol" },
       { "command": "flow.moveSymbol", "title": "Flow: Move Symbol to Module" },
@@ -93,10 +93,15 @@
           "default": "rgba(176, 176, 176, 0.7)",
           "description": "Colour of the dotted marker for a cross-tier expression resolved without a whole cut."
         },
+        "flow.enableSemanticColors": {
+          "type": "boolean",
+          "default": true,
+          "description": "Colour client/server/cut symbols with semantic tokens."
+        },
         "flow.enableDecorations": {
           "type": "boolean",
           "default": true,
-          "description": "Colour boundary symbols and mark cuts with an underline, gutter arrow and overview-ruler mark."
+          "description": "Mark cuts with an underline, gutter arrow and overview-ruler mark. Symbol colours are controlled separately by flow.enableSemanticColors."
         }
       }
     }
@@ -110,6 +115,7 @@
       "editor.inlayHints.enabled": "on"
     },
     "editor.semanticTokenColorCustomizations": {
+      "enabled": true,
       "rules": {
         "*.client": { "foreground": "#61afef" },
         "*.server": { "foreground": "#e0af68" },
