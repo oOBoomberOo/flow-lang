@@ -1,28 +1,82 @@
-// A package that consumes two registry dependencies.
-//
-//   flow install            -> vendors flow_modules/, writes flow.lock
-//   flow check src/main.flow
+module Main where
 
-use app::dashboard::{Card, bars}
-use app::status::{BootBadge, UpFor}
-use std::list::{map, range}
-use std::string::{capitalize, padLeft}
-use flow-charts::bar::Chart
-use flow-time::format::{hms, duration}
+import Flow.Client
+import Flow.Server
+import Flow.Serialize
+import Flow.Http
+import Flow.Cell
+import Flow.Exn (Exn)
 
-fn main() -> Html {
-  let stats = bars();
-  html {
-    <div class="app">
-      <h1>{"Dependencies"}</h1>
-      <Chart title={"Squares"} bars={stats} />
-      <BootBadge />
-      <UpFor started={0} />
-      <p class="time">{"uptime: "}{hms(3723000)}</p>
-      <p class="dur">{"took: "}{duration(65000)}</p>
-      <p class="cap">{"capitalized: "}{capitalize("flow")}</p>
-      <p class="pad">{"padded: "}{padLeft("9", 3, "0")}</p>
-      {map(range(3), fn(n: Int) -> Html { html { <Card n={n} /> } })}
-    </div>
-  }
-}
+import Todo
+import Math (div)
+import Flow.Builtins (Str)
+
+main :: ()
+main = do
+  Http.serve 
+    { page = router
+    , routes = []
+    }
+
+router :: RequestObject -> Html
+router = 
+  (Option.withDefault fallbackPage) 
+  . (map \(req, page) -> page req) 
+  . (matchPage pages)
+
+
+pages :: List PageRoute
+pages = 
+  [ page "/" homePage
+  , page "/about" aboutPage
+  ]
+
+state :: Cell (List Todo.Todo)
+state = Server.state $ empty
+
+f :: Str
+f = "Hello, Flow!"
+
+homePage req = 
+  <div>
+    <input type="text" placeholder="Add a todo" value={draft.value} onChange={\(e :: Event) -> draft := e.target.value}/>
+    <button onClick={
+      \(e :: Event) -> do
+        addItem draft.value
+        draft := ""
+    }>{"+"}</button>
+
+    {
+      map (get state) $ \todo ->
+        <div>
+          <input type="checkbox" checked={todo.completed} onChange={\(e :: Event) ->
+            handle Exn with
+              fail msg = Client.log ("caught: " + msg)
+            in state.update $ Todo.toggleTodo todo.id
+          } />
+          <span>{todo.title}</span>
+          <button onClick={\(e :: Event) -> state.update $ Todo.removeTodo todo.id}>{"Remove"}</button>
+        </div>
+    }
+  </div>
+
+  where
+    draft = Client.state ""
+
+    addItem title =
+      state.update $
+        \todos -> Todo.addTodo (Todo { id = getLastId todos + 1, title = title, completed = False }) todos
+          where 
+            getLastId = List.fold Math.maxInt 0 . map \t -> t.id
+
+aboutPage req = <h1>About Page</h1>
+
+fallbackPage = <h1>Page Not Found</h1>
+
+
+
+hello =
+    let x = Client.state 0 in
+    -- let y = Server.state False in
+    let z = Client.state "" in
+    (x, z)

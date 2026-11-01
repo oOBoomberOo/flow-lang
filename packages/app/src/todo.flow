@@ -1,0 +1,26 @@
+module Todo where
+
+import Flow.List (filter)
+import Flow.Math (random)
+import Flow.Exn (fail)
+
+data Todo = Todo
+  { id :: Int
+  , title :: Str
+  , completed :: Bool
+  }
+
+addTodo :: Todo -> List Todo -> List Todo
+addTodo todo todos = todos ++ [todo]
+
+removeTodo :: Int -> List Todo -> List Todo
+removeTodo todoId = List.filter $ \t -> t.id /= todoId
+
+toggleTodo :: Int -> List Todo -> List Todo
+toggleTodo todoId = map \t ->
+  if t.id == todoId then
+    Todo { completed = not t.completed, id = t.id, title = t.title }
+  else if Math.random () < 0.5 then
+    Exn.fail "Random failure occurred"
+  else
+    t

@@ -3,12 +3,16 @@
   "packages": {
     "flow-charts": {
       "version": "1.0.0",
-      "integrity": "sha256-3b18e5f94ed108dec1130685ad111bc430f03a1515145bc28c1f2fdb03aed4dc",
+      "integrity": "sha256-c14cff99b721004101d0276892f0e01984a0243acd88a0a563abde1f1233455a",
+      "source": "registry",
+      "resolved": "git:https://github.com/oOBoomberOo/flow-registry.git",
       "dependencies": {}
     },
     "flow-time": {
       "version": "1.2.0",
-      "integrity": "sha256-a4a00629dde2c39ef739e3d7d3fe05425b2cf1c96a1d10d407b9a8ae9cc9704b",
+      "integrity": "sha256-6dd3d1d12700c034a7430aa2f82476ec849898df8e888363a6027687ee29e932",
+      "source": "registry",
+      "resolved": "git:https://github.com/oOBoomberOo/flow-registry.git",
       "dependencies": {}
     }
   }
