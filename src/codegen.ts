@@ -191,6 +191,23 @@ export class Codegen {
     return h;
   }
 
+  /** The side a provider operation actually runs on. `home` treats a call to a
+   *  neutral function as neutral and lets its arguments become cuts; a provider
+   *  body is not called through a cut, so any placed subexpression (for example
+   *  the top-level server cell passed to `updateTodo`) puts it on that side. */
+  private bodySide(body: Expr): Side | "neutral" {
+    const h = this.home(body);
+    if (h !== "neutral") return h;
+    for (const e of [body, ...allDescendants(body)]) {
+      const p = this.placeOf(e);
+      if (p === "client" || p === "server") return p;
+      const t = this.mod.info.get(e)?.ty;
+      const tp = t ? typePlace(t) : "neutral";
+      if (tp === "client" || tp === "server") return tp;
+    }
+    return "neutral";
+  }
+
   /**
    * A `cross` node has parts on both sides. Rule order:
    *   (a) a type that can only live on one side wins (Html/Cell/Event ⇒ client);
@@ -1169,7 +1186,10 @@ export class Codegen {
               o.span,
             );
           }
-          const h = this.home(o.fn);
+          // A provider operation is a lambda value, which is placement-neutral;
+          // what decides its side is its body.
+          const body = o.fn.k === "Lam" ? o.fn.body : o.fn;
+          const h = this.bodySide(body);
           if (h !== side && h !== "neutral") return null;
           return `${ev(o.name)}: ${this.emitExpr(o.fn, side, "neutral", new Set())}`;
         })
@@ -1482,6 +1502,35 @@ export class Codegen {
     return `R.v(${this.emitExpr(e, side, ctxHome, env)})`;
   }
 
+  /** Call arguments: a Cell parameter receives the Cell itself, not its value.
+   *  `R.v(cell)` would turn it into a record and break `cell := …` inside the
+   *  callee. */
+  private callArg(
+    e: Expr,
+    expected: Type | undefined,
+    side: Side,
+    ctxHome: Side | "neutral",
+    env: Set<string>,
+  ): string {
+    const p = expected ? prune(expected) : undefined;
+    if (p && p.k === "con" && p.name === "Cell") return this.emitExpr(e, side, ctxHome, env);
+    return this.val(e, side, ctxHome, env);
+  }
+
+  /** Types of the arguments a call will actually receive. */
+  private paramTypesOf(fn: Expr): Type[] | undefined {
+    const direct = this.mod.info.get(fn)?.ty;
+    if (direct) {
+      const p = prune(direct);
+      if (p.k === "fun") return p.params;
+    }
+    if (fn.k === "Var") {
+      const info = this.mod.fns.get(fn.name);
+      if (info?.scheme.k === "fun") return info.scheme.params;
+    }
+    return undefined;
+  }
+
   /**
    * `handle E with { … } { body }`.
    *
@@ -1731,7 +1780,10 @@ export class Codegen {
       return genCall(`${choice.mangled}(${parts.join(", ")})`, traitMayGen);
     }
 
-    const args = e.args.map((a) => this.val(a, side, ctxHome, env)).join(", ");
+    const paramTypes = this.paramTypesOf(e.fn);
+    const args = e.args
+      .map((a, i) => this.callArg(a, paramTypes?.[i], side, ctxHome, env))
+      .join(", ");
 
     // `unsafe extern js fn` — call the host directly, or a shim module export
     if (e.fn.k === "Var") {
@@ -1821,6 +1873,13 @@ export class Codegen {
 
     const bound = this.mod.boundChoices.get(e);
     const choice = this.mod.implChoices.get(e);
+    const rightLead = this.mod.rightPartials.get(e) ?? 0;
+    const paramTypes = this.paramTypesOf(e.fn);
+    const providedAt = rightLead > 0
+      ? Math.max(0, (paramTypes?.length ?? 0) - e.args.length)
+      : 0;
+    const providedArgs = () =>
+      e.args.map((a, i) => this.callArg(a, paramTypes?.[providedAt + i], side, ctxHome, env));
     if (bound) {
       const qn = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
       const qualified = qn && (this.mod.traits.has(qn) || this.mod.effects.has(qn));
@@ -1842,13 +1901,12 @@ export class Codegen {
           ? this.shimRef(info2!.span?.file, ext.modulePath, ext.exportName, side)
           : `R.ffiFn(${ev(ext.implName)})`)
         : this.calleeJs(e.fn, side, ctxHome, env);
-      provided = e.args.map((a) => this.val(a, side, ctxHome, env));
+      provided = providedArgs();
     } else {
       fnJs = this.emitExpr(e.fn, side, ctxHome, env);
-      provided = e.args.map((a) => this.val(a, side, ctxHome, env));
+      provided = providedArgs();
     }
 
-    const rightLead = this.mod.rightPartials.get(e) ?? 0;
     const args = rightLead > 0
       ? [`...${restVar}`, ...provided, ...suffix].join(", ")
       : [...provided, `...${restVar}`, ...suffix].join(", ");

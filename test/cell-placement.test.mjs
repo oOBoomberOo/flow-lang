@@ -275,3 +275,34 @@ test("cells: a server cell keeps its identity and streams updates", async () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("cells: a Cell parameter receives the cell itself, not its value", () => {
+  const r = compileSource(`update :: Cell Int -> Int -> ()
+update c n = c := n
+
+main :: Html
+main = do
+  let c = Client.state 0
+  update c 1
+  <p>{str c.value}</p>`, "cell-param.flow");
+  assert.deepEqual(r.errors, []);
+  assert.match(r.client, /update\$main\$main\(c, R\.v\(1\)\)/, "the Cell argument is passed as a Cell");
+  assert.doesNotMatch(r.client, /update\$main\$main\(R\.v\(c\)/, "the Cell argument is not dereferenced");
+});
+
+test("providers: a server-state provider is installed only on the server", () => {
+  const r = compileSource(`effect Bump where
+  bump :: () -> ()
+
+state :: Cell Int @server
+state = Server.state 0
+
+provide Bump where
+  bump () = state := state.value + 1
+
+main :: Html
+main = <p>{"x"}</p>`, "provider-side.flow");
+  assert.deepEqual(r.errors, []);
+  assert.doesNotMatch(r.client, /R\.provide\("Bump"/, "the server provider is not installed in the browser");
+  assert.match(r.server, /R\.provide\("Bump"/, "the provider runs where its body runs");
+});

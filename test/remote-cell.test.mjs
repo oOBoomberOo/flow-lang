@@ -104,3 +104,47 @@ test("remote cells: a local server cell can be read and written from client code
   await pump();
   assert.equal(A.get(cell), true, "the client-side proxy writes the server cell");
 });
+
+test("remote cells: two clients each receive the server value update", async () => {
+  const A = createRuntime();
+  const B = createRuntime();
+  const C = createRuntime();
+  const toA = [], toB = [], toC = [];
+  A._attach((msg) => {
+    const target = A._sessionId() === "C" ? toC : toB;
+    target.push(JSON.parse(JSON.stringify(msg)));
+  }, "B");
+  B._attach((msg) => toA.push({ sid: "B", msg: JSON.parse(JSON.stringify(msg)) }), "B");
+  C._attach((msg) => toA.push({ sid: "C", msg: JSON.parse(JSON.stringify(msg)) }), "C");
+  async function pump() {
+    for (;;) {
+      if (toA.length) {
+        const { sid, msg } = toA.shift();
+        A._enter(sid);
+        await A._receive(msg);
+        continue;
+      }
+      if (toB.length) { await B._receive(toB.shift()); continue; }
+      if (toC.length) { await C._receive(toC.shift()); continue; }
+      break;
+    }
+  }
+
+  const cell = A.cell([]);
+  A.serve("items", () => A.get(cell));
+  const bNode = B.remote("items", () => ({}), []);
+  const cNode = C.remote("items", () => ({}), []);
+  await pump();
+  assert.deepEqual(B.v(bNode), []);
+  assert.deepEqual(C.v(cNode), []);
+
+  A.set(cell, ["a"]);
+  await pump();
+  assert.deepEqual(B.v(bNode), ["a"], "client B receives the update");
+  assert.deepEqual(C.v(cNode), ["a"], "client C receives the same update");
+
+  A.set(cell, ["a", "b"]);
+  await pump();
+  assert.deepEqual(B.v(bNode), ["a", "b"]);
+  assert.deepEqual(C.v(cNode), ["a", "b"]);
+});

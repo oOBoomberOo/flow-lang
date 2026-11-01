@@ -564,18 +564,22 @@ export function createRuntime() {
       switch (msg.t) {
         case "sub": {
           const key = `${sid}:${msg.id}`;
+          // The watcher outlives this request, so remember which session
+          // created the subscription. Otherwise an update triggered by client
+          // A would be pushed to A for client B's subscription node too.
+          const owner = sid;
           let s = served.get(key);
           if (!s) {
             const argCell = new Cell(msg.args ?? {});
             const fn = serves.get(msg.id);
             if (!fn) return;
             const node = new Node(() => fn(R.v(argCell)));
-            node.watch((value) => sendFn({ t: "val", id: msg.id, value }));
+            node.watch((value) => sendAs(owner, { t: "val", id: msg.id, value }));
             s = { argCell, node };
             served.set(key, s);
           }
           s.argCell.set(msg.args ?? {});
-          sendFn({ t: "val", id: msg.id, value: await s.node.get() });
+          sendAs(owner, { t: "val", id: msg.id, value: await s.node.get() });
           return;
         }
         case "val": {
