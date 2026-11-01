@@ -159,7 +159,7 @@ main = <p>{str (good ())}</p>
 
     const completion = await c.request("textDocument/completion", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "-- go", 4),
+      position: pos(text, "str (good", 9),
     });
     assert.ok((completion.items ?? []).some((i) => i.label === "good"), "completion still sees good");
 
@@ -194,7 +194,7 @@ main = <p>{str (good ())} {str (bad ())}</p>
 
     const completion = await c.request("textDocument/completion", {
       textDocument: { uri: uri(file) },
-      position: pos(text, "-- go", 4),
+      position: pos(text, "str (good", 9),
     });
     assert.ok((completion.items ?? []).some((i) => i.label === "good"));
 

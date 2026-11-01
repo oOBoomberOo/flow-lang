@@ -138,6 +138,7 @@ test("lsp: initialize advertises semantic tokens and hover", async () => {
     assert.ok(res.capabilities.semanticTokensProvider);
     assert.ok(res.capabilities.semanticTokensProvider.legend.tokenTypes.includes("keyword"));
     assert.ok(res.capabilities.semanticTokensProvider.legend.tokenModifiers.includes("client"));
+    assert.equal(res.capabilities.documentOnTypeFormattingProvider.firstTriggerCharacter, ">");
     assert.ok(res.capabilities.hoverProvider);
     assert.equal(res.serverInfo.name, "flow-lsp");
   } finally { c.proc.kill(); }

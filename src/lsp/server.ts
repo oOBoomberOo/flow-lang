@@ -21,6 +21,7 @@ const moduleNameOf = (m: { id: string }) => "Flow." + m.id.split("::").slice(1).
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
 import type { Decl, Expr, FnSig, Pattern, Program } from "../ast.ts";
 import { printType } from "../printer.ts";
+import { formatSource, tidyWhitespace } from "../format.ts";
 import { SEMANTIC_LEGEND, cutSlot, semanticTokensFor } from "./semantic.ts";
 
 /* ------------------------------------------------------------------ */
@@ -656,17 +657,22 @@ function semanticTokens(uri: string): { data: number[] } {
 
 const KEYWORDS = [
   "module", "import", "as", "data", "type", "class", "instance", "where", "let", "in",
-  "if", "then", "else", "case", "of", "do", "effect", "algebraic", "provide", "handle",
+  "if", "then", "else", "case", "of", "do", "effect", "provide", "handle",
   "with", "for", "foreign",
 ];
 
 const HTML_TAGS = [
-  "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6", "button", "input", "textarea",
-  "ul", "ol", "li", "a", "img", "section", "header", "footer", "main", "nav", "aside",
-  "form", "label", "table", "thead", "tbody", "tr", "td", "th", "strong", "em", "code",
-  "pre", "hr", "br", "figure", "figcaption", "details", "summary", "select", "option",
-  "article", "audio", "video", "canvas", "dialog", "fieldset", "legend", "menu", "meter",
-  "object", "output", "progress", "slot", "template", "time",
+  "a", "abbr", "address", "area", "article", "aside", "audio", "b", "base", "bdi", "bdo",
+  "blockquote", "body", "br", "button", "canvas", "caption", "cite", "code", "col",
+  "colgroup", "data", "datalist", "dd", "del", "details", "dfn", "dialog", "div", "dl",
+  "dt", "em", "embed", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
+  "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html", "i", "iframe", "img",
+  "input", "ins", "kbd", "label", "legend", "li", "link", "main", "map", "mark", "menu",
+  "meta", "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output", "p",
+  "param", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s", "samp", "script",
+  "search", "section", "select", "slot", "small", "source", "span", "strong", "style",
+  "sub", "summary", "sup", "svg", "table", "tbody", "td", "template", "textarea", "tfoot",
+  "th", "thead", "time", "title", "tr", "track", "u", "ul", "var", "video", "wbr",
 ];
 
 /** Tags that render without children. */
@@ -754,7 +760,6 @@ const KEYWORD_DOC: Record<string, string> = {
   case: "case value of\n  Pattern -> expression",
   do: "do\n  x <- action\n  result",
   effect: "effect Name @ client|server where\n  op :: T -> R",
-  algebraic: "effect Name where\n  op :: T -> R",
   provide: "provide Effect where\n  op x = …",
   handle: "handle Effect with\n  op x = resume x\nin body",
   foreign: 'foreign import js unsafe "Math.floor" name :: Float -> Int',
@@ -773,27 +778,44 @@ const KEYWORD_SNIPPETS: Record<string, string> = {
   case: "case ${1:value} of\n\t${2:Pattern} -> ${0}",
   do: "do\n\t${1:x} <- ${2:action}\n\t${0}",
   effect: "effect ${1:Name} @ ${2|client,server|} where\n\t${3:op} :: ${4:Type}",
-  algebraic: "effect ${1:Name} where\n\t${2:op} :: ${3:Type}",
   provide: "provide ${1:Effect} where\n\t${2:op} ${3:x} = ${0}",
   handle: "handle ${1:Effect} with\n\t${2:op} ${3:x} = resume ${3:x}\nin ${0}",
   foreign: "foreign import js unsafe \"${1:Math.floor}\" ${2:name} :: ${3:Type}",
 };
 
+/** Resolve `import Foo.Bar as Baz` so `Baz.member` completes Foo.Bar. */
+function importedAlias(a: Analysis | null, qualifier: string): string | null {
+  const name = qualifier.replace(/\.$/, "");
+  for (const d of a?.program?.decls ?? []) {
+    if (d.k === "Use" && d.alias === name) return `${d.path.join(".")}.`;
+  }
+  return null;
+}
+
 function completion(file: string, pos: Position) {
   const text = textOf(file);
   const off = offsetAt(text, pos);
   const before = text.slice(0, off);
+  const replaceFrom = (start: number): Range => ({
+    start: offsetToPosition(text, start),
+    end: pos,
+  });
 
-  // a module qualifier is capitalised (`Option.`, `FlowCharts.Bar.`) and may
-  // already have a partial member (`Time.no`); `props.r.` is a field
+  // Never suggest inside a string or comment.
+  if (insideCommentOrString(before)) return { isIncomplete: false, items: [] };
+
+  // A module qualifier is capitalised (`Option.`, `FlowCharts.Bar.`, or an
+  // import alias) and may already have a partial member (`Time.no`).
   const qualifier = /((?:[A-Z][A-Za-z0-9_]*\.)+)([A-Za-z0-9_']*)\s*$/.exec(before);
-  const dot = /([A-Za-z0-9_.()]+)\.\s*$/.exec(before);
+  // `props.title`, `props.ti` and chains like `state.value.`: the receiver is
+  // everything before the final dot, the optional group is the typed prefix.
+  const field = /([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)\.([A-Za-z0-9_']*)\s*$/.exec(before);
   const prefixMatch = /[A-Za-z0-9_']*$/.exec(before);
   const prefix = prefixMatch ? prefixMatch[0] : "";
 
-  // Module members: `Option.map`, `List.`, `Time.no`
+  // Module members: `Option.map`, `List.`, `Time.no`, `Alias.member`
   if (qualifier) {
-    const q = qualifier[1]!;
+    const q = importedAlias(lastAnalysis, qualifier[1]!) ?? qualifier[1]!;
     const memberPrefix = qualifier[2] ?? "";
     const a = lastAnalysis;
     const modules = a?.modules ?? stdModules();
@@ -812,6 +834,7 @@ function completion(file: string, pos: Position) {
         detail,
         documentation: { kind: "markdown", value: `\`${detail}\`` },
         sortText: sort + name,
+        textEdit: { range: replaceFrom(off - memberPrefix.length), newText: name },
       });
     };
     // loaded modules carry real declaration sites; only exported names belong
@@ -846,20 +869,34 @@ function completion(file: string, pos: Position) {
     return { isIncomplete: false, items };
   }
 
-  // Field access: `props.` / `cell.`
-  if (dot) {
-    const recvEnd = off - (dot[0].length - dot[1]!.length);
+  // Field access: `props.`, `props.ti`, `state.value.`
+  if (field) {
+    const recv = field[1]!;
+    const fieldPrefix = field[2] ?? "";
+    const recvEnd = off - (field[0].length - recv.length);
     const recvPos = offsetToPosition(text, Math.max(0, recvEnd));
     const node = nodeAt(file, { line: recvPos.line, character: recvPos.character });
-    const fields = node?.fields ?? [];
-    const items = fields.map((f) => ({ label: f, kind: 5, detail: "field", sortText: "0" + f }));
+    const edit = replaceFrom(off - fieldPrefix.length);
+    const items: Record<string, unknown>[] = [];
+    const seen = new Set<string>();
+    const addField = (name: string, kind: number, detail: string) => {
+      if (fieldPrefix && !name.toLowerCase().startsWith(fieldPrefix.toLowerCase())) return;
+      if (seen.has(name)) return;
+      seen.add(name);
+      items.push({
+        label: name,
+        kind,
+        detail,
+        sortText: "0" + name,
+        textEdit: { range: edit, newText: name },
+      });
+    };
+    for (const f of node?.fields ?? []) addField(f, 5, "field");
     if (node?.cellElem) {
-      items.unshift(
-        { label: "value", kind: 5, detail: node.cellElem, sortText: "0value" },
-        { label: "get", kind: 2, detail: `() -> ${node.cellElem}`, sortText: "0get" },
-        { label: "set", kind: 2, detail: `(${node.cellElem}) -> Unit`, sortText: "0set" },
-        { label: "update", kind: 2, detail: `((${node.cellElem}) -> ${node.cellElem}) -> Unit`, sortText: "0update" },
-      );
+      addField("value", 5, node.cellElem);
+      addField("get", 2, `() -> ${node.cellElem}`);
+      addField("set", 2, `(${node.cellElem}) -> Unit`);
+      addField("update", 2, `((${node.cellElem}) -> ${node.cellElem}) -> Unit`);
     }
     return { isIncomplete: false, items };
   }
@@ -927,7 +964,11 @@ function completion(file: string, pos: Position) {
       sortText: (component ? "1" : "0") + tag,
     });
     const components = (lastAnalysis?.symbols ?? [])
-      .filter((s) => s.kind === "function" && s.public)
+      .filter((s) =>
+        s.kind === "function"
+        && s.public
+        && /^[A-Z]/.test(s.name)
+        && (lastAnalysis?.signatures.get(s.finalName)?.ret ?? "").includes("Html"))
       .map((s) => s.name);
     return {
       isIncomplete: false,
@@ -939,29 +980,36 @@ function completion(file: string, pos: Position) {
   }
 
   const items: unknown[] = [];
+  const replace = replaceFrom(off - prefix.length);
   for (const k of KEYWORDS) {
     if (prefix && !k.startsWith(prefix)) continue;
     const snippet = KEYWORD_SNIPPETS[k];
     const item: Record<string, unknown> = {
       label: k, kind: 15, detail: "keyword", documentation: KEYWORD_DOC[k], sortText: "3" + k,
+      textEdit: { range: replace, newText: snippet ?? k },
     };
     if (snippet) {
-      // `fn`, `match`, `html`, … expand into a skeleton the user fills in
-      item.insertText = snippet;
+      // `module`, `do`, `case`, … expand into a skeleton the user fills in
       item.insertTextFormat = 2;
       item.kind = 14;
     }
     items.push(item);
   }
+  const localNames = new Set<string>();
   for (const l of localsAt(file, pos)) {
     if (prefix && !l.name.startsWith(prefix)) continue;
-    items.push({ label: l.name, kind: 6, detail: l.type || "local", sortText: "0" + l.name });
+    localNames.add(l.name);
+    items.push({
+      label: l.name, kind: 6, detail: l.type || "local", sortText: "0" + l.name,
+      textEdit: { range: replace, newText: l.name },
+    });
   }
   const curUnit = (lastAnalysis?.units ?? []).find((u) => path.resolve(u.file) === path.resolve(file));
   const imported = lastAnalysis?.importedByFile?.get(path.resolve(file)) ?? new Set<string>();
   const lastUseLine = text.split("\n").reduce((acc, l, i) => (l.startsWith("import ") ? i : acc), -1);
   const prefixLower = prefix.toLowerCase();
   const seenSymbols = new Set<string>();
+  const seenLabels = new Set(localNames);
 
   for (const s of lastAnalysis?.symbols ?? []) {
     const currentUnit = s.unit === curUnit?.id;
@@ -971,8 +1019,9 @@ function completion(file: string, pos: Position) {
       if (!name.startsWith(prefixLower) && !name.includes(prefixLower)) continue;
     }
     const key = `${s.name}|${s.display}`;
-    if (seenSymbols.has(key)) continue;
+    if (seenSymbols.has(key) || seenLabels.has(s.name)) continue;
     seenSymbols.add(key);
+    seenLabels.add(s.name);
     const inScope = currentUnit || imported.has(s.finalName);
     const prefixRank = s.name.toLowerCase().startsWith(prefixLower) ? "0" : "1";
     const item: Record<string, unknown> = {
@@ -981,6 +1030,7 @@ function completion(file: string, pos: Position) {
       detail: inScope ? s.kind : `${s.kind} · ${s.display.split(".").slice(0, -1).join(".")}`,
       documentation: { kind: "markdown", value: `\`${s.display}\`` },
       sortText: (inScope ? "1" : "2") + prefixRank + s.name,
+      textEdit: { range: replace, newText: s.name },
     };
     if (!inScope) {
       // completing a name from another module inserts its import
@@ -1005,8 +1055,9 @@ function completion(file: string, pos: Position) {
         if (!name.startsWith(prefixLower) && !name.includes(prefixLower)) continue;
       }
       const key = `${mem.name}|${m.id}`;
-      if (seenSymbols.has(key)) continue;
+      if (seenSymbols.has(key) || seenLabels.has(mem.name)) continue;
       seenSymbols.add(key);
+      seenLabels.add(mem.name);
       const at = { line: lastUseLine + 1, character: 0 };
       items.push({
         label: mem.name,
@@ -1014,6 +1065,7 @@ function completion(file: string, pos: Position) {
         detail: `${mem.kind} · ${moduleNameOf(m)}`,
         documentation: { kind: "markdown", value: `\`${moduleNameOf(m)}.${mem.name}\`` },
         sortText: `2${mem.name.toLowerCase().startsWith(prefixLower) ? "0" : "1"}${mem.name}`,
+        textEdit: { range: replace, newText: mem.name },
         additionalTextEdits: [{
           range: { start: at, end: at },
           newText: `import ${moduleNameOf(m)} (${mem.name})\n`,
@@ -1158,7 +1210,28 @@ function inlayHints(file: string): unknown[] {
         walk(n.value);
         return;
       case "Lam": walk(n.body); return;
-      case "App": walk(n.fn); for (const x of (n.args as unknown[]) ?? []) walk(x); return;
+      case "App": {
+        const fn = n.fn as { k?: string; name?: string };
+        const args = (n.args as { span?: { start: number; file?: string } }[]) ?? [];
+        const sig = fn.k === "Var" && fn.name ? a.signatures.get(fn.name) : undefined;
+        if (sig && args.length > 1) {
+          for (let i = 0; i < args.length; i++) {
+            const param = sig.params[i];
+            const span = args[i]?.span;
+            if (!param || !span || (span.file && path.resolve(span.file) !== f)) continue;
+            hints.push({
+              position: offsetToPosition(text, span.start),
+              label: `${param.name}:`,
+              kind: 2,
+              paddingRight: true,
+              tooltip: `parameter ${i + 1} of ${sig.name}: ${param.type}`,
+            });
+          }
+        }
+        walk(n.fn);
+        for (const x of (n.args as unknown[]) ?? []) walk(x);
+        return;
+      }
       case "If": walk(n.cond); walk(n.then); walk(n.else); return;
       case "Match": walk(n.scrut); for (const a2 of (n.arms as unknown[]) ?? []) walk((a2 as { body: unknown }).body); return;
       case "Binary": walk(n.l); walk(n.r); return;
@@ -1268,14 +1341,67 @@ function documentHighlights(file: string, pos: Position) {
 /* formatting                                                         */
 /* ------------------------------------------------------------------ */
 
-/** Layout-sensitive code is indentation-driven, so formatting only normalises
- *  trailing whitespace and the final newline; it never re-indents. */
+/** Format from the AST when the buffer is a complete module, so lists, records,
+ *  markup nesting and layout blocks all get the language's canonical shape.
+ *  A mid-edit buffer falls back to whitespace-only tidying; on-type indentation
+ *  and tag closing are handled separately. */
 function format(file: string) {
   const text = textOf(file);
-  const lines = text.split("\n");
-  const out = lines.map((l) => l.replace(/[ \t]+$/, ""));
-  while (out.length && out[out.length - 1] === "") out.pop();
-  return [{ range: { start: { line: 0, character: 0 }, end: { line: lines.length, character: 0 } }, newText: out.join("\n") + "\n" }];
+  let canonical: string | null = null;
+  try {
+    canonical = formatSource(text, file, { requireModule: true });
+  } catch {
+    canonical = null;
+  }
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const newText = canonical == null
+    ? tidyWhitespace(text)
+    : eol === "\n" ? canonical : canonical.replace(/\n/g, eol);
+  return [{
+    range: { start: { line: 0, character: 0 }, end: { line: text.split(/\r?\n/).length, character: 0 } },
+    newText,
+  }];
+}
+
+/** True when the cursor is inside a line/block comment or an open string. */
+function insideCommentOrString(before: string): boolean {
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const line = before.slice(lineStart);
+  if (/^\s*--/.test(line) || /\s--\s/.test(line)) return true;
+  const blockOpen = before.lastIndexOf("{-");
+  const blockClose = before.lastIndexOf("-}");
+  if (blockOpen >= 0 && blockOpen > blockClose) return true;
+  let inString = false;
+  for (let i = 0; i < before.length; i++) {
+    const c = before[i]!;
+    if (c === "\\") { i++; continue; }
+    if (c === "\"") inString = !inString;
+  }
+  return inString;
+}
+
+/**
+ * Auto-close a tag when `>` is typed: `<div>` becomes `<div></div>` with the
+ * cursor between them. Void tags, self-closing tags and tags that already have
+ * a closing tag are left alone. This is LSP `textDocument/onTypeFormatting`,
+ * so the editor decides when to ask.
+ */
+function onTypeFormatting(file: string, pos: Position, ch: string) {
+  if (ch !== ">") return [];
+  const text = textOf(file);
+  const off = offsetAt(text, pos);
+  const before = text.slice(0, off);
+  if (insideCommentOrString(before)) return [];
+  // The innermost tag whose `>` is the character just typed. A window keeps
+  // this cheap on large files; a tag longer than this is not worth closing.
+  const m = /<([A-Za-z][\w.-]*)((?:[^<>"']|"[^"]*"|'[^']*')*)>$/.exec(before.slice(-8000));
+  if (!m) return [];
+  const tag = m[1]!;
+  const attrs = m[2] ?? "";
+  if (VOID_TAGS.has(tag) || /\/\s*$/.test(attrs)) return [];
+  const after = text.slice(off);
+  if (new RegExp(`^\\s*</\\s*${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(after)) return [];
+  return [{ range: { start: pos, end: pos }, newText: `</${tag}>` }];
 }
 
 /* ------------------------------------------------------------------ */
@@ -1890,6 +2016,7 @@ reader.onMessage((msg) => {
           selectionRangeProvider: true,
           documentHighlightProvider: true,
           documentFormattingProvider: true,
+          documentOnTypeFormattingProvider: { firstTriggerCharacter: ">", moreTriggerCharacter: ["/"] },
           documentLinkProvider: { resolveProvider: false },
           typeDefinitionProvider: true,
           codeActionProvider: true,
@@ -2103,6 +2230,10 @@ reader.onMessage((msg) => {
 
     case "textDocument/formatting":
       reply(id, format(path.resolve(uriToPath(docUri!))));
+      return;
+
+    case "textDocument/onTypeFormatting":
+      reply(id, onTypeFormatting(path.resolve(uriToPath(docUri!)), p.position as Position, p.ch as string));
       return;
 
     case "textDocument/codeAction":

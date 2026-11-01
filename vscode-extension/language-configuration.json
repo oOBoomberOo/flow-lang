@@ -1,30 +1,45 @@
 {
-  "comments": { "lineComment": "//", "blockComment": ["/*", "*/"] },
+  "comments": { "lineComment": "--", "blockComment": ["{-", "-}"] },
   "brackets": [["{", "}"], ["[", "]"], ["(", ")"]],
   "autoClosingPairs": [
     { "open": "{", "close": "}" },
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
-    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
-    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
-    { "open": "/*", "close": " */", "notIn": ["string", "comment"] }
+    { "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
   ],
   "surroundingPairs": [
-    ["{", "}"], ["[", "]"], ["(", ")"], ["\"", "\""], ["'", "'"], ["/*", "*/"]
+    ["{", "}"], ["[", "]"], ["(", ")"], ["\"", "\""]
   ],
   "autoCloseBefore": ";:.,=}])> \n\t",
   "indentationRules": {
-    "increaseIndentPattern": "^.*(\\{[^}\"']*|\\([^)\"']*|\\[^]\"']*)$",
-    "decreaseIndentPattern": "^\\s*[}\\]\\)]"
+    "increaseIndentPattern": "^.*(\\bdo\\b|\\bwhere\\b|\\bof\\b|\\bwith\\b|\\bthen\\b|\\belse\\b|=\\s*$|->\\s*$|<[A-Za-z][\\w-]*(\\s[^<>]*)?>\\s*$|[\\{\\[\\(]\\s*$)",
+    "decreaseIndentPattern": "^\\s*(in\\b|else\\b|[}\\]\\)]|</[A-Za-z][\\w-]*>)"
   },
   "onEnterRules": [
     {
-      "beforeText": "<([A-Za-z][\\w-]*)(\\s+[^<>]*)?>\\s*$",
+      "beforeText": "^\\s*<([A-Za-z][\\w-]*)(\\s+[^<>]*)?>\\s*$",
+      "afterText": "^\\s*</[A-Za-z][\\w-]*>\\s*$",
+      "action": { "indent": "indentOutdent" }
+    },
+    {
+      "beforeText": "^.*<([A-Za-z][\\w-]*)(\\s+[^<>]*)?>\\s*$",
       "action": { "indent": "indent" }
     },
     {
       "beforeText": "^\\s*</[A-Za-z][\\w-]*>\\s*$",
       "action": { "indent": "outdent" }
+    },
+    {
+      "beforeText": "^.*(\\bdo\\b|\\bwhere\\b|\\bof\\b|\\bwith\\b|\\bthen\\b|\\belse\\b|=\\s*|->\\s*)$",
+      "action": { "indent": "indent" }
+    },
+    {
+      "beforeText": "^\\s*(in\\b|else\\b)",
+      "action": { "indent": "outdent" }
+    },
+    {
+      "beforeText": "^\\s*--.*$",
+      "action": { "indent": "none", "appendText": "-- " }
     }
   ],
   "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)"

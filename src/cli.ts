@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { compileFile } from "./compile.ts";
-import { parse } from "./parser.ts";
-import { printProgram } from "./printer.ts";
+import { formatSource } from "./format.ts";
 import { migrateSource } from "./migrate.ts";
 import { readManifest, STDLIB_DIR } from "./modules.ts";
 import { createHost, runServerEntry } from "./host.ts";
@@ -386,28 +385,9 @@ function compile(file: string, style: Style, verb: "check" | "compile", opts: { 
 }
 
 /** Read a source file's format: module header, comments and declarations. */
-function formatFile(file: string, pkg?: string): string {
+function formatFile(file: string): string {
   const src = fs.readFileSync(file, "utf8");
-  const program = parse(src, file, { recover: true });
-  const comments = new Map<number, string[]>();
-  let pending: string[] = [];
-  const declLines = new Set(program.decls.map((d) => d.span.line));
-  src.split(/\r?\n/).forEach((text, i) => {
-    const line = i + 1;
-    if (/^\s*--/.test(text)) { pending.push(text.replace(/^\s*-- ?/, "")); return; }
-    if (!text.trim()) return;
-    if (declLines.has(line)) {
-      if (pending.length) comments.set(line, pending);
-      pending = [];
-    } else if (/^\S/.test(text)) pending = [];
-  });
-  const parts = file.split(/[\\/]/);
-  const srcAt = parts.lastIndexOf("src");
-  const rel = srcAt >= 0 ? parts.slice(srcAt + 1) : [parts[parts.length - 1]!];
-  const moduleName = rel
-    .map((seg) => seg.replace(/\.flow$/, "").split(/[-_]/).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(""))
-    .join(".");
-  return printProgram(program, { moduleName, comments });
+  return formatSource(src, file) ?? src;
 }
 
 function fmt(argv: string[], style: Style): void {

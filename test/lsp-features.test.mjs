@@ -1224,3 +1224,176 @@ main = <p>{"x"}</p>
     assert.ok(commands.includes("flow.organizeImports"), JSON.stringify(commands));
   } finally { c.proc.kill(); }
 });
+
+test("lsp: completion filters by the typed prefix and replaces it", async () => {
+  const { entry } = packageWith({
+    "main.flow": `tally :: Int -> Int
+tally x = x
+
+main :: Html
+main = <p>{tal}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "{tal}", 4);
+    const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: at });
+    const tally = res.items.find((i) => i.label === "tally");
+    assert.ok(tally, "a symbol is offered as the user types");
+    assert.equal(tally.textEdit.newText, "tally");
+    assert.equal(tally.textEdit.range.start.character, at.character - 3, "the typed prefix is replaced");
+    assert.equal(tally.textEdit.range.end.character, at.character);
+
+    // No word suggestions inside a string literal.
+    const stringFile = packageWith({ "main.flow": `main :: Html\nmain = <p>{"tal"}</p>\n` });
+    await open(c, stringFile.entry);
+    const inside = await c.request("textDocument/completion", {
+      textDocument: { uri: uri(stringFile.entry) },
+      position: pos(fs.readFileSync(stringFile.entry, "utf8"), "{\"tal\"}", 5),
+    });
+    assert.deepEqual(inside.items, [], "strings are not completion contexts");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: field completion accepts a partial name and only offers fields", async () => {
+  const { entry } = packageWith({
+    "main.flow": `type Rec = { title :: Str, count :: Int }
+
+read :: Rec -> Str
+read r = r.ti
+
+main :: Html
+main = <p>{"x"}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    await new Promise((r) => setTimeout(r, 200));
+    const at = pos(text, "r.ti", 4);
+    const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: at });
+    assert.deepEqual(res.items.map((i) => i.label), ["title"], "only fields matching the prefix");
+    const item = res.items[0];
+    assert.equal(item.textEdit.newText, "title");
+    assert.equal(item.textEdit.range.start.character, at.character - 2, "the partial field is replaced");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: a qualifier with no members does not fall back to every symbol", async () => {
+  const { entry } = packageWith({
+    "main.flow": `tally :: Int -> Int
+tally x = x
+
+main :: Html
+main = <p>{str (Nope.)}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "Nope.", 5);
+    const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: at });
+    assert.deepEqual(res.items, [], "an unknown qualifier offers no unrelated symbols");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: typing <di offers matching elements and inserts the closing pair", async () => {
+  const { entry } = packageWith({ "main.flow": `main :: Html\nmain = <di\n` });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "<di", 3);
+    const res = await c.request("textDocument/completion", { textDocument: { uri: uri(entry) }, position: at });
+    assert.ok(res.items.length > 0);
+    assert.ok(res.items.every((i) => i.label.toLowerCase().startsWith("di")), "only tags starting with di");
+    const div = res.items.find((i) => i.label === "div");
+    assert.ok(div, "div is offered");
+    assert.match(div.textEdit.newText, /<div>\$\{0\}<\/div>/, "the pair is inserted");
+    assert.equal(div.textEdit.range.start.character, at.character - 3, "the typed <di is replaced");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: on-type formatting closes tags but not void or self-closing tags", async () => {
+  const { entry } = packageWith({ "main.flow": `main :: Html\nmain = <div>\n` });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const text = await open(c, entry);
+    const at = pos(text, "<div>", 5);
+    const edits = await c.request("textDocument/onTypeFormatting", {
+      textDocument: { uri: uri(entry) }, position: at, ch: ">",
+      options: { tabSize: 2, insertSpaces: true },
+    });
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].newText, "</div>");
+    assert.deepEqual(edits[0].range.start, at);
+
+    const voidFile = packageWith({ "main.flow": `main :: Html\nmain = <input>\n` });
+    const voidText = await open(c, voidFile.entry);
+    const voidAt = pos(voidText, "<input>", 7);
+    const voidEdits = await c.request("textDocument/onTypeFormatting", {
+      textDocument: { uri: uri(voidFile.entry) }, position: voidAt, ch: ">",
+      options: { tabSize: 2, insertSpaces: true },
+    });
+    assert.deepEqual(voidEdits, [], "void tags are not closed");
+
+    const selfFile = packageWith({ "main.flow": `main :: Html\nmain = <Card />\n` });
+    const selfText = await open(c, selfFile.entry);
+    const selfAt = pos(selfText, "/>", 2);
+    const selfEdits = await c.request("textDocument/onTypeFormatting", {
+      textDocument: { uri: uri(selfFile.entry) }, position: selfAt, ch: ">",
+      options: { tabSize: 2, insertSpaces: true },
+    });
+    assert.deepEqual(selfEdits, [], "self-closing tags are not closed");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: formatting uses the language layout for lists and nested markup", async () => {
+  const { entry } = packageWith({
+    "main.flow": `main :: Html
+main = do
+  let xs = [1,2,3]
+  <div>
+  <p>{"x"}</p>
+  </div>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const edits = await c.request("textDocument/formatting", {
+      textDocument: { uri: uri(entry) }, options: { tabSize: 2, insertSpaces: true },
+    });
+    assert.equal(edits.length, 1);
+    assert.match(edits[0].newText, /\[1, 2, 3\]/, "list items are spaced");
+    assert.match(edits[0].newText, /\n    <p>\{"x"\}<\/p>/, "nested markup is indented");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: inlay hints name call arguments", async () => {
+  const { entry } = packageWith({
+    "main.flow": `add :: Int -> Int -> Int
+add a b = a + b
+
+main :: Html
+main = <p>{str (add 1 2)}</p>
+`,
+  });
+  const c = startServer();
+  try {
+    await c.request("initialize", { rootUri: null, capabilities: {} });
+    await open(c, entry);
+    const hints = await c.request("textDocument/inlayHint", {
+      textDocument: { uri: uri(entry) }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } },
+    });
+    const labels = hints.map((h) => String(h.label));
+    assert.ok(labels.includes("a:"), `first parameter hint: ${labels.join(", ")}`);
+    assert.ok(labels.includes("b:"), `second parameter hint: ${labels.join(", ")}`);
+  } finally { c.proc.kill(); }
+});

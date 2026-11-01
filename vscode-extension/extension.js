@@ -413,6 +413,19 @@ function registerProviders(context) {
     },
   }, "(", ","));
 
+  push(vscode.languages.registerOnTypeFormattingEditProvider("flow", {
+    async provideOnTypeFormattingEdits(document, position, ch, options) {
+      syncDocument(document);
+      const edits = await ask("textDocument/onTypeFormatting", {
+        textDocument: doc(document),
+        position: backPos(position),
+        ch,
+        options: { tabSize: options?.tabSize ?? 2, insertSpaces: options?.insertSpaces ?? true },
+      }, []);
+      return (edits || []).map((e) => vscode.TextEdit.replace(R(e.range), e.newText));
+    },
+  }, ">", "/"));
+
   push(vscode.languages.registerInlayHintsProvider("flow", {
     async provideInlayHints(document, range) {
       const hints = await ask("textDocument/inlayHint", { textDocument: doc(document), range: back(range) }, []);

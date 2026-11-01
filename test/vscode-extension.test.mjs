@@ -149,6 +149,7 @@ function makeMock(workspaceRoot) {
       registerWorkspaceSymbolProvider: (p) => { registered.push(["workspaceSymbol", p]); return d(); },
       registerSignatureHelpProvider: (_l, p) => { registered.push(["signatureHelp", p]); return d(); },
       registerInlayHintsProvider: (_l, p) => { registered.push(["inlayHint", p]); return d(); },
+      registerOnTypeFormattingEditProvider: (_l, p, ...triggers) => { registered.push(["onTypeFormatting", p, triggers]); return d(); },
       registerFoldingRangeProvider: (_l, p) => { registered.push(["foldingRange", p]); return d(); },
       registerSelectionRangeProvider: (_l, p) => { registered.push(["selectionRange", p]); return d(); },
       registerDocumentHighlightProvider: (_l, p) => { registered.push(["documentHighlight", p]); return d(); },
@@ -231,8 +232,8 @@ test("vscode: activates, drives the server and colours the boundary", async () =
     assert.deepEqual(names, [
       "codeAction", "codeLens", "completion", "definition", "documentHighlight", "documentLink",
       "documentSymbol", "foldingRange", "formatting", "hover", "inlayHint",
-      "references", "rename", "selectionRange", "semanticTokens", "signatureHelp",
-      "typeDefinition", "workspaceSymbol",
+      "onTypeFormatting", "references", "rename", "selectionRange", "semanticTokens",
+      "signatureHelp", "typeDefinition", "workspaceSymbol",
     ]);
     const commandNames = env.commands.map(([name]) => name);
     for (const name of ["flow.importSymbol", "flow.moveSymbol", "flow.organizeImports"]) {
@@ -293,6 +294,10 @@ test("vscode: providers return real results from the server", async () => {
     assert.ok(tokens.data.length > 0 && tokens.data.length % 5 === 0, "semantic tokens are returned");
     assert.ok(sem[2].tokenModifiers.includes("client"), "legend carries the client modifier");
     assert.ok(sem[2].tokenModifiers.includes("cut1"), "legend carries the cut palette");
+
+    const onType = env.registered.find((r) => r[0] === "onTypeFormatting");
+    assert.ok(onType, "on-type formatting provider registered");
+    assert.deepEqual(onType[2], [">", "/"], "typing > (and /) asks the server for tag edits");
   } finally {
     ext.deactivate();
     restore();
@@ -375,6 +380,9 @@ test("vscode: package.json and grammar are valid and complete", () => {
   for (const key of ["flow.serverPath", "flow.useWorkspaceServer", "flow.devWatch", "flow.enableDecorations"]) {
     assert.ok(pkg.contributes.configuration.properties[key], `contributes ${key}`);
   }
+  assert.equal(pkg.configurationDefaults["[flow]"]["editor.quickSuggestions"].other, true, "suggestions appear as you type");
+  assert.equal(pkg.configurationDefaults["[flow]"]["editor.formatOnType"], true, "tag closing runs on type");
+  assert.equal(pkg.configurationDefaults["[flow]"]["editor.inlayHints.enabled"], "on", "inlay hints are visible");
   const restart = pkg.contributes.commands.find((c) => c.command === "flow.restart");
   assert.ok(restart, "Flow: Restart Language Server is contributed");
   for (const command of ["flow.importSymbol", "flow.moveSymbol", "flow.organizeImports"]) {
@@ -382,11 +390,14 @@ test("vscode: package.json and grammar are valid and complete", () => {
   }
 
   const language = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "language-configuration.json"), "utf8"));
+  assert.equal(language.comments.lineComment, "--");
+  assert.deepEqual(language.comments.blockComment, ["{-", "-}"]);
   const pairs = language.autoClosingPairs.map((p) => p.open);
-  for (const open of ["{", "[", "(", "\"", "'", "/*"]) {
+  for (const open of ["{", "[", "(", "\""]) {
     assert.ok(pairs.includes(open), `auto-closes ${open}`);
   }
-  assert.ok(Array.isArray(language.onEnterRules) && language.onEnterRules.length >= 1, "markup enter rules");
+  assert.ok(Array.isArray(language.onEnterRules) && language.onEnterRules.length >= 2, "markup and layout enter rules");
+  assert.ok(language.indentationRules.increaseIndentPattern, "indentation rules");
 
   const grammar = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "syntaxes", "flow.tmLanguage.json"), "utf8"));
   assert.equal(grammar.scopeName, "source.flow");

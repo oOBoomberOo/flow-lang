@@ -25,17 +25,18 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
 | `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments and operators, with `client` / `server` / `cut1`…`cut12` / `crossing` / `dependency` modifiers. Symbols are coloured by the cut that owns them; a dependency keeps its owner's colour and is underlined |
 | `textDocument/hover` | resolved type (inferred types included, for local `let` bindings, function and lambda parameters and `case` pattern variables), placement, effect row, and where a symbol is declared; works on variables, parameters and local bindings, constructors, function declarations (showing the inferred signature), type names (built-in description or `data`/`type`/`class`/`effect` definition) and imported names |
-| `textDocument/completion` | keywords, locals in scope, every symbol in the package, **the std module list after `Flow.`**, **a module's public members after `Module.` / `Flow.List.` / `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
+| `textDocument/completion` | suggestions as you type, with the typed prefix replaced by the choice: locals in scope, package symbols, keywords/snippets, **only that qualifier's members after `Module.` / `Flow.List.` / an `as` alias / a partial `Module.no`**, **only that value's fields and Cell members after `.` / `props.ti`**, unimported names (with an import edit), HTML elements/components/attributes/closing tags; no suggestions inside strings or comments; prefix-ranked and deduplicated |
+| `textDocument/onTypeFormatting` | typing `>` after `<div>` inserts `</div>` with the cursor between the pair; void tags, self-closing tags and tags that already have a closing tag are left alone |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
 | `textDocument/references` | every occurrence of a global (unique final name) or a scoped local |
 | `textDocument/documentSymbol` | functions, types, constructors, traits, effects, records |
 | `workspace/symbol` | search the whole package graph |
 | `textDocument/signatureHelp` | parameter list, return type, effect row, active parameter |
-| `textDocument/inlayHint` | **` client` / ` server` badge on every function**, ` cut1→server` on each cut, plus inferred `: Type` on unannotated `let` bindings |
+| `textDocument/inlayHint` | **` client` / ` server` badge on every function**, ` cut1→server` on each cut, plus inferred `: Type` on unannotated `let` bindings and parameter names on multi-argument calls |
 | `textDocument/foldingRange` | brace regions and block comments |
 | `textDocument/selectionRange` | the AST ancestor chain at the cursor |
 | `textDocument/documentHighlight` | occurrences of the symbol under the cursor |
-| `textDocument/formatting` | re-indent by nesting depth (idempotent) |
+| `textDocument/formatting` | canonical formatting from the AST: list/record spacing, markup nesting, layout-block indentation and declaration spacing (idempotent; falls back to whitespace tidying for a mid-edit buffer) |
 | `textDocument/codeAction` | *Export 'f' from this module*, *Import 'x' from Module*, *Add `module X where`* / *Rename the module to `X`* for a missing or mismatched header |
 | `textDocument/codeLens` | `client · 2 cuts` above each function, plus crossings when present |
 | `textDocument/prepareRename` + `rename` | rename globals across the package; rename locals only inside their declaration |
@@ -208,7 +209,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.16.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.17.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `stdlib/` instead. Turn
@@ -222,14 +223,28 @@ extension host code once per window. Compiler/stdlib work does not.
 
 ### Completion and refactors
 
-**Brackets and markup.** Brackets, quotes and block comments auto-close. Inside
-markup, typing `<di` offers `div` and inserts `<div></div>` with the cursor
-between the tags; void tags (`<input>`, `<br>`, `<img>`, …) insert self-closed
-with the cursor in the attribute position; components insert
-`<Card ></Card>`. Typing `</` offers `</tag>` for the innermost open tag and every
-enclosing tag. Attributes are suggested inside a tag with the right shape:
-`class="${0}"`, `onClick={${0}}`, `checked={${0}}`. Opening tags indent, closing
-tags outdent.
+**Symbols and qualifiers.** Completion is triggered as you type and replaces the
+word under the cursor. Typing `Module.` (or `Flow.List.`, `Time.no`, or an `as`
+alias) lists only that qualifier's members; typing `props.` or `props.ti` lists
+only that value's fields and Cell members (`value`, `get`, `set`, `update`).
+Strings and comments are quiet.
+
+**Brackets and markup.** Brackets and strings auto-close (Flow comments are `--`
+and `{- … -}`). Typing `>` after an open tag inserts the matching closing tag, so
+`<div>` becomes `<div></div>` with the cursor between them; void tags,
+self-closing tags and tags that already have a closing tag are left alone.
+Inside markup, typing `<di` offers `div` and inserts the complete pair; void tags
+(`<input>`, `<br>`, `<img>`, …) insert self-closed with the cursor in the
+attribute position; components insert `<Card ></Card>`. Typing `</` offers
+`</tag>` for the innermost open tag and every enclosing tag. Attributes are
+suggested inside a tag with the right shape: `class="${0}"`,
+`onClick={${0}}`, `checked={${0}}`.
+
+**Indentation and formatting.** Enter indents after `do`, `where`, `of`, `with`,
+`then`, `else`, `=` and `->`, and between an open tag and its closing tag;
+`in`, `else` and closing tags outdent. `Format Document` prints the language's
+canonical layout, including spaced lists, records and nested markup. The
+extension enables quick suggestions and format-on-type for Flow by default.
 
 **Rename.** F2 renames a local or a package-wide symbol and now also rewrites
 `import Module (name)` lists, so renaming a public function does not leave broken
@@ -295,9 +310,9 @@ matching defaults; override them in user or workspace settings to restyle the bo
 | file | covers |
 |---|---|
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
-| `test/lsp-features.test.mjs` | completion (3 kinds), markup tag/attribute snippets, closing-tag completion, definition, references, highlights, rename with imports, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, import/move/organize refactors, code lens, multi-error reporting |
+| `test/lsp-features.test.mjs` | completion (prefix replacement, qualifier-only members, partial fields, silence in strings), markup tag/attribute snippets, `<di` pair insertion, closing-tag completion, on-type tag closing, canonical formatting (lists/markup), definition, references, highlights, rename with imports, symbols, signature help, inlay hints (types and call parameters), folding, selection, code actions, import/move/organize refactors, code lens, multi-error reporting |
 | `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
-| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 17 providers registered (including semantic tokens), per-cut markers applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
+| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 18 providers registered (including semantic tokens and on-type formatting), per-cut markers applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
 
 ```
 $ node --test test/lsp.test.mjs test/lsp-features.test.mjs test/vscode-extension.test.mjs

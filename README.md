@@ -259,9 +259,11 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   amber; each inferred cut gets its own palette colour. A cut dependency keeps its owner's
   colour and is underlined. Cuts also get a matching underline, gutter marker and overview
   ruler
-* **Inlay hints** — `fn render server`, `let total: Int`, `cut1→server`: the boundary is inline
-* **Language server** — completion, hover, definitions, references, rename, semantic tokens,
-  folding, formatting, code actions, code lenses, boundary regions
+* **Inlay hints** - function placement, `let total: Int`, call parameter names and cut
+  markers: the boundary is inline
+* **Language server** - context-aware completion (qualifier-only members, value fields,
+  HTML tag pairs), on-type tag closing, canonical formatting, hover, definitions,
+  references, rename, semantic tokens, folding, code actions, code lenses, boundary regions
 * **Formatter and migration** — `flow fmt` prints canonical syntax; `flow migrate` rewrites
   programs written in the old Rust-style syntax
 
