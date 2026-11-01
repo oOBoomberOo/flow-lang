@@ -39,7 +39,7 @@ const CUT_PALETTE = [
 const SEMANTIC_LEGEND = {
   tokenTypes: [
     "keyword", "function", "variable", "type", "class", "string", "number",
-    "comment", "operator", "parameter", "property", "namespace",
+    "comment", "operator", "parameter", "property", "namespace", "htmlTag",
   ],
   tokenModifiers: [
     "client", "server", "cut", "crossing", "dependency",
@@ -50,24 +50,31 @@ const SEMANTIC_LEGEND = {
 /** Colours for the legend above; contributed defaults and written on first run
  *  so a theme cannot leave custom modifiers unstyled. */
 const SEMANTIC_RULES = {
-  "*.client": { foreground: "#61afef" },
-  "*.server": { foreground: "#e0af68" },
-  "*.cut": { italic: true },
-  "*.cut1": { foreground: "#c678dd" },
-  "*.cut2": { foreground: "#56b6c2" },
-  "*.cut3": { foreground: "#e5c07b" },
-  "*.cut4": { foreground: "#e06c75" },
-  "*.cut5": { foreground: "#98c379" },
-  "*.cut6": { foreground: "#d19a66" },
-  "*.cut7": { foreground: "#d16d9e" },
-  "*.cut8": { foreground: "#89ddff" },
-  "*.cut9": { foreground: "#b48ead" },
-  "*.cut10": { foreground: "#a3be8c" },
-  "*.cut11": { foreground: "#ebcb8b" },
-  "*.cut12": { foreground: "#7f9cf5" },
-  "*.crossing": { foreground: "#9aa5b1" },
+  // Symbol categories get the foreground; boundary ownership is shown by the
+  // cut marker/background and the dependency underline, never by replacing
+  // these colours.
+  "keyword": { foreground: "#ff7b72" },
+  "function": { foreground: "#d2a8ff" },
+  "type": { foreground: "#4ec9b0" },
+  "class": { foreground: "#e5c07b" },
+  "namespace": { foreground: "#e0af68" },
+  "htmlTag": { foreground: "#7ee787" },
+  "variable": { foreground: "#c9d1d9" },
+  "parameter": { foreground: "#9cdcfe" },
+  "property": { foreground: "#79c0ff" },
+  "string": { foreground: "#a5d6ff" },
+  "number": { foreground: "#b5cea8" },
+  "operator": { foreground: "#c9d1d9" },
+  "comment": { foreground: "#8b949e", italic: true },
   "*.dependency": { underline: true },
 };
+
+/** Foreground rules from the old boundary-only palette. They are removed on
+ *  activation so an upgraded profile does not keep the overt cut colours. */
+const LEGACY_BOUNDARY_RULES = [
+  "*.client", "*.server", "*.cut", "*.crossing",
+  ...Array.from({ length: CUT_SLOTS }, (_, i) => `*.cut${i + 1}`),
+];
 
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
@@ -195,6 +202,11 @@ function cutColors() {
   return Array.from({ length: CUT_SLOTS }, (_, i) => base[i % base.length]);
 }
 
+/** A very light background tint for a cut, leaving symbol foregrounds alone. */
+function tint(color) {
+  return /^#[0-9a-f]{6}$/i.test(color) ? `${color}12` : color;
+}
+
 function makeDecorations() {
   if (deco) {
     for (const side of ["server", "client"]) for (const t of deco.cuts[side]) t.dispose();
@@ -210,6 +222,9 @@ function makeDecorations() {
     const color = colors[i];
     for (const [side, icon] of [["server", "cut-out.svg"], ["client", "cut-in.svg"]]) {
       cuts[side].push(vscode.window.createTextEditorDecorationType({
+        // Boundary ownership is a tint and a marker; the symbol foreground
+        // stays the function/type/module/tag colour.
+        backgroundColor: tint(color),
         borderWidth: "0 0 1px 0",
         borderStyle: "solid",
         borderColor: color,
@@ -795,17 +810,22 @@ async function ensureSemanticColorSettings() {
     const inspected = editor.inspect("semanticTokenColorCustomizations");
     const current = inspected?.globalValue ?? {};
     const rules = { ...(current.rules ?? {}) };
-    let added = 0;
+    let added = 0, removed = 0;
+    for (const selector of LEGACY_BOUNDARY_RULES) {
+      if (!rules[selector]) continue;
+      delete rules[selector];
+      removed++;
+    }
     for (const [selector, style] of Object.entries(SEMANTIC_RULES)) {
       if (!rules[selector]) { rules[selector] = style; added++; }
     }
-    if (added || current.enabled !== true) {
+    if (added || removed || current.enabled !== true) {
       await editor.update(
         "semanticTokenColorCustomizations",
         { ...current, enabled: true, rules },
         vscode.ConfigurationTarget.Global,
       );
-      output?.appendLine(`[flow] added ${added} semantic colour rule(s)`);
+      output?.appendLine(`[flow] semantic colours: ${added} added, ${removed} boundary foreground rule(s) removed`);
     }
   } catch (e) {
     output?.appendLine(`[flow] could not update semantic colours: ${e.message}`);

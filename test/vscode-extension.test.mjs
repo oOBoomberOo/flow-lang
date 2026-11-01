@@ -706,10 +706,10 @@ test("vscode: the cut palette matches the server legend and theme defaults", () 
     assert.equal(cutModifiers.length, CUT_PALETTE_SIZE, "every slot is contributed to VS Code");
 
     const rules = pkg.configurationDefaults["editor.semanticTokenColorCustomizations"].rules;
-    for (let i = 1; i <= CUT_PALETTE_SIZE; i++) {
-      assert.ok(rules[`*.cut${i}`], `a default theme rule for cut${i}`);
+    for (const kind of ["function", "type", "namespace", "htmlTag", "property", "parameter"]) {
+      assert.ok(rules[kind]?.foreground, `a symbol colour for ${kind}`);
     }
-    assert.ok(rules["*.client"] && rules["*.server"], "tier colours are themed");
+    assert.ok(!rules["*.client"] && !rules["*.cut1"], "boundary modifiers do not replace symbol colours");
     assert.ok(rules["*.dependency"]?.underline, "dependencies are underlined");
     assert.deepEqual(ext._internals.semanticRules, rules, "the runtime rules match the contributed defaults");
   } finally {
@@ -789,8 +789,9 @@ test("vscode: activation writes the semantic colour settings when missing", asyn
     );
     const custom = env.config["semanticTokenColorCustomizations"];
     assert.equal(custom.enabled, true);
-    assert.equal(custom.rules["*.client"].foreground, "#61afef");
-    assert.equal(custom.rules["*.cut1"].foreground, "#c678dd");
+    assert.equal(custom.rules["function"].foreground, "#d2a8ff");
+    assert.equal(custom.rules["htmlTag"].foreground, "#7ee787");
+    assert.equal(custom.rules["*.dependency"].underline, true);
   } finally {
     ext.deactivate();
     restore();

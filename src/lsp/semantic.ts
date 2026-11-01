@@ -1,18 +1,18 @@
 /**
  * Semantic tokens for Flow.
  *
- * The interesting distinction in Flow is not the syntax kind of a name but
- * *where it runs*. Every symbol is therefore tagged with the tier or the cut
- * that owns it:
+ * The token *type* is the symbol category (function, type, namespace, HTML tag,
+ * property, parameter, variable, …), which owns the foreground colour. The
+ * modifiers describe the tier/boundary:
  *
  *   client / server   ordinary typed code
  *   cut1 ... cut12    code the compiler moved across the boundary
  *   crossing          an expression that mixes both sides
  *   dependency        a free variable a cut carries from its enclosing scope
  *
- * A cut dependency keeps the colour of the scope it belongs to (the enclosing
- * cut or function) and gains `dependency` so an editor can underline it: it
- * crosses *into* the cut but still belongs *outside* it.
+ * Boundary modifiers deliberately do not set a foreground: the editor shows cut
+ * ownership with a tinted region/underline, and underlines a dependency, so a
+ * function remains visibly a function even inside a cut.
  *
  * A palette, not an arbitrary colour per token, is the portable model: the
  * LSP semantic-token legend is fixed for the lifetime of the server session,
@@ -28,7 +28,7 @@ export const CUT_PALETTE_SIZE = 12;
 
 export const TOKEN_TYPES = [
   "keyword", "function", "variable", "type", "class", "string", "number",
-  "comment", "operator", "parameter", "property", "namespace",
+  "comment", "operator", "parameter", "property", "namespace", "htmlTag",
 ];
 
 export const TOKEN_MODIFIERS = [
@@ -54,12 +54,13 @@ const TYPE = {
   parameter: 9,
   property: 10,
   namespace: 11,
+  htmlTag: 12,
 } as const;
 
-/** Token types that describe a symbol and therefore get a boundary colour. */
+/** Token types that describe a symbol and can carry boundary modifiers. */
 const SYMBOL_TYPES = new Set<number>([
   TYPE.function, TYPE.variable, TYPE.type, TYPE.class,
-  TYPE.parameter, TYPE.property, TYPE.namespace,
+  TYPE.parameter, TYPE.property, TYPE.namespace, TYPE.htmlTag,
 ]);
 
 const MOD_BIT = new Map(TOKEN_MODIFIERS.map((name, i) => [name, 1 << i]));
@@ -77,6 +78,10 @@ export function cutColorKey(cutId: string | undefined): string {
 }
 
 function classify(t: Token, prev: Token | undefined, next: Token | undefined): number {
+  // `<div>` / `</div>` / `<Card>`: the name right after `<` or `</`.
+  if ((t.kind === "id" || t.kind === "Con") && prev && (prev.value === "<" || prev.value === "</")) {
+    return TYPE.htmlTag;
+  }
   switch (t.kind) {
     case "kw": return TYPE.keyword;
     case "str": return TYPE.string;

@@ -344,3 +344,36 @@ test("lsp: incremental edits re-diagnose", async () => {
     assert.match(note.params.diagnostics[0].message, /right operand of '\+'/);
   } finally { c.proc.kill(); }
 });
+
+test("lsp: semantic tokens distinguish symbols, types, modules and HTML tags", async () => {
+  const src = `module Main where
+
+main :: Html
+main = <p>{str (Client.now ())} {str (Some 1)}</p>
+`;
+  const file = tmpFlow(src);
+  const c = startServer();
+  try {
+    const init = await c.request("initialize", { rootUri: null, capabilities: {} });
+    const legend = init.capabilities.semanticTokensProvider.legend;
+    c.notify("textDocument/didOpen", {
+      textDocument: { uri: uri(file), languageId: "flow", version: 1, text: src },
+    });
+    await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+    const toks = await c.request("textDocument/semanticTokens/full", { textDocument: { uri: uri(file) } });
+    const decoded = decodeTokens(toks.data);
+    const lines = src.split("\n");
+    const word = (t) => lines[t.line]?.slice(t.char, t.char + t.len);
+    const typeOf = (name) => {
+      const t = decoded.find((x) => word(x) === name);
+      assert.ok(t, `token ${name}`);
+      return legend.tokenTypes[t.type];
+    };
+    assert.equal(typeOf("main"), "function");
+    assert.equal(typeOf("Html"), "type");
+    assert.equal(typeOf("p"), "htmlTag");
+    assert.equal(typeOf("Client"), "namespace");
+    assert.equal(typeOf("now"), "function");
+    assert.equal(typeOf("Some"), "type");
+  } finally { c.proc.kill(); }
+});

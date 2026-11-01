@@ -23,7 +23,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 |---|---|
 | `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly**. `didChange` is debounced (150 ms) and bursts of keystrokes are coalesced; the analysis is compared against the previous input so identical text is not recompiled |
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
-| `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments and operators, with `client` / `server` / `cut1`…`cut12` / `crossing` / `dependency` modifiers. Symbols are coloured by the cut that owns them; a dependency keeps its owner's colour and is underlined |
+| `textDocument/semanticTokens/full` | symbol categories keep their own colours: functions, types, modules/namespaces, HTML tags, properties, parameters, variables, keywords, strings, numbers and comments. Boundary modifiers (`client`, `server`, `cut1`…`cut12`, `crossing`, `dependency`) style the *boundary* (cut tint/markers, dependency underline) without replacing the category colour |
 | `textDocument/hover` | resolved type (inferred types included, for local `let` bindings, function and lambda parameters and `case` pattern variables), placement, effect row, and where a symbol is declared; works on variables, parameters and local bindings, constructors, function declarations (showing the inferred signature), type names (built-in description or `data`/`type`/`class`/`effect` definition) and imported names |
 | `textDocument/completion` | suggestions as you type, with the typed prefix replaced by the choice: locals in scope, package symbols, keywords/snippets, **only that qualifier's members after `Module.` / `Flow.List.` / an `as` alias / a partial `Module.no`**, **only that value's fields and Cell members after `.` / `props.ti`**, unimported names (with an import edit), HTML elements/components/attributes/closing tags; no suggestions inside strings or comments; prefix-ranked and deduplicated |
 | `textDocument/onTypeFormatting` | typing `>` after `<div>` inserts `</div>` with the cursor between the pair; void tags, self-closing tags and tags that already have a closing tag are left alone |
@@ -131,21 +131,27 @@ resolved without a whole cut (e.g. `Server.now() - Client.now()`), so it gets a 
 marker instead of an underline. Neutral functions (pure code duplicated on both sides) are
 not reported — there is nothing to colour.
 
-**Symbols are the primary boundary colouring.** The server emits semantic tokens for every
-symbol, tagged with the tier or cut that owns it:
+**Symbol categories own the foreground colour.** The server emits semantic tokens for every
+symbol, so the editor shows what a name *is*:
 
-* ordinary client symbols are blue, server symbols amber;
-* each cut gets a distinct palette colour (`cut1`…`cut12`, cycling after twelve);
+* functions are purple, types teal, modules/namespaces amber, HTML tags green,
+  properties blue, parameters light blue, variables/default text neutral;
+* keywords, strings, numbers, operators and comments keep their syntax colours.
+
+Boundary ownership is a separate, lighter channel:
+
+* every cut region gets a subtle background tint, a thin underline, a **→/← gutter arrow**
+  and a centre overview-ruler mark in its palette colour (`cut1`…`cut12`, cycling after
+  twelve);
+* the tint and marker show which cut a region belongs to without replacing the symbol's
+  function/type/module/tag colour;
 * a **cut dependency** — a free variable the cut carries from its enclosing scope — keeps
-  the colour of the scope it belongs to and is underlined. It crosses *into* the cut but is
-  not owned by it, so it neither takes the cut's colour nor looks like a new local;
-* crossings are grey; keywords, literals, comments and operators keep their syntax colours.
+  its normal symbol colour and is underlined. It crosses *into* the cut but is not owned by
+  it;
+* a crossing gets a dotted underline and a **⇄ gutter arrow**.
 
 In the VS Code client:
 
-* every cut also gets a thin underline, a **→/← gutter arrow** and a centre overview-ruler
-  mark in its own palette colour, so a cut's region and its symbols agree;
-* a crossing gets a dotted underline and a **⇄ gutter arrow**;
 * hovering any marker shows cut id, direction, mode, deps, palette slot, type and the
   enclosing function;
 * every cut also gets an inlay hint (` cut1→server`), and the status bar / code lens count
@@ -213,7 +219,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.6 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.7 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn
@@ -270,9 +276,9 @@ break.
 ### What you see
 
 * **Syntax highlighting** from the TextMate grammar.
-* **Boundary colouring** from semantic tokens: client symbols blue, server symbols amber,
-  each inferred cut a different palette colour. A cut dependency keeps its owner's colour
-  and is underlined; the cut itself is also underlined in the same colour.
+* **Symbol colours** from semantic tokens: functions purple, types teal, modules amber,
+  HTML tags green, properties/parameters blue. Cut regions get a subtle palette tint and
+  underline; a cut dependency is underlined but keeps its symbol colour.
 * **Inlay hints**: `render server`, `let total :: Int` — the boundary is visible
   without opening a panel.
 * **Code lenses**: `client · 2 cuts` per function.
@@ -285,7 +291,7 @@ break.
 
 | setting | default | meaning |
 |---|---|---|
-| `flow.cutPalette` | 12 colours | marker colours for cuts; the same slots theme the semantic tokens |
+| `flow.cutPalette` | 12 colours | cut tint/underline/gutter colours |
 | `flow.crossingColor` | grey | dotted marker for a crossing |
 | `flow.enableSemanticColors` | `true` | toggle symbol colours |
 | `flow.enableDecorations` | `true` | toggle cut underlines/gutter marks (symbol colours stay on) |
@@ -293,9 +299,10 @@ break.
 | `flow.useWorkspaceServer` | `true` | in a compiler checkout, run its server instead of the bundle |
 | `flow.devWatch` | `true` | restart the server when the checkout's compiler/std-package changes |
 
-Symbol colours are ordinary `editor.semanticTokenColorCustomizations` rules (`*.client`,
-`*.server`, `*.cut1`…`*.cut12`, `*.crossing`, `*.dependency`). The extension contributes
-matching defaults; override them in user or workspace settings to restyle the boundary.
+Symbol colours are ordinary `editor.semanticTokenColorCustomizations` rules
+(`function`, `type`, `namespace`, `htmlTag`, `property`, `parameter`, …). Boundary
+modifiers no longer set a foreground; cuts use `flow.cutPalette` for their tint and
+markers, and `*.dependency` underlines a crossed-in variable.
 It also defaults `editor.semanticHighlighting.enabled` to `true`, because VS Code does
 not make that particular setting language-overridable; a theme that turns semantic
 highlighting off would otherwise hide every boundary colour.

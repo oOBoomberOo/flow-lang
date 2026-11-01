@@ -255,10 +255,10 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
 * **Cell sugar** - `cell.value`, `cell := e`, `cell += n`, `cell.update`
 * **Placed cells** - `Cell a @client` / `Cell a @server`; `Client.state` and `Server.state`
   create them, and a server cell's reads/writes become cuts
-* **Boundary colouring** — semantic tokens paint client symbols blue and server symbols
-  amber; each inferred cut gets its own palette colour. A cut dependency keeps its owner's
-  colour and is underlined. Cuts also get a matching underline, gutter marker and overview
-  ruler
+* **Symbol colouring** — semantic tokens distinguish functions, types, modules,
+  HTML tags, properties and parameters. A cut gets a subtle palette tint, underline,
+  gutter marker and overview ruler; a cut dependency stays underlined in its own symbol
+  colour
 * **Inlay hints** - function placement, `let total: Int`, call parameter names and cut
   markers: the boundary is inline
 * **Language server** - context-aware completion (qualifier-only members, value fields,
