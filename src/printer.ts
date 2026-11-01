@@ -248,6 +248,7 @@ class Printer {
         return `handle ${x.effect} with\n${ops.map((o) => sp(ind + 2) + o).join("\n")}\n${sp(ind)}in ${this.e(x.body, ind, 0)}`;
       }
       case "Block": return this.doBlock(x, ind);
+      case "Error": return "()";
     }
   }
 
@@ -413,6 +414,7 @@ export function printProgram(p: Program, opts: PrintOptions = {}): string {
 
 function printDecl(d: Decl, pr: Printer): string {
   switch (d.k) {
+    case "Error": return `-- ERROR: ${d.message}`;
     case "Use": {
       const u = d as Decl & { k: "Use" };
       let s = `import ${u.path.join(".")}`;
@@ -482,7 +484,7 @@ function printSig(s: FnSig): string {
  *  parameters (`_a1`) when the desugared case body refers to them. */
 function exprMentions(e: Expr, name: string): boolean {
   switch (e.k) {
-    case "Lit": return false;
+    case "Lit": case "Error": return false;
     case "Var": return e.name === name;
     case "Lam": return exprMentions(e.body, name);
     case "App": return exprMentions(e.fn, name) || e.args.some((a) => exprMentions(a, name));

@@ -429,4 +429,18 @@ other :: Int
 other = 3`, "r.flow", { recover: true });
   assert.ok(p.errors && p.errors.length >= 1);
   assert.ok(p.decls.some((d) => d.name === "good"));
+  const bad = p.decls.find((d) => d.k === "Fn" && d.name === "bad");
+  assert.ok(bad, "the broken declaration keeps its name and signature");
+  assert.equal(bad.body.k, "Error", "its body is an ERROR node");
+  assert.ok(p.decls.some((d) => d.name === "other"), "later declarations survive");
+});
+
+test("errors: a broken top-level item becomes an Error declaration", () => {
+  const p = parse(`1 + 2
+
+other :: Int
+other = 3`, "r.flow", { recover: true });
+  assert.ok(p.errors && p.errors.length >= 1);
+  assert.equal(p.decls[0].k, "Error", "the unparsable item is an Error node");
+  assert.ok(p.decls.some((d) => d.k === "Fn" && d.name === "other"), "the next declaration is parsed");
 });

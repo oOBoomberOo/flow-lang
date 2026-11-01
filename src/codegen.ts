@@ -2132,7 +2132,7 @@ function htmlChildren(e: Expr): HtmlNode[] {
 
 export function childExprs(e: Expr): Expr[] {
   switch (e.k) {
-    case "Lit": case "Var": return [];
+    case "Lit": case "Var": case "Error": return [];
     case "Lam": return [e.body];
     case "App": return [e.fn, ...e.args];
     case "If": return [e.cond, e.then, e.else];

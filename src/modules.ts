@@ -361,7 +361,7 @@ export class Linker {
     if (pkg.name === "flow" && moduleName[0] !== "Flow") moduleName = ["Flow", ...moduleName];
     const declares = new Map<string, Decl>();
     for (const d of program.decls) {
-      if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
+      if (d.k === "Use" || d.k === "Impl" || d.k === "Provide" || d.k === "Error") continue;
       declares.set(d.k === "Extern" ? d.sig.name : d.name, d);
       if (d.k === "Adt") for (const v of d.variants) declares.set(v.name, d);
     }
@@ -553,7 +553,7 @@ export class Linker {
     const byName = new Map<string, { unit: SourceUnit; decl: Decl; name: string }[]>();
     for (const u of units) {
       for (const d of u.program.decls) {
-        if (d.k === "Use" || d.k === "Impl" || d.k === "Provide") continue;
+        if (d.k === "Use" || d.k === "Impl" || d.k === "Provide" || d.k === "Error") continue;
         const names: string[] = [d.k === "Extern" ? d.sig.name : d.name];
         if (d.k === "Adt") names.push(...d.variants.map((v) => v.name));
         // `type Priority = Priority(Int)` names a type and a constructor with the
@@ -797,7 +797,7 @@ function collectQualifiers(program: Program): Set<string> {
   const ex = (e?: Expr): void => {
     if (!e) return;
     switch (e.k) {
-      case "Lit": case "Var": return;
+      case "Lit": case "Var": case "Error": return;
       case "Ctor": add(e.name); e.args.forEach(ex); return;
       case "Lam":
         e.params.forEach((p) => ty(p.type)); ty(e.ret); e.eff?.effects.forEach(add);
@@ -832,7 +832,7 @@ function collectQualifiers(program: Program): Set<string> {
 
   for (const d of program.decls) {
     switch (d.k) {
-      case "Use": break;
+      case "Use": case "Error": break;
       case "Fn":
         d.params.forEach((p) => ty(p.type)); ty(d.ret); d.eff?.effects.forEach(add);
         ex(d.body);
@@ -905,6 +905,7 @@ function rewriteDecl(d: Decl, values: Map<string, string>, types: Map<string, st
   CURRENT_VALUES = values;
   switch (d.k) {
     case "Use": return d;
+    case "Error": return d;
     case "Fn": {
       const scope = new Set<string>();
       const params = d.params.map((p) => ({ ...p, type: rwType(p.type, types) }));
@@ -1030,7 +1031,7 @@ function rwType(t: TypeExpr, types: Map<string, string>): TypeExpr {
 
 function rwExpr(e: Expr, scope: Set<string>, values: Map<string, string>, types: Map<string, string>): Expr {
   switch (e.k) {
-    case "Lit": return e;
+    case "Lit": case "Error": return e;
     case "Var":
       return scope.has(e.name) ? e : { ...e, name: values.get(e.name) ?? e.name };
     case "Ctor": {

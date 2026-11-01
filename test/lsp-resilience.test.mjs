@@ -326,3 +326,40 @@ main = <p>{str (good ())}</p>
     assert.ok(labels.some((l) => /cut1/.test(l)), `cut hint survives: ${labels.join(", ")}`);
   } finally { c.proc.kill(); }
 });
+
+test("lsp: a recovered syntax error keeps colours and hints in other declarations", async () => {
+  const text = `module Main where
+
+good :: () -> Int
+good () = Server.now ()
+
+bad () = 1 +
+
+main :: Html
+main = <p>{str (good ())}</p>
+`;
+  const file = fileWith(text);
+  const c = startServer();
+  try {
+    const init = await c.request("initialize", { rootUri: null, capabilities: {} });
+    const legend = init.capabilities.semanticTokensProvider.legend;
+    await open(c, file, text);
+
+    const toks = await c.request("textDocument/semanticTokens/full", { textDocument: { uri: uri(file) } });
+    let sawClient = false, sawCut = false;
+    for (let i = 0; i < toks.data.length; i += 5) {
+      const mods = toks.data[i + 4];
+      if (mods & (1 << legend.tokenModifiers.indexOf("client"))) sawClient = true;
+      if (mods & (1 << legend.tokenModifiers.indexOf("cut"))) sawCut = true;
+    }
+    assert.ok(sawClient, "valid client code keeps its colour");
+    assert.ok(sawCut, "valid cut code keeps its colour");
+
+    const hints = await c.request("textDocument/inlayHint", {
+      textDocument: { uri: uri(file) }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } },
+    });
+    const labels = hints.map((h) => String(h.label));
+    assert.ok(labels.some((l) => /server/.test(l)), `placement hint survives: ${labels.join(", ")}`);
+    assert.ok(labels.some((l) => /cut1/.test(l)), `cut hint survives: ${labels.join(", ")}`);
+  } finally { c.proc.kill(); }
+});

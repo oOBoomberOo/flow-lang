@@ -79,9 +79,11 @@ typing burst produces one analysis, and completion answers in single-digit ms.
 
 ### Error resilience
 
-Editor analysis runs with recovery enabled: the parser skips a broken declaration
-and keeps the rest, type errors are collected per function, and module imports that
-fail do not discard the file. Symbols, semantic tokens, hover, definitions,
+Editor analysis runs with recovery enabled. A failed expression becomes an
+`Error` AST node inside the declaration, and a failed top-level item becomes an
+`Error` declaration, so the surrounding syntax tree stays intact instead of
+dropping the whole section. Type errors are collected per function, and module
+imports that fail do not discard the file. Symbols, semantic tokens, hover, definitions,
 inlay hints and completion therefore keep working while the buffer has errors.
 Placement regions and cut spans are still derived from the valid declarations, so
 one broken function cannot blank the rest of the file's boundary colours; the
@@ -211,7 +213,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.2 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.3 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn

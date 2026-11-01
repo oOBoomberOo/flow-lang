@@ -69,7 +69,9 @@ export type Expr =
   | { k: "Html"; nodes: HtmlNode[]; span: Span }
   | { k: "Assign"; target: Expr; op: "=" | "+=" | "-=" | "*=" | "/=" | "++" | "--"; value?: Expr; span: Span }
   | { k: "Handle"; effect: string; ops: { name: string; fn: Expr; span: Span }[]; body: Expr; span: Span }
-  | { k: "Block"; stmts: Stmt[]; value?: Expr; span: Span };
+  | { k: "Block"; stmts: Stmt[]; value?: Expr; span: Span }
+  /** Rust-style error recovery node: the parser could not read this subtree. */
+  | { k: "Error"; message: string; span: Span };
 
 export type Stmt =
   | { k: "LetStmt"; name: string; mut: boolean; ann?: TypeExpr; value: Expr; span: Span }
@@ -110,7 +112,9 @@ export type Decl =
       exportName?: string;
       unsafe: true; pub: boolean; span: Span;
     }
-  | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span };
+  | { k: "Fn"; name: string; typeParams: string[]; paramBounds?: Record<string, string[]>; params: Param[]; ret?: TypeExpr; eff?: EffRow; body: Expr; pub: boolean; span: Span }
+  /** A declaration the parser could not recover; it keeps following code valid. */
+  | { k: "Error"; message: string; span: Span };
 
 export interface Program {
   decls: Decl[];

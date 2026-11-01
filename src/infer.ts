@@ -1351,6 +1351,10 @@ export class Infer {
         return { ty, place: "neutral", eff: emptyEff() };
       }
 
+      // A recovered syntax error is type-unknown, not fatal: the rest of the
+      // declaration keeps its real types and placements.
+      case "Error": return { ty: fresh(0), place: "neutral", eff: emptyEff() };
+
       case "Var": {
         if (e.name === "resume" && !this.env.has("resume") && !this.mod.fns.has("resume")) {
           this.fail("'resume' is only available inside an operation handler of an effect", e.span);
@@ -2796,7 +2800,7 @@ export function placeFromEffects(eff: Eff, inf: Infer): Place {
 export function forEachExpr(e: Expr, fn: (e: Expr) => void): void {
   fn(e);
   switch (e.k) {
-    case "Lit": case "Var": return;
+    case "Lit": case "Var": case "Error": return;
     case "Lam": forEachExpr(e.body, fn); return;
     case "App": forEachExpr(e.fn, fn); for (const a of e.args) forEachExpr(a, fn); return;
     case "If": forEachExpr(e.cond, fn); forEachExpr(e.then, fn); forEachExpr(e.else, fn); return;

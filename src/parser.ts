@@ -271,9 +271,16 @@ export class Parser {
         } catch (e) {
           if (!this.recover || !(e instanceof FlowError)) throw e;
           errors.push(e);
+          const startTok = this.toks[before] ?? this.tok;
           if (this.pos === before) this.pos = Math.min(this.pos + 1, this.toks.length - 1);
           this.layout = [top];
           this.syncTop(top);
+          // Keep a placeholder declaration so the AST still mirrors the source;
+          // downstream passes skip it and the following declarations stay valid.
+          items.push({
+            k: "decl",
+            decl: { k: "Error", message: e.message, span: this.spanFrom(startTok) },
+          });
         }
       }
     }
@@ -1302,7 +1309,35 @@ export class Parser {
 
   /* ---------- expressions ---------- */
 
+  /**
+   * Parse an expression. In editor mode a failure becomes an `Error` node and
+   * the parser skips to the next layout boundary, so the enclosing declaration
+   * (and the rest of the file) still exists in the AST.
+   */
   parseExpr(): Expr {
+    const start = this.tok;
+    try {
+      return this.parseExprInner();
+    } catch (e) {
+      if (!this.recover || !(e instanceof FlowError)) throw e;
+      this.errors.push(e);
+      this.recoverExpr(start);
+      return { k: "Error", message: e.message, span: this.spanFrom(start) };
+    }
+  }
+
+  private recoverExpr(start: Token): void {
+    if (this.raw.kind !== "eof") this.next();
+    while (this.raw.kind !== "eof") {
+      const t = this.raw;
+      if (t.bol && t.col <= start.col) break;
+      if (t.kind === "sym" && (t.value === ")" || t.value === "]" || t.value === "}" || t.value === "," || t.value === ";")) break;
+      if (t.kind === "kw" && (t.value === "in" || t.value === "then" || t.value === "else" || t.value === "of")) break;
+      this.next();
+    }
+  }
+
+  private parseExprInner(): Expr {
     const start = this.tok;
     let left = this.parseOpExpr(0);
 
