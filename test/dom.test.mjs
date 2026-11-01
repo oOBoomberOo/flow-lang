@@ -45,6 +45,20 @@ test("dom: boolean attributes set and clear their attribute", () => {
   assert.equal(unchecked.attrs.checked, undefined, "false removes the attribute");
 });
 
+test("dom: a reactive value/checked binding updates the live control", () => {
+  const R = runtime();
+  const draft = R.cell("old");
+  const todo = R.cell(true);
+  const input = R.el("input", { value: R.attr(() => R.get(draft)) });
+  const box = R.el("input", { type: "checkbox", checked: R.attr(() => R.get(todo)) });
+  assert.equal(input.value, "old");
+  assert.equal(box.checked, true);
+  draft.set("");
+  todo.set(false);
+  assert.equal(input.value, "", "clearing the cell clears the live input");
+  assert.equal(box.checked, false, "unchecking updates the live property, not only the attribute");
+});
+
 test("dom: a reactive cut starts with its placeholder until the first value", async () => {
   const R = runtime();
   const node = R.remote("cut1", () => ({}), []);

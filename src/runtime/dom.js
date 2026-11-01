@@ -117,6 +117,28 @@ export function installDom(R) {
 }
 
 function setAttr(e, name, val) {
+  const tag = typeof e.tagName === "string" ? e.tagName.toUpperCase() : "";
+  // `value` and `checked` are live DOM properties, not just attributes. Setting
+  // the attribute leaves a user-edited control showing its old value (the
+  // browser's dirty-value flag), so a reactive `draft := ""` would not clear
+  // the input.
+  const liveValue = name === "value"
+    && (tag === "INPUT" || tag === "TEXTAREA" || tag === "PROGRESS" || tag === "METER");
+  const liveChecked = name === "checked" && tag === "INPUT";
+  const liveSelected = name === "selected" && tag === "OPTION";
+
+  if (liveValue) {
+    e.value = val == null || val === false ? "" : String(val);
+    return;
+  }
+  if (liveChecked || liveSelected) {
+    const on = val === true || (val != null && val !== false);
+    if (liveChecked) e.checked = on;
+    else e.selected = on;
+    if (on) e.setAttribute(name, "");
+    else e.removeAttribute(name);
+    return;
+  }
   if (val === true) e.setAttribute(name, "");
   else if (val === false || val == null) e.removeAttribute(name);
   else e.setAttribute(name, String(val));
