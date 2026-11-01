@@ -47,6 +47,28 @@ const SEMANTIC_LEGEND = {
   ],
 };
 
+/** Colours for the legend above; contributed defaults and written on first run
+ *  so a theme cannot leave custom modifiers unstyled. */
+const SEMANTIC_RULES = {
+  "*.client": { foreground: "#61afef" },
+  "*.server": { foreground: "#e0af68" },
+  "*.cut": { italic: true },
+  "*.cut1": { foreground: "#c678dd" },
+  "*.cut2": { foreground: "#56b6c2" },
+  "*.cut3": { foreground: "#e5c07b" },
+  "*.cut4": { foreground: "#e06c75" },
+  "*.cut5": { foreground: "#98c379" },
+  "*.cut6": { foreground: "#d19a66" },
+  "*.cut7": { foreground: "#d16d9e" },
+  "*.cut8": { foreground: "#89ddff" },
+  "*.cut9": { foreground: "#b48ead" },
+  "*.cut10": { foreground: "#a3be8c" },
+  "*.cut11": { foreground: "#ebcb8b" },
+  "*.cut12": { foreground: "#7f9cf5" },
+  "*.crossing": { foreground: "#9aa5b1" },
+  "*.dependency": { underline: true },
+};
+
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
 /* ------------------------------------------------------------------ */
@@ -760,6 +782,36 @@ function openDoc(doc) {
   });
 }
 
+/** Make the custom token modifiers visible even when the active theme (or a
+ *  stale profile) has no rule for them. Existing user rules win. */
+async function ensureSemanticColorSettings() {
+  try {
+    const editor = vscode.workspace.getConfiguration("editor");
+    if (typeof editor.inspect !== "function" || typeof editor.update !== "function") return;
+    if (editor.get("semanticHighlighting.enabled") !== true) {
+      await editor.update("semanticHighlighting.enabled", true, vscode.ConfigurationTarget.Global);
+      output?.appendLine("[flow] enabled editor.semanticHighlighting.enabled");
+    }
+    const inspected = editor.inspect("semanticTokenColorCustomizations");
+    const current = inspected?.globalValue ?? {};
+    const rules = { ...(current.rules ?? {}) };
+    let added = 0;
+    for (const [selector, style] of Object.entries(SEMANTIC_RULES)) {
+      if (!rules[selector]) { rules[selector] = style; added++; }
+    }
+    if (added || current.enabled !== true) {
+      await editor.update(
+        "semanticTokenColorCustomizations",
+        { ...current, enabled: true, rules },
+        vscode.ConfigurationTarget.Global,
+      );
+      output?.appendLine(`[flow] added ${added} semantic colour rule(s)`);
+    }
+  } catch (e) {
+    output?.appendLine(`[flow] could not update semantic colours: ${e.message}`);
+  }
+}
+
 function activate(context) {
   extensionPath = context.extensionPath;
   output = vscode.window.createOutputChannel("Flow");
@@ -774,6 +826,7 @@ function activate(context) {
     `[flow] semantic colours ${semanticEnabled ? "on" : "off"}; ` +
     `editor.semanticHighlighting.enabled = ${String(vscode.workspace.getConfiguration("editor", { languageId: "flow" }).get("semanticHighlighting.enabled"))}`,
   );
+  void ensureSemanticColorSettings();
   makeDecorations();
 
   context.subscriptions.push(
@@ -1040,5 +1093,6 @@ module.exports = {
     cutSlots: CUT_SLOTS,
     cutPalette: CUT_PALETTE,
     semanticLegend: SEMANTIC_LEGEND,
+    semanticRules: SEMANTIC_RULES,
   },
 };

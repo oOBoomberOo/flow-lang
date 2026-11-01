@@ -706,6 +706,7 @@ test("vscode: the cut palette matches the server legend and theme defaults", () 
     }
     assert.ok(rules["*.client"] && rules["*.server"], "tier colours are themed");
     assert.ok(rules["*.dependency"]?.underline, "dependencies are underlined");
+    assert.deepEqual(ext._internals.semanticRules, rules, "the runtime rules match the contributed defaults");
   } finally {
     restore();
   }
