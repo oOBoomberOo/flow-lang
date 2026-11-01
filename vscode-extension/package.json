@@ -2,7 +2,7 @@
   "name": "flow-language",
   "displayName": "Flow",
   "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and per-cut boundary colouring.",
-  "version": "0.18.4",
+  "version": "0.18.5",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -107,8 +107,8 @@
     }
   },
   "configurationDefaults": {
+    "editor.semanticHighlighting.enabled": true,
     "[flow]": {
-      "editor.semanticHighlighting.enabled": true,
       "editor.quickSuggestions": { "other": true, "comments": false, "strings": false },
       "editor.suggestOnTriggerCharacters": true,
       "editor.formatOnType": true,

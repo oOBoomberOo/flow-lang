@@ -386,6 +386,7 @@ test("vscode: package.json and grammar are valid and complete", () => {
   for (const key of ["flow.serverPath", "flow.useWorkspaceServer", "flow.devWatch", "flow.enableDecorations"]) {
     assert.ok(pkg.contributes.configuration.properties[key], `contributes ${key}`);
   }
+  assert.equal(pkg.configurationDefaults["editor.semanticHighlighting.enabled"], true, "semantic highlighting is enabled by default");
   assert.equal(pkg.configurationDefaults["[flow]"]["editor.quickSuggestions"].other, true, "suggestions appear as you type");
   assert.equal(pkg.configurationDefaults["[flow]"]["editor.formatOnType"], true, "tag closing runs on type");
   assert.equal(pkg.configurationDefaults["[flow]"]["editor.inlayHints.enabled"], "on", "inlay hints are visible");

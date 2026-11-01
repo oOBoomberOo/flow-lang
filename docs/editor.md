@@ -213,7 +213,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.4 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.5 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn
@@ -296,6 +296,9 @@ break.
 Symbol colours are ordinary `editor.semanticTokenColorCustomizations` rules (`*.client`,
 `*.server`, `*.cut1`…`*.cut12`, `*.crossing`, `*.dependency`). The extension contributes
 matching defaults; override them in user or workspace settings to restyle the boundary.
+It also defaults `editor.semanticHighlighting.enabled` to `true`, because VS Code does
+not make that particular setting language-overridable; a theme that turns semantic
+highlighting off would otherwise hide every boundary colour.
 
 ### Commands
 
