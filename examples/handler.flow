@@ -1,6 +1,6 @@
 module Handler where
 
--- Local capability handlers. `provide` is file-level; `handle Effect with { … }`
+-- Local effect handlers. `provide` is file-level; `handle Effect with { … }`
 -- installs a scoped provider for the body and nests/restores correctly.
 effect Local @ client where
   ping :: Str -> Str
@@ -8,11 +8,11 @@ effect Local @ client where
 nested :: () -> Str
 nested () =
   handle Local with
-    ping msg = "outer " + msg
+    ping msg = resume ("outer " + msg)
   in do
     let inner =
           handle Local with
-            ping msg = "inner " + msg
+            ping msg = resume ("inner " + msg)
           in Local.ping "x"
     inner + " / " + Local.ping "y"
 

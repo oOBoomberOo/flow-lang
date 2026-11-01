@@ -84,7 +84,7 @@ run () = do
 });
 
 test("algebraic: a handler that does not resume aborts the body", async () => {
-  const source = ROUTES(`algebraic effect Fail where
+  const source = ROUTES(`effect Fail where
   fail :: Str -> Int
 
 guarded :: () -> Int
@@ -106,7 +106,7 @@ run () = str (guarded ())
 });
 
 test("algebraic: handler code after resume runs and can transform the result", async () => {
-  const source = ROUTES(`algebraic effect Tick where
+  const source = ROUTES(`effect Tick where
   tick :: () -> ()
 
 run :: () -> Str
@@ -145,10 +145,10 @@ run () = do
 });
 
 test("algebraic: operations of an unhandled effect are forwarded to the outer handler", async () => {
-  const source = ROUTES(`algebraic effect A where
+  const source = ROUTES(`effect A where
   a :: () -> Int
 
-algebraic effect B where
+effect B where
   b :: () -> Int
 
 run :: () -> Str
@@ -169,7 +169,7 @@ run () = do
 });
 
 test("algebraic: the handled effect leaves the row", () => {
-  const ok = compileSource(`algebraic effect E where
+  const ok = compileSource(`effect E where
   ask :: () -> Int
 
 f :: () -> Int
@@ -184,7 +184,7 @@ main = <p>{str (f ())}</p>
   assert.deepEqual(ok.diagnostics, []);
 
   assert.throws(
-    () => compileSource(`algebraic effect E where
+    () => compileSource(`effect E where
   ask :: () -> Int
 
 f :: () -> Int
@@ -193,23 +193,22 @@ f () = E.ask ()
 main :: Html
 main = <p>{str (f ())}</p>
 `, "row.flow"),
-    /performs algebraic effect\(s\) \{E\} without handling them/,
+    /performs effect\(s\) \{E\} without handling them/,
   );
 });
 
-test("algebraic: provide is rejected", () => {
-  assert.throws(
-    () => compileSource(`algebraic effect E where
+test("algebraic: provide installs a default handler", () => {
+  const r = compileSource(`effect E where
   ask :: () -> Int
 
 provide E where
-  ask () = 0
+  ask () = 41
 
 main :: Html
-main = <p>{"no"}</p>
-`, "provide.flow"),
-    /algebraic effect 'E' cannot be provided/,
-  );
+main = <p>{str (E.ask ())}</p>
+`, "provide.flow");
+  assert.deepEqual(r.errors, []);
+  assert.match(r.client, /R\.provide\("E"/, "the default handler is installed");
 });
 
 test("algebraic: resume is only available inside a handler operation", () => {
@@ -223,7 +222,7 @@ main = <p>{str (resume 1)}</p>
 
 test("algebraic: resume must be called directly, and only once", async () => {
   assert.throws(
-    () => compileSource(`algebraic effect E where
+    () => compileSource(`effect E where
   ask :: () -> Int
 
 f :: () -> Int
@@ -254,7 +253,7 @@ main = <p>{str (f ())}</p>
 
 test("algebraic: a handler operation must return the handled result", () => {
   assert.throws(
-    () => compileSource(`algebraic effect E where
+    () => compileSource(`effect E where
   ask :: () -> Int
 
 f :: () -> Int
@@ -284,7 +283,7 @@ main = <p>{str (f ())}</p>
   try {
     assert.throws(
       () => compileFile(entry),
-      /performs algebraic effect.*\{State\}.*without handling/,
+      /performs effect.*\{State\}.*without handling/,
     );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -324,7 +323,7 @@ test("algebraic: unhandled operations fail loudly at runtime", async () => {
   const R = createRuntime();
   assert.throws(
     () => R.run((function* () { yield R.perform("Nope", "go", []); })()),
-    /unhandled algebraic effect Nope\.go/,
+    /unhandled effect Nope\.go/,
   );
   assert.equal(R.run((function* () { return 42; })()), 42);
   assert.equal(R.run(() => 7), 7);
@@ -353,7 +352,7 @@ test("algebraic: a server cut's effect reaches the caller's handler", async () =
 });
 
 test("algebraic: the client entry drives main through the runtime", () => {
-  const r = compileSource(`algebraic effect E where
+  const r = compileSource(`effect E where
   ask :: () -> Int
 
 main :: Html

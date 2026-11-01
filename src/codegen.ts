@@ -78,13 +78,15 @@ export class Codegen {
   private generatorFns = new Set<string>();
   /** Trait methods that take a callback and may propagate its effects. */
   private generatorTraitMethods = new Set<string>();
+  /** Effects currently handled by an enclosing local `handle`. */
+  private currentHandledEffects = new Set<string>();
   emitting = new Set<object>();
   diagnostics: string[] = [];
   private counter = 0;
   private tmp = 0;
   /** type-variable id -> dictionary parameter name while emitting a function */
   private currentDicts = new Map<string, string>();
-  /** effects that suspend and resume (`algebraic effect`) */
+  /** effects that suspend and resume (`effect`) */
   private algebraicEffects = new Set<string>();
   /** true while emitting the body of a JS generator function */
   private genMode = false;
@@ -106,7 +108,12 @@ export class Codegen {
     this.mod = mod;
     this.inf = inf;
     this.prog = prog;
-    for (const e of mod.effects.values()) if (e.algebraic) this.algebraicEffects.add(e.name);
+    // An effect without a provider must be handled by `handle` and compiles to
+    // a suspending generator call. A provided effect is a default handler and
+    // compiles to a direct provider call unless a local handler is in scope.
+    for (const e of mod.effects.values()) {
+      if (!mod.provides.has(e.name)) this.algebraicEffects.add(e.name);
+    }
   }
 
   private isAlgebraic(effect: string): boolean {
@@ -132,7 +139,7 @@ export class Codegen {
   private yieldStar(js: string, span?: { line: number; col: number }, what = "this call"): string {
     if (!this.genMode) {
       this.fail(
-        `${what} performs an algebraic effect, but it is evaluated in a lazy or foreign slot ` +
+        `${what} performs an effect, but it is evaluated in a lazy or foreign slot ` +
         `(a reactive block, an HTML attribute/hole, an event listener, a provider, or a component). ` +
         `Handle the effect in a plain expression instead.`,
         span,
@@ -144,7 +151,7 @@ export class Codegen {
   private perform(effect: string, op: string, args: string, span?: { line: number; col: number }): string {
     if (!this.genMode) {
       this.fail(
-        `algebraic effect ${effect}.${op} is performed in a lazy or foreign slot ` +
+        `effect ${effect}.${op} is performed in a lazy or foreign slot ` +
         `(a reactive block, an HTML attribute/hole, an event listener, a provider, or a component). ` +
         `Algebraic effects are scoped to 'handle … with …' and must run inside a plain expression.`,
         span,
@@ -1045,10 +1052,12 @@ export class Codegen {
   private checkEntryEffects(): void {
     const main = this.mod.fns.get("main");
     if (!main || main.scheme.k !== "fun") return;
-    const unhandled = [...main.scheme.eff.labels].filter((l) => this.isAlgebraic(l));
+    const unhandled = [...main.scheme.eff.labels].filter(
+      (l) => this.isAlgebraic(l) && !this.mod.provides.has(l),
+    );
     if (unhandled.length) {
       this.fail(
-        `main performs algebraic effect(s) {${unhandled.sort().join(", ")}} without handling them: ` +
+        `main performs effect(s) {${unhandled.sort().join(", ")}} without handling them: ` +
         `wrap the work in 'handle ${unhandled[0]} with … in …'`,
         main.span,
       );
@@ -1155,7 +1164,7 @@ export class Codegen {
         .map((o) => {
           if (this.rowHasAlgebraic(this.effOf(o.fn))) {
             this.fail(
-              `provider for capability ${d.effect}.${o.name} cannot perform an algebraic effect: ` +
+              `provider for capability ${d.effect}.${o.name} cannot perform an effect: ` +
               `providers are called from anywhere, so there is no handler scope`,
               o.span,
             );
@@ -1174,7 +1183,7 @@ export class Codegen {
       const nestedCall = this.hasCallCut(cut.node, true);
       if (gen && nestedCall) {
         this.fail(
-          "a cut that performs an algebraic effect cannot also contain a request/response cut",
+          "a cut that performs an effect cannot also contain a request/response cut",
           cut.node.span,
         );
       }
@@ -1264,7 +1273,7 @@ export class Codegen {
       this.rowHasAlgebraic(this.mod.info.get(body)?.eff);
     if (gen && this.hasCallCut(body)) {
       this.fail(
-        `fn ${name} both performs an algebraic effect and needs a request/response cut; ` +
+        `fn ${name} both performs an effect and needs a request/response cut; ` +
         `handle the effect before the cut`,
         body.span,
       );
@@ -1403,7 +1412,7 @@ export class Codegen {
           this.typeHasAlgebraic(this.mod.info.get(e)?.ty) ||
           this.callsFunctionParam(e.body, new Set(e.params.map((p) => p.name)));
         if (gen && this.hasCallCut(e.body)) {
-          this.fail("a function that performs an algebraic effect cannot also contain a request/response cut", e.span);
+          this.fail("a function that performs an effect cannot also contain a request/response cut", e.span);
         }
         const savedGen = this.genMode;
         this.genMode = gen;
@@ -1425,7 +1434,7 @@ export class Codegen {
         this.checkCellBinding(e.name, this.mod.info.get(e.value)?.ty, side, e.value.span);
         const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
         if (gen) {
-          if (this.hasCallCut(e)) this.fail("a block that performs an algebraic effect cannot also contain a request/response cut", e.span);
+          if (this.hasCallCut(e)) this.fail("a block that performs an effect cannot also contain a request/response cut", e.span);
           const savedGen = this.genMode;
           this.genMode = true;
           const vJs = this.emitExpr(e.value, side, ctxHome, env);
@@ -1498,7 +1507,7 @@ export class Codegen {
    * Capability effects stay scoped providers (`R.withEffect`). Algebraic
    * effects suspend: the body becomes a generator, the handler operations
    * receive `resume`, and the handle is driven by `R.handle`, or by the
-   * enclosing handler when the body performs an outer algebraic effect.
+   * enclosing handler when the body performs an outer effect.
    */
   private emitHandle(
     e: Expr & { k: "Handle" },
@@ -1506,18 +1515,21 @@ export class Codegen {
     ctxHome: Side | "neutral",
     env: Set<string>,
   ): string {
-    if (this.isAlgebraic(e.effect)) {
+    if (this.mod.effects.has(e.effect)) {
       const ops = e.ops
         .map((op) => `${ev(op.name)}: ${this.emitAlgebraicOp(op, side, ctxHome, env)}`)
         .join(", ");
       const cutBody = this.hasCallCut(e.body);
       const savedGen = this.genMode;
+      const hadHandler = this.currentHandledEffects.has(e.effect);
+      this.currentHandledEffects.add(e.effect);
       this.genMode = !cutBody;
       let bodyJs: string;
       try {
         bodyJs = this.emitExpr(e.body, side, ctxHome, env);
       } finally {
         this.genMode = savedGen;
+        if (!hadHandler) this.currentHandledEffects.delete(e.effect);
       }
       const bodyFn = cutBody ? `async () => ${bodyJs}` : `function* () { return ${bodyJs}; }`;
       const call = `R.handle(${ev(e.effect)}, { ${ops} }, ${bodyFn})`;
@@ -1532,7 +1544,7 @@ export class Codegen {
       .map((op) => {
         if (this.rowHasAlgebraic(this.effOf(op.fn))) {
           this.fail(
-            `provider for capability ${e.effect}.${op.name} cannot perform an algebraic effect: ` +
+            `provider for capability ${e.effect}.${op.name} cannot perform an effect: ` +
             `providers are called from anywhere, so there is no handler scope`,
             op.span,
           );
@@ -1761,13 +1773,17 @@ export class Codegen {
 
     const qual = e.fn.k === "Field" ? this.qualNameOf(e.fn.target) : null;
     if (e.fn.k === "Field" && qual && this.mod.effects.has(qual)) {
-      if (this.isAlgebraic(qual)) return this.perform(qual, e.fn.name, args, e.span);
+      if (this.isAlgebraic(qual) || this.currentHandledEffects.has(qual)) {
+        return this.perform(qual, e.fn.name, args, e.span);
+      }
       return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
     }
     if (e.fn.k === "Var") {
       const qual = this.effectOfOp(e.fn.name);
       if (qual && !env.has(e.fn.name) && !this.mod.fns.has(e.fn.name)) {
-        if (this.isAlgebraic(qual)) return this.perform(qual, e.fn.name, args, e.span);
+        if (this.isAlgebraic(qual) || this.currentHandledEffects.has(qual)) {
+          return this.perform(qual, e.fn.name, args, e.span);
+        }
         return `R.op(${ev(qual)}, ${ev(e.fn.name)})(${args})`;
       }
     }
@@ -1934,7 +1950,7 @@ export class Codegen {
   private emitMatch(e: Expr & { k: "Match" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
     if (gen && this.hasCallCut(e)) {
-      this.fail("a match that performs an algebraic effect cannot also contain a request/response cut", e.span);
+      this.fail("a match that performs an effect cannot also contain a request/response cut", e.span);
     }
     const savedGen = this.genMode;
     if (gen) this.genMode = true;
@@ -2004,7 +2020,7 @@ export class Codegen {
   private emitBlock(e: Expr & { k: "Block" }, side: Side, ctxHome: Side | "neutral", env: Set<string>): string {
     const gen = this.genMode || this.rowHasAlgebraic(this.effOf(e));
     if (gen && this.hasCallCut(e)) {
-      this.fail("a block that performs an algebraic effect cannot also contain a request/response cut", e.span);
+      this.fail("a block that performs an effect cannot also contain a request/response cut", e.span);
     }
     const savedGen = this.genMode;
     if (gen) this.genMode = true;
@@ -2049,7 +2065,7 @@ export class Codegen {
       case "Hole":
         if (this.rowHasAlgebraic(this.effOf(n.e))) {
           this.fail(
-            "an algebraic effect cannot be performed in an HTML hole: holes are evaluated lazily, " +
+            "an effect cannot be performed in an HTML hole: holes are evaluated lazily, " +
             "outside the handler's scope. Handle the effect before the hole.",
             n.span,
           );
@@ -2066,7 +2082,7 @@ export class Codegen {
           if (a.value.k === "static") return `${ev(a.name)}: ${ev(a.value.v)}`;
           if (this.rowHasAlgebraic(this.effOf(a.value.e))) {
             this.fail(
-              `an algebraic effect cannot be performed in the '${a.name}' attribute: attributes are ` +
+              `an effect cannot be performed in the '${a.name}' attribute: attributes are ` +
               `evaluated lazily. Handle the effect before the attribute.`,
               n.span,
             );
@@ -2079,7 +2095,7 @@ export class Codegen {
       case "Component": {
         if (this.rowHasAlgebraic(this.effOf(n))) {
           this.fail(
-            `component '${n.name}' performs an algebraic effect without handling it: components are ` +
+            `component '${n.name}' performs an effect without handling it: components are ` +
             `called by the renderer, outside any handler scope. Wrap the effect in 'handle … with' inside the component.`,
             n.span,
           );

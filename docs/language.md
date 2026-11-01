@@ -271,7 +271,7 @@ idOf todo = case todo of
 
 ## 5. Client, Server and effects
 
-`Client` and `Server` are **modules**, not capabilities. Each function lives on one
+`Client` and `Server` are **modules**, not effects. Each function lives on one
 side because its body reaches a primitive that only exists there; the FFI import
 that reaches it carries the placement:
 
@@ -305,7 +305,7 @@ main = do
 A function without an annotation inherits the placement of its body, so ordinary
 code needs no annotations at all — only the FFI leaf says which side it belongs to.
 
-`effect` is for **capabilities you define**, with a provider that decides where
+`effect` is for **effects you define**, with a default handler (`provide`) that decides where
 they run (see §5.2). The standard library uses it for `Store`.
 
 ### 5.1 Cells
@@ -360,25 +360,21 @@ label = do
 of a `Cell` do block. In an event handler (which returns `()`), read with
 `let x = get cell` / `cell.value` and write with `cell := ...`.
 
-### 5.2 Capabilities
+### 5.2 Effects
 
-A capability is an effect with a provider. The provider decides where the calls
-run, so the boundary follows the authority:
+Every effect is algebraic: operations suspend, and a handler decides whether to
+resume or abort. `effect X where` declares the effect. `provide X where` installs
+its **default handler** (what used to be called a capability); `handle X with . in .`
+installs a scoped handler that overrides the default for its body.
 
 ```flow
 effect Audit where
   record :: Str -> ()
 
 provide Audit where
-  record msg = Server.log msg      -- provider on the server
-```
+  record msg = Server.log msg      -- default handler on the server
 
-`Audit.record "hi"` is then a server call wherever it is written.
-
-### 5.3 Algebraic effects
-
-```flow
-algebraic effect State where
+effect State where
   get :: () -> Int
   put :: Int -> ()
 
@@ -394,8 +390,9 @@ run () = handle State with
   in compute ()
 ```
 
-Operations suspend the body; the handler calls `resume` to continue it. A handler that never
-resumes aborts the handled body.
+`Audit.record "hi"` uses its default handler, so it is a server call wherever it
+is written. A local `handle` takes precedence for the duration of its body.
+Operations suspend; a handler calls `resume` to continue, or returns to abort.
 
 Calls are effect-lenient: a callback's effects flow through higher-order functions such as
 `map`, `bind` and `Cell.update` instead of being rejected at the callback boundary, and
@@ -406,8 +403,8 @@ toggle :: Int -> List Todo -> List Todo ! Exn
 toggle id = map \(t) -> if t.id == id then ... else ...
 ```
 
-The same effect can cross a tier cut. A cut body that performs an algebraic operation sends it
-to the caller's handler; `resume` continues the remote body, and a handler that does not resume
+The same effect can cross a tier cut. A cut body that performs an operation sends it to the
+caller's handler; `resume` continues the remote body, and a handler that does not resume
 supplies the call's result:
 
 ```flow
@@ -418,7 +415,7 @@ in state.update $ Todo.toggleTodo todo.id
 
 The handler is on the caller's side; the effect row no longer has to be handled before the cut.
 
-### 5.4 Entry points
+### 5.3 Entry points
 
 A program has a server startup hook and one plain-data app object:
 
@@ -560,7 +557,7 @@ module claims them.
 | `Flow.Classes` | `Eq` (`equals`/`notEquals`), `Ord` (`compare`/`minOf`/`maxOf`), `Show` (`show`), `Semigroup` (`append`), `Monoid` (`mempty`) and `Foldable` (`foldr`/`toList`/`foldMap`), with primitives and container instances |
 | `Flow.Cell` | `pure`, `make`, `read`, `write`, `makeCell`, `CellOps` - neutral reactive values and monads |
 | `Flow.Client` / `Flow.Server` | `log`, `now`, `state :: a -> Cell a @client` / `log`, `now`, `random`, `state :: a -> Cell a @server`, placed by their bodies |
-| `Flow.State`, `Flow.Exn`, `Flow.Ref` | algebraic `State`, exceptions with `resume`, and mutable references |
+| `Flow.State`, `Flow.Exn`, `Flow.Ref` | `State`, exceptions with `resume`, and mutable references |
 | `Flow.Fs`, `Flow.Net`, `Flow.Http`, `Flow.Random`, `Flow.Store` | server file access, outbound HTTP, `serve`/page routing and server routes, randomness and key/value storage |
 
 Containers are ordinary values, so they work on both sides of the boundary:

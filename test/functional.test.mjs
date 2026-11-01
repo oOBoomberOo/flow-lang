@@ -253,7 +253,7 @@ main :: Html
 main = do
   let g = f 1
   <p>{str (g 2)}</p>`),
-    /performs algebraic effect.*\{State\}.*without handling/,
+    /performs effect.*\{State\}.*without handling/,
   );
   assert.throws(
     () => compileInTemp(`class S a where

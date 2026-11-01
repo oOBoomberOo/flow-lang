@@ -196,13 +196,13 @@ the command exits without binding a port.
 examples/hello.flow      the smallest app
 examples/counter.flow    client state and events
 examples/boundary.flow   if across the boundary, uplink, downlink
-examples/effects.flow    capabilities and providers
-examples/algebraic.flow  algebraic effects, resume, handlers
+examples/effects.flow    effects and default handlers
+examples/algebraic.flow  effects, resume, handlers
 examples/fp.flow         currying, sections, composition, partial application
 examples/modules.flow    local modules, imports and namespacing
 examples/web.flow        server startup, multi-page routing with serve
 examples/reflect.flow    type metadata and reflection-driven JSON round trips
-examples/http.flow       server response routes, request capabilities
+examples/http.flow       server response routes, request effects
 examples/bounds.flow     trait bounds
 examples/hkt.flow        higher-kinded type parameters
 examples/traits.flow     user traits and instances
@@ -211,11 +211,11 @@ examples/adt.flow        data types and pattern matching
 examples/ffi.flow        unsafe FFI
 examples/fs.flow         server-side filesystem access
 examples/net.flow        outbound HTTP from the server
-examples/handler.flow    local algebraic handlers
+examples/handler.flow    local effect handlers
 ```
 
 Tests: `npm test` - **296 tests** across grammar, layout, types, boundaries, modules, packages,
-registries, the standard library, algebraic effects, cell sugar, monads, currying, qualified paths,
+registries, the standard library, effects, cell sugar, monads, currying, qualified paths,
 trait bounds, higher-kinded types, local handlers, the language server and the VS Code extension.
 
 ## Feature list
@@ -250,8 +250,8 @@ trait bounds, higher-kinded types, local handlers, the language server and the V
   [flow-registry](https://github.com/oOBoomberOo/flow-registry) git registry; registries can be
   set per dependency, per project or globally, and dependencies may be `path:` directories or
   `git:`/`github:` repositories
-* **Effects are capabilities** — `effect Server @ server where`, `provide`, `handle`
-* **Algebraic effects** — `algebraic effect State where get :: () -> Int`, resumed with `resume`
+* **Effects** - `effect X where`, `provide` for a default handler, `handle`/`resume`;
+  effects propagate through callbacks and cuts
 * **Cell sugar** - `cell.value`, `cell := e`, `cell += n`, `cell.update`
 * **Placed cells** - `Cell a @client` / `Cell a @server`; `Client.state` and `Server.state`
   create them, and a server cell's reads/writes become cuts

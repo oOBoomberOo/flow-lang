@@ -644,6 +644,9 @@ test("lsp: definitions for effects, operations and builtin types", async () => {
     "main.flow": `effect Local @ client where
   ping :: () -> Str
 
+provide Local where
+  ping _ = "pong"
+
 main :: Html
 main = do
   let

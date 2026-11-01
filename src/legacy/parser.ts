@@ -325,7 +325,7 @@ export class Parser {
       if (p !== "client" && p !== "server" && p !== "neutral") this.err(`unknown placement '${p}' (expected client|server|neutral)`);
       place = p as Place;
     }
-    if (algebraic && place) this.err("an algebraic effect has no placement: it is handled where it is performed", start);
+    if (algebraic && place) this.err("an effect has no placement: it is handled where it is performed", start);
     this.expectSym("{");
     const ops: FnSig[] = [];
     while (!this.atSym("}")) {

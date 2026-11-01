@@ -95,6 +95,15 @@ export function createRuntime() {
         step = it.next(await req);
         continue;
       }
+      const provider = provides.get(req && req.effect);
+      const impl = provider && provider[req.name];
+      if (typeof impl === "function") {
+        let v = impl(...((req && req.args) || []));
+        if (v && typeof v.next === "function") v = await R.runAsync(v);
+        else if (v && typeof v.then === "function") v = await v;
+        step = it.next(v);
+        continue;
+      }
       const reqId = ++seq;
       const answer = new Promise((resolve) => pendingEffects.set(reqId, resolve));
       sendFn({
@@ -291,12 +300,26 @@ export function createRuntime() {
     run(value) {
       const it = typeof value === "function" ? value() : value;
       if (!it || typeof it.next !== "function") return it;
-      const step = it.next();
-      if (!step.done) {
+      let input;
+      for (;;) {
+        const step = it.next(input);
+        if (step.done) return step.value;
         const req = step.value ?? {};
-        throw new Error(`flow: unhandled algebraic effect ${req.effect}.${req.name}`);
+        if (req && typeof req.then === "function") {
+          throw new Error("flow: this computation waits on a boundary cut; drive it with runAsync");
+        }
+        const provider = provides.get(req.effect);
+        const impl = provider && provider[req.name];
+        if (typeof impl !== "function") {
+          throw new Error(`flow: unhandled effect ${req.effect}.${req.name}`);
+        }
+        let v = impl(...(req.args ?? []));
+        if (v && typeof v.next === "function") v = R.run(v);
+        if (v && typeof v.then === "function") {
+          throw new Error(`flow: provider ${req.effect}.${req.name} is asynchronous; drive it with runAsync`);
+        }
+        input = v;
       }
-      return step.value;
     },
 
     /**
@@ -322,7 +345,15 @@ export function createRuntime() {
           input = await req;
           continue;
         }
-        throw new Error(`flow: unhandled algebraic effect ${req && req.effect}.${req && req.name}`);
+        const provider = provides.get(req && req.effect);
+        const impl = provider && provider[req.name];
+        if (typeof impl !== "function") {
+          throw new Error(`flow: unhandled effect ${req && req.effect}.${req && req.name}`);
+        }
+        let v = impl(...((req && req.args) || []));
+        if (v && typeof v.next === "function") v = await R.runAsync(v);
+        else if (v && typeof v.then === "function") v = await v;
+        input = v;
       }
     },
 
@@ -523,7 +554,16 @@ export function createRuntime() {
         if (handlers[i].effect === msg.effect) { handler = handlers[i]; break; }
       }
       if (!handler) {
-        sendFn({ t: "effect-error", reqId: msg.reqId, error: `flow: unhandled algebraic effect ${msg.effect}.${msg.name}` });
+        const provider = provides.get(msg.effect);
+        const impl = provider && provider[msg.name];
+        if (typeof impl === "function") {
+          let value = impl(...(msg.args ?? []));
+          if (value && typeof value.next === "function") value = await R.runAsync(value);
+          else if (value && typeof value.then === "function") value = await value;
+          sendFn({ t: "effect-ret", reqId: msg.reqId, value });
+          return;
+        }
+        sendFn({ t: "effect-error", reqId: msg.reqId, error: `flow: unhandled effect ${msg.effect}.${msg.name}` });
         return;
       }
       let resumed = false;

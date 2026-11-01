@@ -4,7 +4,7 @@ import path from "node:path";
 import { compileFile, compileSource } from "../src/compile.ts";
 
 /**
- * Local capability handlers: `handle Effect with { … } { body }` installs a
+ * Local effect handlers: `handle Effect with { … } { body }` installs a
  * scoped provider, nests/restores, and removes the handled effect from the
  * body's effect row.
  */
@@ -12,8 +12,8 @@ import { compileFile, compileSource } from "../src/compile.ts";
 test("handler: local providers compile and nest", () => {
   const r = compileFile(path.join(import.meta.dirname, "..", "examples", "handler.flow"));
   assert.deepEqual(r.diagnostics, []);
-  assert.match(r.client, /R\.withEffect\("Local"/, "a scoped provider is emitted");
-  const count = (r.client.match(/R\.withEffect\("Local"/g) ?? []).length;
+  assert.match(r.client, /R\.handle\("Local"/, "a scoped provider is emitted");
+  const count = (r.client.match(/R\.handle\("Local"/g) ?? []).length;
   assert.ok(count >= 2, "nested handlers are both emitted");
 });
 
@@ -24,7 +24,7 @@ test("handler: the handled effect is removed from the row", () => {
 f :: () -> Str
 f () =
   handle Local with
-    ping () = "ok"
+    ping () = resume "ok"
   in Local.ping ()
 
 main :: Html
@@ -45,13 +45,13 @@ main :: Html
 main = do
   let x =
         handle Global with
-          read () = "local"
+          read () = resume "local"
         in Global.read ()
   <p>{x}</p>
 `;
   const r = compileSource(src, "handler.flow");
   assert.deepEqual(r.diagnostics, []);
-  assert.match(r.client, /R\.withEffect\("Global"/);
+  assert.match(r.client, /R\.handle\("Global"/);
 });
 
 test("handler: missing operations are rejected", () => {
@@ -63,7 +63,7 @@ main :: Html
 main = do
   let x =
         handle Two with
-          a () = 1
+          a () = resume 1
         in Two.a ()
   <p>{str x}</p>
 `;
@@ -78,9 +78,9 @@ main :: Html
 main = do
   let x =
         handle Local with
-          ping () = 1
+          ping () = resume 1
         in Local.ping ()
   <p>{str x}</p>
 `;
-  assert.throws(() => compileSource(src, "handler.flow"), /does not match its signature/);
+  assert.throws(() => compileSource(src, "handler.flow"), /type mismatch|does not match its signature/);
 });

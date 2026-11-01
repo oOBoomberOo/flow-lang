@@ -360,12 +360,7 @@ export class Parser {
         case "type": return { k: "decl", decl: this.parseTypeDecl() };
         case "class": return { k: "decl", decl: this.parseClass() };
         case "instance": return { k: "decl", decl: this.parseInstance() };
-        case "algebraic": {
-          const s = this.next();
-          if (!this.atKw("effect")) this.err("expected 'effect' after 'algebraic'");
-          return { k: "decl", decl: this.parseEffect(s, true) };
-        }
-        case "effect": return { k: "decl", decl: this.parseEffect(t, false) };
+        case "effect": return { k: "decl", decl: this.parseEffect(t) };
         case "provide": return { k: "decl", decl: this.parseProvide() };
         case "foreign": {
           const d = this.parseForeign();
@@ -570,7 +565,7 @@ export class Parser {
     return { k: "Impl", trait, traitArgs, target, where, methods, span: this.spanFrom(start) };
   }
 
-  private parseEffect(start: Token, algebraic: boolean): Decl {
+  private parseEffect(start: Token): Decl {
     this.expectKw("effect");
     const name = this.expect("Con").value;
     let place: Place | undefined;
@@ -580,7 +575,6 @@ export class Parser {
       if (p !== "client" && p !== "server" && p !== "neutral") this.err(`unknown placement '${p}' (expected client|server|neutral)`);
       place = p as Place;
     }
-    if (algebraic && place) this.err("an algebraic effect has no placement: it is handled where it is performed", start);
     this.expectKw("where");
     const ops = this.blockItems<FnSig>(() => {
       const t = this.expect("id");
@@ -588,7 +582,7 @@ export class Parser {
       const { type, bounds } = this.parseSigType();
       return { ...this.sigFromType(t.value, type, bounds, t), span: this.spanFrom(t) };
     });
-    return { k: "Effect", name, ops, pub: true, place, algebraic, span: this.spanFrom(start) };
+    return { k: "Effect", name, ops, pub: true, place, span: this.spanFrom(start) };
   }
 
   private parseProvide(): Decl {

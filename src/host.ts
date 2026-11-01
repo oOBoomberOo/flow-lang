@@ -76,7 +76,7 @@ export async function createHost(opts: HostOptions): Promise<Host> {
   if (typeof serverModule.routes === "function") {
     try {
       const started = serverModule.routes();
-      // A routes() function that handles algebraic effects is a generator.
+      // A routes() function that handles effects is a generator.
       if (started && typeof (started as { next?: unknown }).next === "function") {
         (R as { run: (value: unknown) => unknown }).run(started);
       } else {
@@ -306,9 +306,11 @@ async function handleRoute(
   runtime._setRequest?.(request);
   try {
     let response = route.handler(request);
-    // A handler that performs algebraic effects compiles to a generator.
+    // A handler that performs effects compiles to a generator.
     if (response && typeof (response as { next?: unknown }).next === "function") {
-      response = runtime.run ? runtime.run(response) : response;
+      response = (runtime as { runAsync?: (value: unknown) => Promise<unknown> }).runAsync
+        ? await (runtime as { runAsync: (value: unknown) => Promise<unknown> }).runAsync(response)
+        : runtime.run ? runtime.run(response) : response;
     }
     sendResponse(res, await response);
   } catch (e) {

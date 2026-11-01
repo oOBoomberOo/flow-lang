@@ -1,8 +1,8 @@
-# Flow — the type system
+# Flow â€” the type system
 
 Flow's central claim is that **the client/server boundary is a typing artefact**. The
-programmer never writes `client` or `server`; they write *effects* — and each effect is a
-**capability** whose provider determines where its calls must run. The type checker derives a
+programmer never writes `client` or `server`; they write *effects* â€” and each effect is a
+**effect** whose default handler determines where its calls must run. The type checker derives a
 *placement* for every expression from the effects it requires, and the compiler cuts the
 program exactly where the placements disagree.
 
@@ -14,17 +14,17 @@ what is and is not guaranteed.
 ## 1. Judgement
 
 ```
-        Γ ⊢ e : τ ! ε @ p
+        Î“ âŠ¢ e : Ï„ ! Îµ @ p
 ```
 
-* `Γ` — typing environment (values, constructors, traits, effects, placements)
-* `τ` — the type (`Int`, `Str`, `List<τ>`, `{a: τ}`, `τ₁ -> τ₂`, user ADTs, `Html`, `Cell<τ>`, `Event`)
-* `ε` — the effect row: a set of effect labels
-* `p` — the placement: `neutral ⊑ {client, server} ⊑ cross`
+* `Î“` â€” typing environment (values, constructors, traits, effects, placements)
+* `Ï„` â€” the type (`Int`, `Str`, `List<Ï„>`, `{a: Ï„}`, `Ï„â‚ -> Ï„â‚‚`, user ADTs, `Html`, `Cell<Ï„>`, `Event`)
+* `Îµ` â€” the effect row: a set of effect labels
+* `p` â€” the placement: `neutral âŠ‘ {client, server} âŠ‘ cross`
 
 `p` is not an annotation. It is computed by the rules below and exists only inside the
-compiler. Source code has no placement syntax except the optional `τ@client` / `τ@server`
-escape hatch (documented in §8).
+compiler. Source code has no placement syntax except the optional `Ï„@client` / `Ï„@server`
+escape hatch (documented in Â§8).
 
 ---
 
@@ -39,7 +39,7 @@ escape hatch (documented in §8).
 ```
 
 ```
-join : Place × Place → Place
+join : Place Ã— Place â†’ Place
 join(neutral, x)      = x
 join(client, client)  = client
 join(server, server)  = server
@@ -47,17 +47,17 @@ join(client, server)  = cross
 join(cross, _)        = cross
 ```
 
-* **neutral** — pure computation; can be duplicated on either side at no cost.
-* **client** / **server** — must run on that side (the authority is there).
-* **cross** — the node is a *frontier*: parts of it belong to both sides. `cross` is never
-  emitted; the cutter (§5) resolves it into two programs.
+* **neutral** â€” pure computation; can be duplicated on either side at no cost.
+* **client** / **server** â€” must run on that side (the authority is there).
+* **cross** â€” the node is a *frontier*: parts of it belong to both sides. `cross` is never
+  emitted; the cutter (Â§5) resolves it into two programs.
 
 The key structural rule is that `cross` is a *lattice join*, not an error. A conflict is not
-a mistake — it is a boundary that the compiler will build.
+a mistake â€” it is a boundary that the compiler will build.
 
 ---
 
-## 3. Placement, capabilities and effects
+## 3. Placement and effects
 
 `Client` and `Server` are modules, not effects. A function is placed by its body,
 and an FFI leaf states its side:
@@ -71,117 +71,113 @@ log :: Str -> ()
 log msg = server_write msg        -- therefore server
 ```
 
-A *capability* is a user-defined effect with a provider:
+An **effect** declares operations that suspend. A handler decides whether to
+`resume` them or abort. `provide` installs the effect's default handler; `handle`
+installs a scoped handler for its body:
 
 ```flow
 effect Audit where
   record :: Str -> ()
-```
 
-A `provide` installs a file-level implementation:
-
-```flow
 provide Audit where
-  record msg = Server.log msg
+  record msg = Server.log msg      -- default handler on the server
 ```
 
-A `handle Effect with { … } { body }` expression installs a **scoped** capability
-handler for `body`; nested handlers restore the previous provider. The handled
-effect is removed from the body's row and the handler operations' effects are
-added:
+A `handle Effect with { ... } { body }` expression installs a scoped handler for
+`body`; nested handlers restore the previous one. The handled effect is removed
+from the body's row and the handler operations' effects are added:
 
 ```
-ε_handle = (ε_body \ {E}) ⊔ ε_ops
+Î“_handle = (Î“_body \ {E}) âˆª Î“_ops
 ```
 
-The **placement of an effect is the join of the placements of its providers**. That is the
-whole story:
+The **placement of an effect is the join of the placements of its default
+handler** (or its declaration annotation):
 
 ```
-place(ε) = ⊔ { place(E) | E ∈ ε }
+place(Î“) = âˆª { place(E) | E âˆˆ Î“ }
 place(Server) = server          (installed by the server runtime)
 place(Client) = client          (installed by the client runtime)
 place(Store)  = server
-place(E)      = ⊔ { home(provider_op) | provider of E }   for user effects
+place(E)      = âˆª { home(provider_op) | default handler of E }
 place(E)      = neutral                                   unannotated, unprovided
 ```
 
-An unannotated effect that no provider pins down has no side of its own: it runs wherever its
-provider runs, or wherever it is called. Only `@ client` / `@ server` on the declaration (or a
-one-sided provider) moves it.
+An unannotated effect with no default handler has no side of its own: it runs
+wherever its handler runs, or wherever it is called. Only `@ client` / `@ server`
+on the declaration (or a one-sided default handler) moves it.
 
 Consequences worth stating explicitly:
 
 1. **Authority determines location.** You do not say *where* code runs; you say *what it needs*.
    Code that needs a server secret runs on the server. Code that needs the DOM runs on the
    client. Code that needs both is cut.
-2. **Moving a capability moves the boundary.** Change a provider from a client lambda to a
-   server lambda and the cut relocates itself. This is the property no annotation-based system
-   has.
-3. **No handler, no call.** A call to `E.op` whose effect has no file-level `provide`
+2. **Moving a default handler moves the boundary.** Change a provider from a client
+   lambda to a server lambda and the cut relocates itself.
+3. **No handler, no call.** A call to `E.op` whose effect has no default `provide`
    and no enclosing `handle` is a type error.
 
 Effect rows **accumulate**. There is no subtraction and no row-polymorphic tail in 0.1:
 
 ```
-ε_call = ε_callee ⊔ {E} ⊔ ε_arguments
+Î“_call = Î“_callee âˆª {E} âˆª Î“_arguments
 ```
 
 A declared row `! {A, B}` on a function is an **upper bound**: inference checks
-`ε_inferred ⊆ {A, B}` and reports the difference otherwise. Without a declaration the row is
+`Î“_inferred âŠ† {A, B}` and reports the difference otherwise. Without a declaration the row is
 inferred and propagated. This is why Flow programs are usually annotation-free.
 
-### 3.1 Algebraic effects
+### 3.1 Handler semantics
 
-`algebraic effect E { … }` declares operations that **suspend**; their calls are not
-capabilities and have no provider. They are discharged by a handler expression:
+`effect E where ...` declares operations that **suspend**:
 
 ```
-Γ, resume : (τ_op) -> τ_body ⊢ h : (τ…) -> τ_body
-E declares op : (τ…) -> τ_op ! ε_op
-────────────────────────────────────────────────────────────
-Γ ⊢ handle E with { op = h } { body }
-    : τ_body ! (ε_body \ {E}) ⊔ ε_ops
+Î“, resume : (Î“_op) -> Î“_body âŠ¢ h : (Î“, ...) -> Î“_body
+E declares op : (Î“, ...) -> Î“_op ! Î“_op
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ handle E with { op = h } { body }
+    : Î“_body ! (Î“_body \ {E}) âˆª Î“_ops
 ```
 
 * `resume` continues the handled body at the operation site and returns the rest
-  of the body's result, so every operation handler returns `τ_body`. A handler
-  that never calls `resume` aborts the body and produces `τ_body` itself.
+  of the body's result, so every operation handler returns `Î“_body`. A handler
+  that never calls `resume` aborts the body and produces `Î“_body` itself.
 * Handlers are deep: the continuation is handled by the same handler. Handlers
   nest, and an inner handler shadows an outer handler for the same effect.
 * `resume` is **one-shot**; a second call is rejected at runtime.
-* Operations of other algebraic effects raised by the body or by the continuation
-  are forwarded to the enclosing handler.
-* Algebraic effects are **placement-neutral**: `place(E) = neutral`, and a
-  `handle` runs on the side where its body runs. Their labels are ignored by
-  `place(ε)`, and codegen refuses to let them cross a tier cut.
-* Capability effects keep their provider-based typing; `provide E with …` is
-  rejected when `E` is algebraic.
+* Operations of other effects raised by the body or by the continuation
+  are forwarded to the enclosing handler or default provider.
+* `provide` is a default handler. A call uses it unless a local `handle` for the
+  same effect is in scope. Provided effects compile to direct provider calls
+  outside a local handler; unprovided effects compile to generator `perform`s.
+* Effects may cross a tier cut: a cut body that performs an operation sends it
+  to the caller's handler. `resume` continues the remote body; a handler that
+  does not resume aborts it and supplies the call's result.
+* Effectful callbacks propagate through higher-order functions (`map`, `bind`,
+  `Cell.update`); partial application keeps the effect row.
 
-Because a suspending call must be evaluated inside a handler, codegen compiles
-functions whose row intersects the algebraic effects to JS generators and calls
-them with `yield*`, and wraps handler bodies in `R.handle`. Effects cannot be
-performed in lazy slots (HTML holes/attributes, event listeners, reactive
-blocks, providers, components): those slots run after the handler scope ends.
-
----
+Functions whose row contains an unprovided effect compile to JS generators and
+are called with `yield*`; handler bodies are wrapped in `R.handle`. Event
+listeners drive generators with `R.runAsync`, so they can install handlers too.
+Effects cannot be performed in HTML attribute/hole slots, reactive blocks,
+providers or components.
 
 ## 4. Inference rules
 
 ### 4.1 Atoms
 
 ```
-──────────────────────            ──────────────────────────
-Γ ⊢ n : Int ! ∅ @ neutral         Γ ⊢ s : Str ! ∅ @ neutral
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€            â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ n : Int ! âˆ… @ neutral         Î“ âŠ¢ s : Str ! âˆ… @ neutral
 
 
-Γ(x) = τ
-──────────────────────
-Γ ⊢ x : τ ! ∅ @ neutral
+Î“(x) = Ï„
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ x : Ï„ ! âˆ… @ neutral
 ```
 
 A binding is a *name*, not a location: `let t = Server.now()` binds a neutral name whose
-*value expression* is placed on the server. The cut happens at the expression, once — not at
+*value expression* is placed on the server. The cut happens at the expression, once â€” not at
 every use.
 
 A **function is a value, not a region**: the effects of its body belong to the function's
@@ -202,11 +198,11 @@ when it fires. Nothing functional is serialized.
 ### 4.2 Application
 
 ```
-Γ ⊢ f : (τ₁,…,τₙ) -> τ ! ε_f @ p_f
-Γ ⊢ aᵢ : τᵢ ! εᵢ @ pᵢ            (for each i)
+Î“ âŠ¢ f : (Ï„â‚,â€¦,Ï„â‚™) -> Ï„ ! Îµ_f @ p_f
+Î“ âŠ¢ aáµ¢ : Ï„áµ¢ ! Îµáµ¢ @ páµ¢            (for each i)
 
-────────────────────────────────────────────────────────────
-Γ ⊢ f(a₁,…,aₙ) : τ ! (ε_f ⊔ ⨆εᵢ) @ (p_f ⊔ ⨆pᵢ ⊔ place(ε_f ⊔ ⨆εᵢ))
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ f(aâ‚,â€¦,aâ‚™) : Ï„ ! (Îµ_f âŠ” â¨†Îµáµ¢) @ (p_f âŠ” â¨†páµ¢ âŠ” place(Îµ_f âŠ” â¨†Îµáµ¢))
 ```
 
 The last join is the important one: **a call inherits the placement of its effects**. This is
@@ -215,47 +211,47 @@ how `Server.now ()` becomes a server computation without any annotation on the c
 ### 4.3 Conditionals
 
 ```
-Γ ⊢ c : Bool ! ε_c @ p_c
-Γ ⊢ e₁ : τ ! ε₁ @ p₁        Γ ⊢ e₂ : τ ! ε₂ @ p₂
-─────────────────────────────────────────────────────────
-Γ ⊢ if c { e₁ } else { e₂ } : τ ! (ε_c ⊔ ε₁ ⊔ ε₂) @ (p_c ⊔ p₁ ⊔ p₂)
+Î“ âŠ¢ c : Bool ! Îµ_c @ p_c
+Î“ âŠ¢ eâ‚ : Ï„ ! Îµâ‚ @ pâ‚        Î“ âŠ¢ eâ‚‚ : Ï„ ! Îµâ‚‚ @ pâ‚‚
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ if c { eâ‚ } else { eâ‚‚ } : Ï„ ! (Îµ_c âŠ” Îµâ‚ âŠ” Îµâ‚‚) @ (p_c âŠ” pâ‚ âŠ” pâ‚‚)
 ```
 
-`if` has no special typing rule for tiers. When `p_c = client` and `p₁ = server`, the result
-is `cross`; §5 decides whether the *client* keeps the `if` (because the branches produce
+`if` has no special typing rule for tiers. When `p_c = client` and `pâ‚ = server`, the result
+is `cross`; Â§5 decides whether the *client* keeps the `if` (because the branches produce
 `Html`) or the *server* does (because the result is data).
 
 ### 4.4 Let / generalization
 
 ```
-Γ ⊢ e₁ : τ₁ ! ε₁ @ p₁
-Γ, x : Gen(τ₁, Γ) ⊢ e₂ : τ₂ ! ε₂ @ p₂
-────────────────────────────────────────────────────────
-Γ ⊢ let x = e₁; e₂ : τ₂ ! (ε₁ ⊔ ε₂) @ (p₁ ⊔ p₂)
+Î“ âŠ¢ eâ‚ : Ï„â‚ ! Îµâ‚ @ pâ‚
+Î“, x : Gen(Ï„â‚, Î“) âŠ¢ eâ‚‚ : Ï„â‚‚ ! Îµâ‚‚ @ pâ‚‚
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ let x = eâ‚; eâ‚‚ : Ï„â‚‚ ! (Îµâ‚ âŠ” Îµâ‚‚) @ (pâ‚ âŠ” pâ‚‚)
 ```
 
-`let` generalizes free unification variables not bound in `Γ` (Hindley–Milner, level-based).
+`let` generalizes free unification variables not bound in `Î“` (Hindleyâ€“Milner, level-based).
 At runtime a `let` becomes a *reactive thunk* (`R.sig`), so a binding that reads a cell is
 re-evaluated when the cell changes. Bindings that contain a request/response cut are
-evaluated eagerly (§6.2) because a round trip is a one-shot value, not a stream.
+evaluated eagerly (Â§6.2) because a round trip is a one-shot value, not a stream.
 
 ### 4.5 HTML
 
 ```
-Γ ⊢ e : Html ! ε @ p            (element / component / hole producing Html)
-────────────────────────────────────────────────────
-Γ ⊢ html { … e … } : Html ! ε @ client ⊔ p
+Î“ âŠ¢ e : Html ! Îµ @ p            (element / component / hole producing Html)
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ html { â€¦ e â€¦ } : Html ! Îµ @ client âŠ” p
 ```
 
 `Html`, `Event` and `Dom` are **client-only types**. `typePlace` propagates: a container of
 a client-only type is itself client-only. This is what guarantees that a markup tree can never
-be built on the server — the server has no DOM.
+be built on the server â€” the server has no DOM.
 
 A `Cell a` is neutral by default. It may carry an explicit placement (`Cell a @client` or `Cell a @server`); `Client.state` returns the former and `Server.state` the latter. A server-bound cell lives in the server process, so client reads become reactive cuts and client writes become call cuts. The cell itself is not sent; only its element value crosses, so the element type must be sendable at every cut.
 
 ```
-──────────────────────────────
-Γ ⊢ html { <p>…</p> } : Html ! ε @ client
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ html { <p>â€¦</p> } : Html ! Îµ @ client
 ```
 
 A hole accepts `Html` (nested tree), a primitive (rendered as text), or any value (rendered
@@ -264,10 +260,10 @@ structurally by `show`). Event attributes have type `(Event) -> Unit`.
 ### 4.6 Traits
 
 ```
-Γ ⊢ e : τ ! ε @ p
-instance D : Show ⟨τ⟩            (resolved by matching the first argument's type)
-──────────────────────────────────────────────────────────────
-Γ ⊢ Show.show(e) : Str ! ε @ p    ⇒    $impl_Show_0_show(e)
+Î“ âŠ¢ e : Ï„ ! Îµ @ p
+instance D : Show âŸ¨Ï„âŸ©            (resolved by matching the first argument's type)
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+Î“ âŠ¢ Show.show(e) : Str ! Îµ @ p    â‡’    $impl_Show_0_show(e)
 ```
 
 Dispatch is **static dictionary passing**. `resolveImpl` unifies the instance head
@@ -302,7 +298,7 @@ For a scrutinee whose type is a known ADT, if no arm is a wildcard or binder, ev
 constructor must appear:
 
 ```
-ctors(τ) \ { c | c appears in an arm } = ∅      otherwise: error
+ctors(Ï„) \ { c | c appears in an arm } = âˆ…      otherwise: error
 ```
 
 ---
@@ -312,7 +308,7 @@ ctors(τ) \ { c | c appears in an arm } = ∅      otherwise: error
 ### 5.1 `home`: resolving `cross`
 
 ```
-home(e) = p                    if p ∈ {neutral, client, server}
+home(e) = p                    if p âˆˆ {neutral, client, server}
 home(e) = resolve(e)           if p = cross
 ```
 
@@ -320,7 +316,7 @@ home(e) = resolve(e)           if p = cross
 
 | # | Rule | Rationale |
 |---|------|-----------|
-| 1 | If `typePlace(τ(e))` is one-sided, that side wins | an `Html` value cannot exist on the server |
+| 1 | If `typePlace(Ï„(e))` is one-sided, that side wins | an `Html` value cannot exist on the server |
 | 2 | `App`: a placed callee's home wins; a neutral callee stays neutral | compute where the function lives; arguments travel |
 | 3 | `if`/`case`/blocks: the first non-neutral branch wins | follow the work |
 | 4 | first non-neutral operand | data flow direction |
@@ -329,13 +325,13 @@ home(e) = resolve(e)           if p = cross
 ### 5.2 Cuts
 
 ```
-cut(e)  ⇔  home(e) ≠ neutral  ∧  home(parent_context) ≠ neutral  ∧  home(e) ≠ home(parent_context)
+cut(e)  â‡”  home(e) â‰  neutral  âˆ§  home(parent_context) â‰  neutral  âˆ§  home(e) â‰  home(parent_context)
 ```
 
 Every cut gets a stable id. Its **free variables** become transport edges:
 
 ```
-deps(cut) = fv(cut.node) ∩ runtime-locals
+deps(cut) = fv(cut.node) âˆ© runtime-locals
 ```
 
 A `let` or block is split per part rather than cut as one region: a client-side
@@ -344,7 +340,7 @@ binding such as `let title = event.target.value` stays on the client and
 (including a `where` function) is re-emitted on the cut's side and removed from
 the wire deps; its captured non-function values are sent normally.
 
-A cut body that performs an algebraic effect sends the operation to the caller's handler. The
+A cut body that performs an effect sends the operation to the caller's handler. The
 handler's `resume` continues the remote generator; a handler that does not resume aborts it and
 supplies the call's result. Effectful callbacks also propagate through higher-order calls, and a
 partial application keeps the callee's effect row.
@@ -362,15 +358,15 @@ its non-local work is one round trip at that moment, not a subscription.
 The distinction is forced by the data: render-position dependencies are *signals* (they have a
 current value and can be subscribed to); handler-position dependencies are *event locals* that
 exist for one instant. Reactive cuts are why Flow never produces request waterfalls in the
-render path — there is no request, only graph edges.
+render path â€” there is no request, only graph edges.
 
 ### 5.3 Serialization
 
 ```
-sendable(τ) ⇔ τ is JSON-shaped
+sendable(Ï„) â‡” Ï„ is JSON-shaped
 ```
 
-`Cell<τ>` is transmitted as its *current value* (and re-sent when it changes), so a cell
+`Cell<Ï„>` is transmitted as its *current value* (and re-sent when it changes), so a cell
 dependency is legal; `Html`, `Dom`, `Event` and function types are not sendable and produce a
 compile error at the cut:
 
@@ -381,15 +377,15 @@ value 'f' of type (Int) -> Int cannot cross the server boundary:
 
 ### 5.4 What the compiler emits
 
-For a program with cuts `c₁ … cₙ` it produces:
+For a program with cuts `câ‚ â€¦ câ‚™` it produces:
 
 ```
 client.js   functions with home = client
-            R.serve(ci, …) for cuts with home = client      (uplink servers)
+            R.serve(ci, â€¦) for cuts with home = client      (uplink servers)
             R.remote(ci, deps) / await R.call(ci, deps)      (consumers)
 
 server.js   functions with home = server
-            R.serve(ci, …) for cuts with home = server
+            R.serve(ci, â€¦) for cuts with home = server
             R.remote / R.call for client-owned cuts
 ```
 
@@ -427,11 +423,11 @@ That is what makes server code able to read a client value:
 ```
 
 ```
-cut cut2: reactive server-side  →  R.op("Server","now")() - R.remote("cut3")
-cut cut3: reactive client-side  →  R.op("Client","now")()
+cut cut2: reactive server-side  â†’  R.op("Server","now")() - R.remote("cut3")
+cut cut3: reactive client-side  â†’  R.op("Client","now")()
 ```
 
-Two cuts, opposite directions, one expression — with no annotation anywhere.
+Two cuts, opposite directions, one expression â€” with no annotation anywhere.
 
 ---
 
@@ -441,7 +437,8 @@ Two cuts, opposite directions, one expression — with no annotation anywhere.
 
 1. **No placement errors at runtime.** A value that cannot be serialized cannot cross; a
    DOM value cannot be produced on the server. Both are compile errors.
-2. **Every effect has a provider.** A call to an unprovided effect does not type-check.
+2. **Every effect is handled.** A call outside a matching `handle` and without a
+   default `provide` does not type-check.
 3. **Provider signatures match.** Each provider operation is checked against the declared
    effect signature (in a rolled-back substitution, so polymorphism is preserved).
 4. **Exhaustive matches.** Missing constructors are reported at compile time.
@@ -472,7 +469,7 @@ Two cuts, opposite directions, one expression — with no annotation anywhere.
 A type may carry an explicit placement:
 
 ```flow
-fn render(x: Str) -> Html@client { … }
+fn render(x: Str) -> Html@client { â€¦ }
 ```
 
 The annotation is checked against inference:
@@ -488,7 +485,7 @@ client use becomes a cut.
 Neutral and `cross` expressions remain compatible with either side; the compiler
 reports `placement mismatch` when a concrete client value is annotated `@server`
 or vice versa. The annotation records and checks intent; it does not decide the
-cut — `flow explain` remains the authoritative view of placement.
+cut â€” `flow explain` remains the authoritative view of placement.
 
 ---
 
@@ -496,14 +493,14 @@ cut — `flow explain` remains the authoritative view of placement.
 
 | System | Placement decided by | Control flow across the boundary |
 |---|---|---|
-| **Flow** | effect → capability → provider | dataflow edges (reactive) + awaited calls (handlers) |
+| **Flow** | effect → default handler | dataflow edges (reactive) + awaited calls (handlers) |
 | Links (2006) | `client`/`server` annotations + effect types | CPS-translated continuations, state on the client |
 | Hop (2006) | `*` annotations | native call/return, serialized continuations |
 | Opa (2009) | slicer over annotations | AJAX + marshalling, compiler-generated |
 | Ur/Web (2015) | type-directed, whole program | typed RPC, monadic transactions |
 | ScalaLoci (2018) | placement types (`placed`) | remote calls with peer types |
-| Electric (2021–) | explicit `e/server` at leaves, inferred cut | streaming dataflow, no continuation moves |
+| Electric (2021â€“) | explicit `e/server` at leaves, inferred cut | streaming dataflow, no continuation moves |
 
-Flow's specific bet is the *capability-first* formulation: `place(effect) = place(provider)`,
+Flow's specific bet is the *provider-first* formulation: `place(effect) = place(default handler)`,
 so authority, not syntax, is the source of truth. That is a small idea, but it is the one that
 lets the boundary move when the implementation moves.

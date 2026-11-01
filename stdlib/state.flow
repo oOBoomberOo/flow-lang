@@ -1,13 +1,13 @@
 module Flow.State where
 
--- Flow.State — mutable state as an algebraic effect.
+-- Flow.State — mutable state as an effect.
 --
 -- `State` suspends at `get`/`put`; `withState`/`runState` install a handler that
 -- keeps the current value in a local `Ref`, so the same code runs on the client
 -- or the server.
 import Flow.Ref (Ref, newRef)
 
-algebraic effect State where
+effect State where
   get :: () -> Int
   put :: Int -> ()
 

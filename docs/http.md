@@ -120,7 +120,7 @@ main = servePage (\_ ->
 
 A page handler cannot close over `main`'s local bindings: it is compiled into
 the browser bundle. Put server values behind a top-level server function or the
-`Store` capability and call it from the handler; that call becomes a cut.
+`Store` effect and call it from the handler; that call becomes a cut.
 
 ## Server routes
 
@@ -212,4 +212,4 @@ still called after `main` for existing programs, but new code should pass
 
 See [`examples/web.flow`](../examples/web.flow) for a multi-page app with a
 server API route, and [`examples/http.flow`](../examples/http.flow) for the
-legacy server route / request capability API.
+legacy server route / request effect API.

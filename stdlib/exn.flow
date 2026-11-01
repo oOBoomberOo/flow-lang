@@ -1,10 +1,10 @@
 module Flow.Exn where
 
--- Flow.Exn — abortive algebraic effects.
+-- Flow.Exn — abortive effects.
 --
 -- `Exn.fail` suspends; a handler may resume (recovering) or return a fallback,
 -- which aborts the rest of the handled computation.
-algebraic effect Exn where
+effect Exn where
   fail :: Str -> a
 
 fail :: Str -> a ! Exn

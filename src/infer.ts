@@ -57,9 +57,11 @@ export interface ImplInfo {
 }
 
 export interface EffectInfo {
-  name: string; ops: Map<string, { sig: FnSig; ty: Type }>; place: Place;
-  /** algebraic effects suspend and resume; they are handled by `handle … with`, never provided */
-  algebraic: boolean;
+  name: string;
+  ops: Map<string, { sig: FnSig; ty: Type }>;
+  place: Place;
+  /** The effect has a default handler installed by provide. */
+  provided?: boolean;
 }
 
 export interface ProvideInfo { effect: string; ops: Map<string, Expr>; target?: TypeExpr; place: Place }
@@ -380,7 +382,7 @@ export class Infer {
 
   private placementFingerprint(): string {
     const parts = [this.effectFingerprint()];
-    for (const e of this.mod.effects.values()) parts.push(`p:${e.name}:${e.place}:${e.algebraic ? "alg" : "cap"}`);
+    for (const e of this.mod.effects.values()) parts.push(`p:${e.name}:${e.place}:${e.provided ? "provider" : "handled"}`);
     for (const p of this.mod.provides.values()) parts.push(`v:${p.effect}:${p.place}`);
     return parts.join(";");
   }
@@ -699,15 +701,13 @@ export class Infer {
     const existing = this.mod.effects.get(d.name);
     const ops = new Map(existing?.ops ?? []);
     for (const o of d.ops) ops.set(o.name, { sig: o, ty: this.resolveSig(o, new Map()) });
-    const algebraic = Boolean(d.algebraic) || Boolean(existing?.algebraic);
     this.mod.effects.set(d.name, {
       name: d.name,
       ops,
-      // An algebraic effect has no host side: it runs wherever its handler runs.
-      // An unannotated effect has no side of its own: it runs where its provider
-      // runs, or where it is called. Only `@ client` / `@ server` pins it down.
-      place: algebraic ? "neutral" : d.place ?? existing?.place ?? "neutral",
-      algebraic,
+      // An effect may be declared on a side or left neutral. A provider can
+      // pin it later; an unprovided effect runs wherever its handler runs.
+      place: d.place ?? existing?.place ?? "neutral",
+      provided: existing?.provided,
     });
   }
 
@@ -716,8 +716,8 @@ export class Infer {
    *  placement-neutral (FFI calls, pure code) does not move the effect. */
   private applyProviderPlaces() {
     for (const e of this.mod.effects.values()) {
-      if (e.algebraic) continue;
       const p = this.mod.provides.get(e.name);
+      e.provided = Boolean(p);
       if (p && p.place !== "neutral") e.place = p.place;
     }
   }
@@ -884,12 +884,6 @@ export class Infer {
       if (d.k !== "Provide") continue;
       const effect = this.mod.effects.get(d.effect);
       if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
-      if (effect.algebraic) {
-        this.fail(
-          `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with … in …'`,
-          d.span,
-        );
-      }
       for (const o of d.ops) {
         const decl = effect.ops.get(o.name);
         if (!decl) this.fail(`effect ${d.effect} has no operation '${o.name}'`, o.span);
@@ -913,12 +907,6 @@ export class Infer {
   registerProvide(d: Decl & { k: "Provide" }) {
     const effect = this.mod.effects.get(d.effect);
     if (!effect) this.fail(`provide for unknown effect '${d.effect}'`, d.span);
-    if (effect.algebraic) {
-      this.fail(
-        `algebraic effect '${d.effect}' cannot be provided: handle it with 'handle ${d.effect} with … in …'`,
-        d.span,
-      );
-    }
     const ops = new Map<string, Expr>();
     let place: Place = "neutral";
     for (const o of d.ops) {
@@ -1365,7 +1353,7 @@ export class Infer {
 
       case "Var": {
         if (e.name === "resume" && !this.env.has("resume") && !this.mod.fns.has("resume")) {
-          this.fail("'resume' is only available inside an operation handler of an algebraic effect", e.span);
+          this.fail("'resume' is only available inside an operation handler of an effect", e.span);
         }
         // A trait method with no parameters is a value: `empty`, not `empty ()`.
         const nullaryTrait = !this.env.has(e.name) && !this.mod.fns.has(e.name) ? this.mod.methodIndex.get(e.name) : undefined;
@@ -1707,59 +1695,7 @@ export class Infer {
   inferHandle(e: Expr & { k: "Handle" }): ResInfo {
     const effect = this.mod.effects.get(e.effect);
     if (!effect) this.fail(`handler for unknown effect '${e.effect}'`, e.span);
-    if (effect.algebraic) return this.inferAlgebraicHandle(e, effect);
-
-    const seen = new Set<string>();
-    let opPlace: Place = "neutral";
-    let opEff = emptyEff();
-    for (const op of e.ops) {
-      if (seen.has(op.name)) this.fail(`duplicate handler operation '${op.name}'`, op.span);
-      seen.add(op.name);
-      const declared = effect.ops.get(op.name);
-      if (!declared) this.fail(`effect ${e.effect} has no operation '${op.name}'`, op.span);
-      const r = this.infer(op.fn);
-      const before = snapshotSubst();
-      try {
-        unify(r.ty, instantiate(declared.ty, 0));
-      } catch (err) {
-        restoreSubst(before);
-        if (err instanceof FlowError) {
-          this.fail(`handler for ${e.effect}.${op.name} does not match its signature: ${err.message}`, op.span);
-        }
-        throw err;
-      }
-      restoreSubst(before);
-      opPlace = joinPlace(opPlace, r.place);
-      opEff = mergeEff(opEff, r.eff);
-    }
-
-    if (!this.mod.provides.has(e.effect)) {
-      const missing = [...effect.ops.keys()].filter((name) => !seen.has(name));
-      if (missing.length) {
-        this.fail(
-          `handler for ${e.effect} is missing operation(s) ${missing.sort().join(", ")}`,
-          e.span,
-        );
-      }
-    }
-
-    // Calls inside the body see the handler's placement, not the global one.
-    const savedPlace = effect.place;
-    if (opPlace === "client" || opPlace === "server") effect.place = opPlace;
-    let body: ResInfo;
-    try {
-      body = this.infer(e.body);
-    } finally {
-      effect.place = savedPlace;
-    }
-
-    const labels = new Set(body.eff.labels);
-    labels.delete(e.effect);
-    return {
-      ty: body.ty,
-      place: joinPlace(opPlace, body.place),
-      eff: mergeEff({ labels }, opEff),
-    };
+    return this.inferAlgebraicHandle(e, effect);
   }
 
   /**
@@ -2244,12 +2180,17 @@ export class Infer {
   }
 
   private effHasAlgebraic(eff: Eff): boolean {
-    for (const l of eff.labels) if (this.mod.effects.get(l)?.algebraic) return true;
+    // A provided effect is handled by its default provider and does not turn
+    // the caller into a generator; an unprovided effect must be handled.
+    for (const l of eff.labels) {
+      const e = this.mod.effects.get(l);
+      if (e && !e.provided) return true;
+    }
     return false;
   }
 
   /**
-   * A callback's algebraic effects propagate through the consumer only when the
+   * A callback's effects propagate through the consumer only when the
    * declared parameter row does not admit them. `withState` and `Exn.attempt`
    * declare the handled row, so their callbacks do not leak State/Exn into the
    * caller; `map` declares a pure callback, so an effectful lambda propagates.
@@ -2257,14 +2198,20 @@ export class Infer {
   private unadmittedEffects(arg: Eff, param: Type | undefined): Eff {
     const p = param ? prune(param) : undefined;
     if (!p || p.k !== "fun") {
-      return { labels: new Set([...arg.labels].filter((l) => this.mod.effects.get(l)?.algebraic)) };
+      return {
+        labels: new Set(
+          [...arg.labels].filter(
+            (l) => this.mod.effects.has(l) && !this.mod.effects.get(l)?.provided,
+          ),
+        ),
+      };
     }
     if (p.eff.tail !== undefined) return emptyEff();
     const admitted = p.eff.labels;
     return {
       labels: new Set(
         [...arg.labels].filter(
-          (l) => this.mod.effects.get(l)?.algebraic && !admitted.has(l),
+          (l) => this.mod.effects.has(l) && !this.mod.effects.get(l)?.provided && !admitted.has(l),
         ),
       ),
     };
@@ -2834,11 +2781,10 @@ function headConstructor(t: Type): Type {
 export function placeFromEffects(eff: Eff, inf: Infer): Place {
   let p: Place = "neutral";
   for (const l of eff.labels) {
-    // Every capability carries its own placement (declared `@ client`/`@ server`,
-    // or the provider's). Algebraic effects are neutral: they are handled by a
-    // scoped handler wherever the code runs.
+    // An effect carries the placement declared on it or supplied by its
+    // provider. An unprovided effect is neutral and runs where it is handled.
     const e = inf.mod.effects.get(l);
-    if (e && !e.algebraic) p = joinPlace(p, e.place);
+    if (e) p = joinPlace(p, e.place);
   }
   return p;
 }

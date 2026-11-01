@@ -446,7 +446,7 @@ function printDecl(d: Decl, pr: Printer): string {
       return `${head}\n${body.join("\n")}`;
     }
     case "Effect": {
-      const head = `${d.algebraic ? "algebraic " : ""}effect ${d.name}${d.place ? ` @ ${d.place}` : ""} where`;
+      const head = `effect ${d.name}${d.place ? ` @ ${d.place}` : ""} where`;
       return `${head}\n${d.ops.map((o) => `  ${printSig(o)}`).join("\n")}`;
     }
     case "Provide": {
