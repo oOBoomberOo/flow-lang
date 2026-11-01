@@ -817,6 +817,7 @@ function activate(context) {
     vscode.commands.registerCommand("flow.importSymbol", () => importSymbol()),
     vscode.commands.registerCommand("flow.moveSymbol", () => moveSymbol()),
     vscode.commands.registerCommand("flow.organizeImports", () => organizeImports()),
+    vscode.commands.registerCommand("flow.toggleComment", () => toggleComment()),
   );
 
   registerProviders(context);
@@ -937,6 +938,52 @@ async function organizeImports() {
   if (await applyChanges(res?.changes)) {
     vscode.window.showInformationMessage("Flow: imports organized.");
   }
+}
+
+/**
+ * Flow's toggle-line-comment. VS Code normally derives this from
+ * `language-configuration.json`, but an updated window can keep the previous
+ * comment token cached; this command makes the `--` behaviour explicit.
+ */
+function toggleComment() {
+  const ed = activeFlowEditor();
+  if (!ed) return;
+  const text = ed.document.getText();
+  const lines = text.split(/\r?\n/);
+  const selections = ed.selections?.length
+    ? ed.selections
+    : [{ start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }];
+  const picked = new Set();
+  for (const sel of selections) {
+    const start = sel.start.line;
+    let end = sel.end.line;
+    if (sel.end.character === 0 && end > start) end--;
+    for (let i = start; i <= end; i++) if (i >= 0 && i < lines.length) picked.add(i);
+  }
+  const targets = [...picked].sort((a, b) => a - b).filter((i) => lines[i].trim() !== "");
+  if (!targets.length) return;
+  const commented = targets.map((i) => /^(\s*)-- ?/.exec(lines[i]));
+  const allCommented = commented.every(Boolean);
+
+  const edit = new vscode.WorkspaceEdit();
+  for (const i of targets) {
+    const line = lines[i];
+    if (allCommented) {
+      const m = /^(\s*)-- ?/.exec(line);
+      const start = m[1].length;
+      const end = start + (m[0].length - start);
+      edit.replace(ed.document.uri, new vscode.Range(i, start, i, end), "");
+    } else {
+      const indent = /^\s*/.exec(line)[0].length;
+      edit.insert(ed.document.uri, new vscode.Position(i, indent), "-- ");
+    }
+  }
+  return Promise.resolve(vscode.workspace.applyEdit(edit)).then((applied) => {
+    // The line is a comment now; re-request semantic tokens immediately so a
+    // previously coloured symbol cannot keep its tier/cut colour.
+    semanticEmitter?.fire();
+    return applied;
+  });
 }
 
 function deactivate() {

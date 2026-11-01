@@ -25,6 +25,7 @@ function makeMock(workspaceRoot) {
   const outputLines = [];
   const statusMessages = [];
   const watchers = [];
+  const appliedEdits = [];
   let diagnosticsSets = 0;
 
   const d = () => ({ dispose() {} });
@@ -93,7 +94,11 @@ function makeMock(workspaceRoot) {
     CodeAction: class { constructor(title, kind) { this.title = title; this.kind = kind; } },
     CodeLens: class { constructor(range, command) { this.range = range; this.command = command; } },
     DocumentLink: class { constructor(range, target) { this.range = range; this.target = target; } },
-    WorkspaceEdit: class { constructor() { this.edits = []; } replace(uri, range, newText) { this.edits.push({ uri, range, newText }); } },
+    WorkspaceEdit: class {
+      constructor() { this.edits = []; }
+      replace(uri, range, newText) { this.edits.push({ uri, range, newText }); }
+      insert(uri, position, newText) { this.edits.push({ uri, range: { start: position, end: position }, newText }); }
+    },
     SemanticTokens: class { constructor(data, resultId) { this.data = data; this.resultId = resultId; } },
     EventEmitter: class {
       constructor() {
@@ -120,6 +125,7 @@ function makeMock(workspaceRoot) {
       workspaceFolders: [{ uri: { fsPath: workspaceRoot, toString: () => "file:///" + workspaceRoot.replace(/\\/g, "/") } }],
       textDocuments: [],
       getConfiguration: () => ({ get: (k, fallback) => mockConfig[k] ?? fallback }),
+      applyEdit: (edit) => { appliedEdits.push(...edit.edits); return true; },
       onDidOpenTextDocument: (h) => { handlers.open = h; return d(); },
       onDidChangeTextDocument: (h) => { handlers.change = h; return d(); },
       onDidSaveTextDocument: (h) => { handlers.save = h; return d(); },
@@ -165,7 +171,7 @@ function makeMock(workspaceRoot) {
   };
 
   return {
-    mock, handlers, applied, statusBar, decos, registered, commands, watchers, outputLines, statusMessages,
+    mock, handlers, applied, appliedEdits, statusBar, decos, registered, commands, watchers, outputLines, statusMessages,
     config: mockConfig,
     get diagnosticsSets() { return diagnosticsSets; },
   };
@@ -699,6 +705,39 @@ test("vscode: the cut palette matches the server legend and theme defaults", () 
     assert.ok(rules["*.client"] && rules["*.server"], "tier colours are themed");
     assert.ok(rules["*.dependency"]?.underline, "dependencies are underlined");
   } finally {
+    restore();
+  }
+});
+
+test("vscode: toggle line comment inserts Flow's --, not //", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-comment-"));
+  const file = path.join(dir, "main.flow");
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    let text = "let x = 1\nlet y = 2\n";
+    const doc = { languageId: "flow", uri: env.mock.Uri.file(file), getText: () => text };
+    const editor = {
+      document: doc,
+      selections: [{ start: { line: 0, character: 0 }, end: { line: 2, character: 0 } }],
+    };
+    env.mock.window.activeTextEditor = editor;
+    const run = env.commands.find(([name]) => name === "flow.toggleComment")[1];
+    assert.ok(run, "Flow: Toggle Line Comment is registered");
+
+    await run();
+    assert.equal(env.appliedEdits.length, 2);
+    assert.ok(env.appliedEdits.every((e) => e.newText === "-- "), "line comments start with --");
+    assert.ok(!env.appliedEdits.some((e) => e.newText.includes("//")), "never inserts //");
+
+    env.appliedEdits.length = 0;
+    text = "-- let x = 1\n-- let y = 2\n";
+    await run();
+    assert.equal(env.appliedEdits.length, 2);
+    assert.ok(env.appliedEdits.every((e) => e.newText === ""), "a second toggle removes the comment");
+  } finally {
+    ext.deactivate();
     restore();
   }
 });

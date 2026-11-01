@@ -209,7 +209,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.1 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn
@@ -302,6 +302,7 @@ matching defaults; override them in user or workspace settings to restyle the bo
 | `Flow: Import Symbol` | add an import for an unimported public symbol |
 | `Flow: Move Symbol to Module` | move a top-level declaration to another file, fixing imports |
 | `Flow: Organize Imports` | sort and merge the import block |
+| `Flow: Toggle Line Comment` | insert/remove `--` on the selected lines (`Ctrl+/` / `Cmd+/`); works even if a window cached the old comment token |
 
 ---
 
@@ -312,7 +313,7 @@ matching defaults; override them in user or workspace settings to restyle the bo
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
 | `test/lsp-features.test.mjs` | completion (prefix replacement, qualifier-only members, partial fields, silence in strings), markup tag/attribute snippets, `<di` pair insertion, closing-tag completion, on-type tag closing, canonical formatting (lists/markup), definition, references, highlights, rename with imports, symbols, signature help, inlay hints (types and call parameters), folding, selection, code actions, import/move/organize refactors, code lens, multi-error reporting |
 | `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
-| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 18 providers registered (including semantic tokens and on-type formatting), per-cut markers applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
+| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 18 providers registered (including semantic tokens and on-type formatting), per-cut markers applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands, Flow `--` comment toggling and tag completion snippets |
 
 ```
 $ node --test test/lsp.test.mjs test/lsp-features.test.mjs test/vscode-extension.test.mjs
