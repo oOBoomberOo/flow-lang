@@ -148,7 +148,8 @@ In the VS Code client:
 
 The markers are refreshed by `flow/boundaryChanged`, which the server emits after every
 `didOpen` / `didChange` / `didSave` and on watched-file changes, so they stay live while
-you type.
+you type. The same notification refreshes semantic tokens, which matters when a cut moves
+without the text changing.
 
 ### How analysis works
 
