@@ -23,7 +23,7 @@ node src/lsp/server.ts          # LSP on stdin/stdout
 |---|---|
 | `textDocument/didOpen/didChange/didSave/didClose` | incremental sync over an in-memory overlay, so **unsaved buffers analyse correctly**. `didChange` is debounced (150 ms) and bursts of keystrokes are coalesced; the analysis is compared against the previous input so identical text is not recompiled |
 | `textDocument/publishDiagnostics` | **every** type error in the package (not just the first), plus parser/module/link errors, published per file. Editor mode recovers at declaration boundaries, so one broken declaration does not blank the file |
-| `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments, operators + `client` / `server` / `cut` / `boundary` modifiers |
+| `textDocument/semanticTokens/full` | keywords, types, constructors, functions, strings, numbers, comments and operators, with `client` / `server` / `cut1`…`cut12` / `crossing` / `dependency` modifiers. Symbols are coloured by the cut that owns them; a dependency keeps its owner's colour and is underlined |
 | `textDocument/hover` | resolved type (inferred types included, for local `let` bindings, function and lambda parameters and `case` pattern variables), placement, effect row, and where a symbol is declared; works on variables, parameters and local bindings, constructors, function declarations (showing the inferred signature), type names (built-in description or `data`/`type`/`class`/`effect` definition) and imported names |
 | `textDocument/completion` | keywords, locals in scope, every symbol in the package, **the std module list after `Flow.`**, **a module's public members after `Module.` / `Flow.List.` / `Module.no`**, unimported names (with an import edit), **fields and Cell members after `.`** (`value`, `get`, `set`, `update`); prefix-ranked and deduplicated |
 | `textDocument/definition` | variables, constructors, components, effect names, effect operations, builtin types (`Html`, `List`, `Int`, …) and names on `use` lines → the declaring file/range |
@@ -90,8 +90,10 @@ local claims `List`) loads the module on demand, and completion offers module me
 `Flow.List.` / `List.` / `Option.` even before any `import` is written. Typing `Flow.` lists
 the std modules.
 
-`flow/boundary` is the Flow-specific piece: LSP tokens can colour a *token*, but the
-thing worth seeing is a **region** — "these twelve lines run on the server".
+`flow/boundary` is the Flow-specific piece. The server's semantic tokens colour each
+symbol by the tier or cut that owns it; `flow/boundary` reports the **regions** behind
+them — which cut owns a range, which way it crosses, what it carries — so the editor can
+draw matching cut markers and explain them on hover.
 
 ```json
 {
@@ -106,28 +108,41 @@ thing worth seeing is a **region** — "these twelve lines run on the server".
       "deps": ["token"],
       "type": "Str",
       "parent": "Main.main",
+      "palette": 1,
+      "colorKey": "cut1",
       "range": {…},
       "label": "client→server reactive cut cut1 in Main.main → server (deps: token) : Str"
     },
-    { "kind": "crossing", "side": "server", "direction": "mixed→server", "type": "Int", "range": {…}, "label": "…" }
+    { "kind": "crossing", "side": "server", "direction": "mixed→server", "type": "Int", "colorKey": "crossing", "range": {…}, "label": "…" }
   ],
   "summary": { "client": 6, "server": 0, "cuts": 2, "crossings": 1 }
 }
 ```
 
 A **cut** is a node the compiler moved to the other tier; `direction` says which way the
-value now travels (`client→server` or `server→client`). A **crossing** is an expression
-whose value mixes both sides and is resolved without a whole cut (e.g. `Server.now() -
-Client.now()`), so it gets a lighter marker instead of an underline. Neutral functions
-(pure code duplicated on both sides) are not reported — there is nothing to colour.
+value now travels (`client→server` or `server→client`), and `palette` / `colorKey` identify
+the colour it owns. A **crossing** is an expression whose value mixes both sides and is
+resolved without a whole cut (e.g. `Server.now() - Client.now()`), so it gets a lighter
+marker instead of an underline. Neutral functions (pure code duplicated on both sides) are
+not reported — there is nothing to colour.
+
+**Symbols are the primary boundary colouring.** The server emits semantic tokens for every
+symbol, tagged with the tier or cut that owns it:
+
+* ordinary client symbols are blue, server symbols amber;
+* each cut gets a distinct palette colour (`cut1`…`cut12`, cycling after twelve);
+* a **cut dependency** — a free variable the cut carries from its enclosing scope — keeps
+  the colour of the scope it belongs to and is underlined. It crosses *into* the cut but is
+  not owned by it, so it neither takes the cut's colour nor looks like a new local;
+* crossings are grey; keywords, literals, comments and operators keep their syntax colours.
 
 In the VS Code client:
 
-* a cut that runs work on the server gets a violet underline, a **→ gutter arrow**, a
-  centre overview-ruler mark and an inline ` → server` label;
-* a cut that pulls a value back to the client gets the blue **←** variant;
-* a crossing gets a dotted underline, a **⇄ gutter arrow** and ` ⇄ mixed`;
-* hovering any marker shows cut id, direction, mode, deps, type and the enclosing function;
+* every cut also gets a thin underline, a **→/← gutter arrow** and a centre overview-ruler
+  mark in its own palette colour, so a cut's region and its symbols agree;
+* a crossing gets a dotted underline and a **⇄ gutter arrow**;
+* hovering any marker shows cut id, direction, mode, deps, palette slot, type and the
+  enclosing function;
 * every cut also gets an inlay hint (` cut1→server`), and the status bar / code lens count
   cuts and crossings.
 
@@ -192,7 +207,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.15.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.16.0 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `stdlib/` instead. Turn
@@ -235,8 +250,9 @@ break.
 ### What you see
 
 * **Syntax highlighting** from the TextMate grammar.
-* **Boundary colouring**: client code washed blue, server code amber, every inferred
-  cut underlined in violet; hovering a region shows its label.
+* **Boundary colouring** from semantic tokens: client symbols blue, server symbols amber,
+  each inferred cut a different palette colour. A cut dependency keeps its owner's colour
+  and is underlined; the cut itself is also underlined in the same colour.
 * **Inlay hints**: `render server`, `let total :: Int` — the boundary is visible
   without opening a panel.
 * **Code lenses**: `client · 2 cuts` per function.
@@ -249,13 +265,16 @@ break.
 
 | setting | default | meaning |
 |---|---|---|
-| `flow.clientColor` | `rgba(80, 140, 255, 0.16)` | client background |
-| `flow.serverColor` | `rgba(255, 150, 60, 0.16)` | server background |
-| `flow.cutColor` | `rgba(190, 90, 255, 0.55)` | cut underline |
-| `flow.enableDecorations` | `true` | toggle colouring |
+| `flow.cutPalette` | 12 colours | marker colours for cuts; the same slots theme the semantic tokens |
+| `flow.crossingColor` | grey | dotted marker for a crossing |
+| `flow.enableDecorations` | `true` | toggle boundary symbols and cut markers |
 | `flow.serverPath` | `""` | explicit `src/lsp/server.ts`; overrides auto-detection |
 | `flow.useWorkspaceServer` | `true` | in a compiler checkout, run its server instead of the bundle |
 | `flow.devWatch` | `true` | restart the server when the checkout's compiler/stdlib changes |
+
+Symbol colours are ordinary `editor.semanticTokenColorCustomizations` rules (`*.client`,
+`*.server`, `*.cut1`…`*.cut12`, `*.crossing`, `*.dependency`). The extension contributes
+matching defaults; override them in user or workspace settings to restyle the boundary.
 
 ### Commands
 
@@ -277,7 +296,7 @@ break.
 | `test/lsp.test.mjs` | initialize, diagnostics, open/edit, semantic tokens, hover, boundary |
 | `test/lsp-features.test.mjs` | completion (3 kinds), markup tag/attribute snippets, closing-tag completion, definition, references, highlights, rename with imports, symbols, signature help, inlay hints, folding, selection, formatting idempotence, code actions, import/move/organize refactors, code lens, multi-error reporting |
 | `test/lsp-resilience.test.mjs` | module-path completion without imports, symbols/hover/completion/semantic tokens during syntax and type errors, keystroke bursts coalesced into one analysis, Cell dot completion |
-| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 15 providers registered, decorations applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
+| `test/vscode-extension.test.mjs` | the real `extension.js` against a mock host: 17 providers registered (including semantic tokens), per-cut markers applied, diagnostics delivered, providers return real server results, checkout-vs-bundle server resolution, auto-restart on compiler saves, refactor commands and tag completion snippets |
 
 ```
 $ node --test test/lsp.test.mjs test/lsp-features.test.mjs test/vscode-extension.test.mjs

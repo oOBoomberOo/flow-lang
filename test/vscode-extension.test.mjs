@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { CUT_PALETTE_SIZE } from "../src/lsp/semantic.ts";
 
 /**
  * Loads the real VS Code extension against a mock `vscode` module, starts the
@@ -93,6 +94,15 @@ function makeMock(workspaceRoot) {
     CodeLens: class { constructor(range, command) { this.range = range; this.command = command; } },
     DocumentLink: class { constructor(range, target) { this.range = range; this.target = target; } },
     WorkspaceEdit: class { constructor() { this.edits = []; } replace(uri, range, newText) { this.edits.push({ uri, range, newText }); } },
+    SemanticTokens: class { constructor(data, resultId) { this.data = data; this.resultId = resultId; } },
+    EventEmitter: class {
+      constructor() {
+        this.listeners = [];
+        this.event = (listener) => { this.listeners.push(listener); return d(); };
+      }
+      fire() { for (const listener of this.listeners) listener(); }
+      dispose() { this.listeners.length = 0; }
+    },
     window: {
       createOutputChannel: () => ({ appendLine: (line) => outputLines.push(line), clear() { outputLines.length = 0; }, show() {}, dispose() {} }),
       createStatusBarItem: () => statusBar,
@@ -148,6 +158,7 @@ function makeMock(workspaceRoot) {
       registerCodeActionsProvider: (_l, p, m) => { registered.push(["codeAction", p, m]); return d(); },
       registerCodeLensProvider: (_l, p) => { registered.push(["codeLens", p]); return d(); },
       registerRenameProvider: (_l, p) => { registered.push(["rename", p]); return d(); },
+      registerDocumentSemanticTokensProvider: (_l, p, legend) => { registered.push(["semanticTokens", p, legend]); return d(); },
     },
     commands: { registerCommand: (name, fn) => { commands.push([name, fn]); return d(); } },
   };
@@ -209,17 +220,19 @@ test("vscode: activates, drives the server and colours the boundary", async () =
     await waitUntil(() => /cuts \d+/.test(env.statusBar.text), 8000, "boundary summary");
 
     assert.ok(env.applied.some((a) => a.list.length > 0), "decorations applied");
-    assert.equal(env.decos.length, 5, "client, server, out-cut, in-cut and crossing decoration types");
-    assert.notEqual(env.decos[0].opts.backgroundColor, env.decos[1].opts.backgroundColor);
-    assert.ok(env.decos[2].opts.gutterIconPath, "cuts get a gutter marker");
-    assert.equal(env.decos[2].opts.overviewRulerLane, env.mock.OverviewRulerLane.Center);
+    assert.equal(env.decos.length, 25, "server/client marker for each of 12 palette slots, plus crossing");
+    assert.ok(env.decos[0].opts.gutterIconPath, "cuts get a gutter marker");
+    assert.notEqual(env.decos[0].opts.borderColor, env.decos[2].opts.borderColor, "each cut slot has its own colour");
+    assert.equal(env.decos[0].opts.overviewRulerLane, env.mock.OverviewRulerLane.Center);
 
     // every provider the server implements is registered with VS Code
+    await waitUntil(() => env.registered.some((r) => r[0] === "semanticTokens"), 8000, "semantic tokens");
     const names = env.registered.map((r) => r[0]).sort();
     assert.deepEqual(names, [
       "codeAction", "codeLens", "completion", "definition", "documentHighlight", "documentLink",
       "documentSymbol", "foldingRange", "formatting", "hover", "inlayHint",
-      "references", "rename", "selectionRange", "signatureHelp", "typeDefinition", "workspaceSymbol",
+      "references", "rename", "selectionRange", "semanticTokens", "signatureHelp",
+      "typeDefinition", "workspaceSymbol",
     ]);
     const commandNames = env.commands.map(([name]) => name);
     for (const name of ["flow.importSymbol", "flow.moveSymbol", "flow.organizeImports"]) {
@@ -273,6 +286,13 @@ test("vscode: providers return real results from the server", async () => {
 
     const edits = await provider("formatting").provideDocumentFormattingEdits(doc);
     assert.ok(edits.length >= 1, "formatting edits");
+
+    const sem = env.registered.find((r) => r[0] === "semanticTokens");
+    assert.ok(sem, "semantic token provider registered");
+    const tokens = await sem[1].provideDocumentSemanticTokens(doc);
+    assert.ok(tokens.data.length > 0 && tokens.data.length % 5 === 0, "semantic tokens are returned");
+    assert.ok(sem[2].tokenModifiers.includes("client"), "legend carries the client modifier");
+    assert.ok(sem[2].tokenModifiers.includes("cut1"), "legend carries the cut palette");
   } finally {
     ext.deactivate();
     restore();
@@ -646,6 +666,28 @@ main = <p>{"x"}</p>
     assert.ok(commands.includes("flow.organizeImports"), JSON.stringify(commands));
   } finally {
     ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: the cut palette matches the server legend and theme defaults", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(REPO, "vscode-extension", "package.json"), "utf8"));
+  const env = makeMock(REPO);
+  const { ext, restore } = loadExtension(env);
+  try {
+    assert.equal(ext._internals.cutSlots, CUT_PALETTE_SIZE, "the client and server agree on the palette size");
+    assert.equal(ext._internals.cutPalette.length, CUT_PALETTE_SIZE, "a colour for every slot");
+
+    const cutModifiers = pkg.contributes.semanticTokenModifiers.filter((m) => /^cut\d+$/.test(m.id));
+    assert.equal(cutModifiers.length, CUT_PALETTE_SIZE, "every slot is contributed to VS Code");
+
+    const rules = pkg.configurationDefaults["editor.semanticTokenColorCustomizations"].rules;
+    for (let i = 1; i <= CUT_PALETTE_SIZE; i++) {
+      assert.ok(rules[`*.cut${i}`], `a default theme rule for cut${i}`);
+    }
+    assert.ok(rules["*.client"] && rules["*.server"], "tier colours are themed");
+    assert.ok(rules["*.dependency"]?.underline, "dependencies are underlined");
+  } finally {
     restore();
   }
 });

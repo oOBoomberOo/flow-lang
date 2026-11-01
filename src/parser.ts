@@ -61,8 +61,13 @@ interface Sig { type: TypeExpr; bounds: Record<string, string[]>; tok: Token }
 
 interface ExportSpec { names: Set<string> }
 
-const loc = (left: Expr, right: Expr, file: string): Span =>
-  ({ start: left.span.start, end: right.span.end, line: left.span.line, col: left.span.col, file });
+const loc = (left: Expr, right: Expr, file: string): Span => {
+  // `where` bindings are written after the body they wrap, so the left node is
+  // not always first in the source. Cover both ends instead of trusting order.
+  const first = left.span.start <= right.span.start ? left.span : right.span;
+  const last = left.span.end >= right.span.end ? left.span : right.span;
+  return { start: first.start, end: last.end, line: first.line, col: first.col, file };
+};
 
 const isWild = (t: TypeExpr) => t.k === "TVar" && t.name === "_";
 

@@ -19,10 +19,9 @@ import { moduleDisplayName } from "../modules.ts";
 /** `flow::list` -> `Flow.List` for the cheap std index, which carries only ids. */
 const moduleNameOf = (m: { id: string }) => "Flow." + m.id.split("::").slice(1).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(".");
 import type { Analysis, NodeInfo, Region, SymbolInfo } from "../analysis.ts";
-import { lex } from "../lexer.ts";
-import type { Token } from "../lexer.ts";
 import type { Decl, Expr, FnSig, Pattern, Program } from "../ast.ts";
 import { printType } from "../printer.ts";
+import { SEMANTIC_LEGEND, cutSlot, semanticTokensFor } from "./semantic.ts";
 
 /* ------------------------------------------------------------------ */
 /* JSON-RPC framing                                                   */
@@ -631,23 +630,6 @@ function localsAt(file: string, pos: Position): Local[] {
 /* semantic tokens                                                    */
 /* ------------------------------------------------------------------ */
 
-const TOKEN_TYPES = [
-  "keyword", "function", "variable", "type", "class", "string", "number",
-  "comment", "operator", "parameter", "property", "namespace",
-];
-const TOKEN_MODIFIERS = ["client", "server", "cut", "boundary"];
-
-function inRegion(regions: Region[], line: number, character: number): Region | null {
-  let best: Region | null = null;
-  const rank = (r: Region) => r.kind === "cut" ? 2 : r.kind === "crossing" ? 1 : 0;
-  for (const r of regions) {
-    const after = line > r.range.start.line || (line === r.range.start.line && character >= r.range.start.character);
-    const before = line < r.range.end.line || (line === r.range.end.line && character <= r.range.end.character);
-    if (after && before && (!best || rank(r) > rank(best))) best = r;
-  }
-  return best;
-}
-
 /** The innermost cut/crossing region at a position, if any. */
 function boundaryAt(file: string, pos: Position): Region | null {
   const regions = (lastAnalysis?.regions ?? []).filter((r) =>
@@ -665,58 +647,7 @@ function boundaryAt(file: string, pos: Position): Region | null {
 
 function semanticTokens(uri: string): { data: number[] } {
   const file = path.resolve(uriToPath(uri));
-  const text = textOf(uri);
-  const regions = (lastAnalysis?.regions ?? []).filter((r) => path.resolve(r.file) === file);
-  const toks: { line: number; char: number; len: number; type: number; mods: number }[] = [];
-
-  let lexed: Token[] = [];
-  try { lexed = lex(text, file); } catch { lexed = []; }
-
-  for (let i = 0; i < lexed.length; i++) {
-    const t = lexed[i]!;
-    if (t.kind === "eof") continue;
-    let type = -1, mods = 0;
-    const prev = lexed[i - 1];
-    if (t.kind === "kw") type = 0;
-    else if (t.kind === "str") type = 5;
-    else if (t.kind === "num" || t.kind === "float") type = 6;
-    else if (t.kind === "sym") type = 8;
-    else if (t.kind === "Con") type = 3;
-    else if (t.kind === "id") {
-      // a name beside `::` or `=` starts a definition; `f x` is a call
-      const next = lexed[i + 1];
-      type = 9;
-      if (next && (next.value === "::" || next.value === "=")) type = 1;
-      if (prev && (prev.value === "->" || prev.value === "|")) type = 1;
-    }
-    if (type < 0) continue;
-    const region = inRegion(regions, t.line - 1, t.col - 1);
-    if (region) {
-      if (region.side === "client") mods |= 1;
-      if (region.side === "server") mods |= 2;
-      if (region.kind === "cut") mods |= 12;
-      else if (region.kind === "crossing") mods |= 8;
-    }
-    toks.push({ line: t.line - 1, char: t.col - 1, len: t.value.length, type, mods });
-  }
-
-  const re = /--[^\n]*|\{-[\s\S]*?-\}/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const before = text.slice(0, m.index);
-    const line = before.split("\n").length - 1;
-    toks.push({ line, char: m.index - (before.lastIndexOf("\n") + 1), len: m[0].length, type: 7, mods: 0 });
-  }
-
-  toks.sort((a, b) => a.line - b.line || a.char - b.char);
-  const data: number[] = [];
-  let pl = 0, pc = 0;
-  for (const t of toks) {
-    const dl = t.line - pl;
-    data.push(dl, dl === 0 ? t.char - pc : t.char, t.len, t.type, t.mods);
-    pl = t.line; pc = t.char;
-  }
-  return { data };
+  return semanticTokensFor(textOf(uri), file, lastAnalysis?.regions ?? []);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1900,7 +1831,18 @@ function typeDefinition(file: string, pos: Position) {
 function boundary(uri?: string) {
   const a = lastAnalysis;
   if (!a) return { regions: [], summary: { client: 0, server: 0, cuts: 0, crossings: 0 } };
-  const regions = a.regions.map((r) => ({ ...r, fileUri: pathToUri(r.file) }));
+  const regions = a.regions.map((r) => {
+    const base = { ...r, fileUri: pathToUri(r.file) };
+    if (r.kind === "cut") {
+      const palette = cutSlot(r.cutId);
+      return { ...base, palette, colorKey: `cut${palette}` };
+    }
+    if (r.kind === "crossing") return { ...base, colorKey: "crossing" };
+    return {
+      ...base,
+      colorKey: r.side === "client" ? "client" : r.side === "server" ? "server" : "neutral",
+    };
+  });
   void uri;
   return {
     regions,
@@ -1935,7 +1877,7 @@ reader.onMessage((msg) => {
       reply(id, {
         capabilities: {
           textDocumentSync: { openClose: true, change: 2, save: { includeText: true } },
-          semanticTokensProvider: { legend: { tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS }, full: true },
+          semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
           hoverProvider: true,
           completionProvider: { triggerCharacters: [".", ":", "@", "\"", "<", "/"], resolveProvider: false },
           definitionProvider: true,
@@ -2034,6 +1976,7 @@ reader.onMessage((msg) => {
           `- boundary: \`${b.direction ?? b.side}\``,
         ];
         if (b.cutId) lines.push(`- cut: \`${b.cutId}\``);
+        if (b.cutId) lines.push(`- palette: \`cut${cutSlot(b.cutId)}\``);
         if (b.mode) lines.push(`- mode: \`${b.mode}\``);
         if (b.parent) lines.push(`- in: \`${b.parent}\``);
         if (b.deps?.length) lines.push(`- deps: \`${b.deps.join(", ")}\``);

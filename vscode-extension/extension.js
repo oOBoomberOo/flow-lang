@@ -18,10 +18,21 @@ let output = null;
 let deco = null;
 let enabled = true;
 let extensionPath = null;
-let regionCache = new Map(); // uri -> {client:[], server:[], cut:[]}
+let regionCache = new Map(); // uri -> { cuts: {server:[], client:[]}, crossing:[] }
 let devWatcher = null;
 let devRestartTimer = null;
 let startGeneration = 0;
+let semanticRegistration = null;
+let semanticEmitter = null;
+let semanticEnabled = true;
+
+/* Cut markers cycle through this palette; the semantic-token defaults in
+ * package.json use the same colours. A cut keeps a slot for its lifetime. */
+const CUT_SLOTS = 12;
+const CUT_PALETTE = [
+  "#c678dd", "#56b6c2", "#e5c07b", "#e06c75", "#98c379", "#d19a66",
+  "#d16d9e", "#89ddff", "#b48ead", "#a3be8c", "#ebcb8b", "#7f9cf5",
+];
 
 /* ------------------------------------------------------------------ */
 /* LSP client                                                         */
@@ -142,86 +153,84 @@ function publishDiagnostics(params) {
   diagnostics.set(uri, list);
 }
 
-function makeDecorations() {
+function cutColors() {
   const cfg = vscode.workspace.getConfiguration("flow");
+  const configured = cfg.get("cutPalette", CUT_PALETTE);
+  const base = Array.isArray(configured) && configured.length ? configured : CUT_PALETTE;
+  return Array.from({ length: CUT_SLOTS }, (_, i) => base[i % base.length]);
+}
+
+function makeDecorations() {
   if (deco) {
-    deco.client.dispose();
-    deco.server.dispose();
-    deco.cutOut.dispose();
-    deco.cutIn.dispose();
+    for (const side of ["server", "client"]) for (const t of deco.cuts[side]) t.dispose();
     deco.crossing.dispose();
   }
+  const cfg = vscode.workspace.getConfiguration("flow");
   const media = (name) => (extensionPath ? vscode.Uri.file(path.join(extensionPath, "media", name)) : undefined);
+  const colors = cutColors();
+  // One marker type per palette slot and direction. Symbol colours themselves
+  // come from semantic tokens; these marks show where a cut starts.
+  const cuts = { server: [], client: [] };
+  for (let i = 0; i < CUT_SLOTS; i++) {
+    const color = colors[i];
+    for (const [side, icon] of [["server", "cut-out.svg"], ["client", "cut-in.svg"]]) {
+      cuts[side].push(vscode.window.createTextEditorDecorationType({
+        borderWidth: "0 0 1px 0",
+        borderStyle: "solid",
+        borderColor: color,
+        overviewRulerColor: color,
+        overviewRulerLane: vscode.OverviewRulerLane.Center,
+        gutterIconPath: media(icon),
+        gutterIconSize: "contain",
+      }));
+    }
+  }
   deco = {
-    client: vscode.window.createTextEditorDecorationType({
-      backgroundColor: cfg.get("clientColor"),
-      borderRadius: "2px",
-      overviewRulerColor: cfg.get("clientColor"),
-      overviewRulerLane: vscode.OverviewRulerLane.Left,
-    }),
-    server: vscode.window.createTextEditorDecorationType({
-      backgroundColor: cfg.get("serverColor"),
-      borderRadius: "2px",
-      overviewRulerColor: cfg.get("serverColor"),
-      overviewRulerLane: vscode.OverviewRulerLane.Right,
-    }),
-    // A cut that sends work client→server, and one that pulls a server value back.
-    cutOut: vscode.window.createTextEditorDecorationType({
-      textDecoration: "underline",
-      borderWidth: "0 0 1px 0",
-      borderStyle: "solid",
-      borderColor: cfg.get("cutColor"),
-      overviewRulerColor: cfg.get("cutColor"),
-      overviewRulerLane: vscode.OverviewRulerLane.Center,
-      gutterIconPath: media("cut-out.svg"),
-      gutterIconSize: "contain",
-      after: { contentText: " → server", color: cfg.get("cutColor"), margin: "0 0 0 0.4em" },
-    }),
-    cutIn: vscode.window.createTextEditorDecorationType({
-      textDecoration: "underline",
-      borderWidth: "0 0 1px 0",
-      borderStyle: "solid",
-      borderColor: cfg.get("cutInColor"),
-      overviewRulerColor: cfg.get("cutInColor"),
-      overviewRulerLane: vscode.OverviewRulerLane.Center,
-      gutterIconPath: media("cut-in.svg"),
-      gutterIconSize: "contain",
-      after: { contentText: " → client", color: cfg.get("cutInColor"), margin: "0 0 0 0.4em" },
-    }),
+    cuts,
     // A cross-tier expression resolved without a whole cut.
     crossing: vscode.window.createTextEditorDecorationType({
       borderWidth: "0 0 1px 0",
       borderStyle: "dotted",
-      borderColor: cfg.get("crossingColor"),
-      overviewRulerColor: cfg.get("crossingColor"),
+      borderColor: cfg.get("crossingColor", "rgba(176, 176, 176, 0.7)"),
+      overviewRulerColor: cfg.get("crossingColor", "rgba(176, 176, 176, 0.7)"),
       overviewRulerLane: vscode.OverviewRulerLane.Full,
       gutterIconPath: media("crossing.svg"),
       gutterIconSize: "contain",
-      after: { contentText: " ⇄ mixed", color: cfg.get("crossingColor"), margin: "0 0 0 0.4em" },
     }),
+  };
+}
+
+function emptyBuckets() {
+  return {
+    cuts: {
+      server: Array.from({ length: CUT_SLOTS }, () => []),
+      client: Array.from({ length: CUT_SLOTS }, () => []),
+    },
+    crossing: [],
   };
 }
 
 function applyBoundary(payload) {
   const uri = payload.uri || (payload.regions && payload.regions[0] && payload.regions[0].fileUri);
   const byFile = new Map();
-  const empty = () => ({ client: [], server: [], cutOut: [], cutIn: [], crossing: [] });
   for (const r of payload.regions || []) {
     const key = r.fileUri || uri;
     if (!key) continue;
-    if (!byFile.has(key)) byFile.set(key, empty());
+    if (!byFile.has(key)) byFile.set(key, emptyBuckets());
     const bucket = byFile.get(key);
     const range = R(r.range);
     const hover = detailMessage(r);
     if (r.kind === "cut") {
-      (r.side === "server" ? bucket.cutOut : bucket.cutIn).push({ range, hoverMessage: hover });
+      const side = r.side === "client" ? "client" : "server";
+      const slot = Math.max(0, Math.min(CUT_SLOTS - 1, (Number(r.palette) || 1) - 1));
+      bucket.cuts[side][slot].push({ range, hoverMessage: hover });
     } else if (r.kind === "crossing") {
       bucket.crossing.push({ range, hoverMessage: hover });
-    } else if (r.side === "client") bucket.client.push({ range, hoverMessage: r.label });
-    else if (r.side === "server") bucket.server.push({ range, hoverMessage: r.label });
+    }
   }
   regionCache = byFile;
   paintAll();
+  semanticEmitter?.fire();
   const s = payload.summary || { client: 0, server: 0, cuts: 0, crossings: 0 };
   const crossings = s.crossings ? ` · crossings ${s.crossings}` : "";
   statusBar.text = `$(radio-tower) Flow · client ${s.client} · server ${s.server} · cuts ${s.cuts}${crossings}`;
@@ -235,6 +244,7 @@ function detailMessage(r) {
   if (r.kind === "cut") {
     md.appendMarkdown(`**Inferred cut${r.cutId ? ` \`${r.cutId}\`` : ""}** — \`${r.direction || r.side}\`\n\n`);
     md.appendMarkdown(`- boundary: \`${r.direction || r.side}\`\n`);
+    if (r.palette) md.appendMarkdown(`- palette: \`cut${r.palette}\`\n`);
     if (r.mode) md.appendMarkdown(`- mode: \`${r.mode}\`\n`);
     if (r.parent) md.appendMarkdown(`- in: \`${r.parent}\`\n`);
     if (r.deps && r.deps.length) md.appendMarkdown(`- deps: \`${r.deps.join(", ")}\`\n`);
@@ -252,17 +262,13 @@ function paint(editor) {
   if (!deco) return;
   const buckets = regionCache.get(editor.document.uri.toString());
   if (!enabled || !buckets) {
-    editor.setDecorations(deco.client, []);
-    editor.setDecorations(deco.server, []);
-    editor.setDecorations(deco.cutOut, []);
-    editor.setDecorations(deco.cutIn, []);
+    for (const side of ["server", "client"]) for (const t of deco.cuts[side]) editor.setDecorations(t, []);
     editor.setDecorations(deco.crossing, []);
     return;
   }
-  editor.setDecorations(deco.client, buckets.client);
-  editor.setDecorations(deco.server, buckets.server);
-  editor.setDecorations(deco.cutOut, buckets.cutOut);
-  editor.setDecorations(deco.cutIn, buckets.cutIn);
+  for (const side of ["server", "client"]) {
+    for (let i = 0; i < CUT_SLOTS; i++) editor.setDecorations(deco.cuts[side][i], buckets.cuts[side][i]);
+  }
   editor.setDecorations(deco.crossing, buckets.crossing);
 }
 
@@ -274,6 +280,37 @@ async function refresh(uri) {
   if (!client) return;
   const payload = await ask("flow/boundary", uri ? { uri } : {}, null);
   if (payload) applyBoundary({ ...payload, uri });
+}
+
+/**
+ * Register the server's semantic tokens. The legend is read from the server's
+ * `initialize` response so the two can never drift apart. Firing the change
+ * event re-requests tokens after a re-analysis that did not edit the buffer
+ * (a cut can move without the text changing).
+ */
+function registerSemanticTokens(context, legend) {
+  if (!legend || !vscode.languages.registerDocumentSemanticTokensProvider) return;
+  semanticRegistration?.dispose();
+  semanticEmitter?.dispose();
+  semanticEmitter = new vscode.EventEmitter();
+  const provider = {
+    onDidChangeSemanticTokens: semanticEmitter.event,
+    async provideDocumentSemanticTokens(document) {
+      if (!semanticEnabled || !client) return new vscode.SemanticTokens(new Uint32Array());
+      // The editor already sent didChange for this buffer. Do not sync here:
+      // that would notify the server, which emits flow/boundaryChanged, which
+      // fires onDidChangeSemanticTokens again - an endless refresh loop.
+      const res = await ask(
+        "textDocument/semanticTokens/full",
+        { textDocument: { uri: document.uri.toString() } },
+        { data: [] },
+      );
+      const data = Array.isArray(res?.data) ? res.data : [];
+      return new vscode.SemanticTokens(Uint32Array.from(data));
+    },
+  };
+  semanticRegistration = vscode.languages.registerDocumentSemanticTokensProvider("flow", provider, legend);
+  context.subscriptions.push(semanticRegistration);
 }
 
 /* ------------------------------------------------------------------ */
@@ -631,8 +668,9 @@ async function start(context) {
   startDevWatch(context, serverPath);
   const started = new LspClient(serverPath, cwd);
   client = started;
+  let capabilities = null;
   try {
-    await started.request("initialize", {
+    const init = await started.request("initialize", {
       processId: process.pid,
       rootUri: vscode.workspace.workspaceFolders?.[0]?.uri.toString() ?? null,
       capabilities: {
@@ -644,6 +682,7 @@ async function start(context) {
         workspace: { symbol: {} },
       },
     });
+    capabilities = init?.capabilities ?? null;
     started.notify("initialized", {});
   } catch (e) {
     if (client === started) client = null;
@@ -658,6 +697,8 @@ async function start(context) {
     started.stop();
     return;
   }
+  const legend = capabilities?.semanticTokensProvider?.legend;
+  if (legend) registerSemanticTokens(context, legend);
   for (const doc of vscode.workspace.textDocuments) if (doc.languageId === "flow") openDoc(doc);
   const active = vscode.window.activeTextEditor;
   if (active && active.document.languageId === "flow") {
@@ -686,6 +727,8 @@ function activate(context) {
   statusBar.command = "flow.explain";
   statusBar.text = "$(radio-tower) Flow";
   statusBar.show();
+  enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
+  semanticEnabled = enabled;
   makeDecorations();
 
   context.subscriptions.push(
@@ -723,6 +766,8 @@ function activate(context) {
       if (!e.affectsConfiguration("flow")) return;
       makeDecorations();
       enabled = vscode.workspace.getConfiguration("flow").get("enableDecorations", true);
+      semanticEnabled = enabled;
+      semanticEmitter?.fire();
       paintAll();
       // The server source is chosen from settings; re-resolve and re-arm the
       // watcher immediately instead of waiting for a window reload.
@@ -737,7 +782,9 @@ function activate(context) {
       const buckets = [...regionCache.entries()]
         .filter(([uri]) => uri === vscode.window.activeTextEditor?.document.uri.toString())
         .map(([, b]) => b);
-      const cuts = buckets.reduce((n, b) => n + b.cutOut.length + b.cutIn.length, 0);
+      const cuts = buckets.reduce((n, b) =>
+        n + ["server", "client"].reduce((m, side) =>
+          m + b.cuts[side].reduce((k, list) => k + list.length, 0), 0), 0);
       const crossings = buckets.reduce((n, b) => n + b.crossing.length, 0);
       vscode.window.showInformationMessage(
         `Flow: ${name ?? "this function"} — ${cuts} inferred cut(s), ${crossings} crossing(s) in this file.`,
@@ -745,7 +792,9 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("flow.toggleBoundary", () => {
       enabled = !enabled;
+      semanticEnabled = enabled;
       paintAll();
+      semanticEmitter?.fire();
       vscode.window.setStatusBarMessage(`Flow boundary colouring ${enabled ? "on" : "off"}`, 2000);
     }),
     vscode.commands.registerCommand("flow.restart", async () => {
@@ -882,6 +931,10 @@ function deactivate() {
   devRestartTimer = null;
   devWatcher?.dispose();
   devWatcher = null;
+  semanticRegistration?.dispose();
+  semanticRegistration = null;
+  semanticEmitter?.dispose();
+  semanticEmitter = null;
   client?.stop();
   client = null;
 }
@@ -894,5 +947,7 @@ module.exports = {
     compilerRoot,
     isCompilerCheckout,
     serverRunning: () => Boolean(client),
+    cutSlots: CUT_SLOTS,
+    cutPalette: CUT_PALETTE,
   },
 };

@@ -1,8 +1,8 @@
 {
   "name": "flow-language",
   "displayName": "Flow",
-  "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and boundary colouring.",
-  "version": "0.15.0",
+  "description": "Flow: tierless web language with a type-inferred client/server boundary — syntax highlighting, diagnostics, hover and per-cut boundary colouring.",
+  "version": "0.16.0",
   "publisher": "flow-lang",
   "license": "MIT",
   "engines": { "vscode": "^1.75.0" },
@@ -24,6 +24,25 @@
         "scopeName": "source.flow",
         "path": "./syntaxes/flow.tmLanguage.json"
       }
+    ],
+    "semanticTokenModifiers": [
+      { "id": "client", "description": "A symbol that runs on the client." },
+      { "id": "server", "description": "A symbol that runs on the server." },
+      { "id": "cut", "description": "A symbol inside a cut: code the compiler moved across the tier boundary." },
+      { "id": "crossing", "description": "A symbol inside an expression that mixes client and server values." },
+      { "id": "dependency", "description": "A free variable a cut carries across the boundary; it keeps the colour of the scope it belongs to." },
+      { "id": "cut1", "description": "Cut palette slot 1." },
+      { "id": "cut2", "description": "Cut palette slot 2." },
+      { "id": "cut3", "description": "Cut palette slot 3." },
+      { "id": "cut4", "description": "Cut palette slot 4." },
+      { "id": "cut5", "description": "Cut palette slot 5." },
+      { "id": "cut6", "description": "Cut palette slot 6." },
+      { "id": "cut7", "description": "Cut palette slot 7." },
+      { "id": "cut8", "description": "Cut palette slot 8." },
+      { "id": "cut9", "description": "Cut palette slot 9." },
+      { "id": "cut10", "description": "Cut palette slot 10." },
+      { "id": "cut11", "description": "Cut palette slot 11." },
+      { "id": "cut12", "description": "Cut palette slot 12." }
     ],
     "commands": [
       { "command": "flow.explain", "title": "Flow: Explain Boundary" },
@@ -51,25 +70,14 @@
           "default": true,
           "description": "Restart the language server automatically when files under the checkout's src/**.ts or stdlib/**.flow change. Applies only when running a compiler checkout, not the bundled server."
         },
-        "flow.clientColor": {
-          "type": "string",
-          "default": "rgba(80, 140, 255, 0.16)",
-          "description": "Background colour for client-placed code."
-        },
-        "flow.serverColor": {
-          "type": "string",
-          "default": "rgba(255, 150, 60, 0.16)",
-          "description": "Background colour for server-placed code."
-        },
-        "flow.cutColor": {
-          "type": "string",
-          "default": "rgba(190, 90, 255, 0.55)",
-          "description": "Colour of the underline and gutter marker for a cut that runs server work (client→server)."
-        },
-        "flow.cutInColor": {
-          "type": "string",
-          "default": "rgba(90, 168, 255, 0.6)",
-          "description": "Colour of the underline and gutter marker for a cut that pulls a value back to the client (→client)."
+        "flow.cutPalette": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "#c678dd", "#56b6c2", "#e5c07b", "#e06c75", "#98c379", "#d19a66",
+            "#d16d9e", "#89ddff", "#b48ead", "#a3be8c", "#ebcb8b", "#7f9cf5"
+          ],
+          "description": "Marker colours for cuts, cycled when a file has more cuts than entries. Symbol colours are set by editor.semanticTokenColorCustomizations (the extension supplies matching defaults)."
         },
         "flow.crossingColor": {
           "type": "string",
@@ -79,8 +87,34 @@
         "flow.enableDecorations": {
           "type": "boolean",
           "default": true,
-          "description": "Colour client/server regions in the editor."
+          "description": "Colour boundary symbols and mark cuts with an underline, gutter arrow and overview-ruler mark."
         }
+      }
+    }
+  },
+  "configurationDefaults": {
+    "[flow]": {
+      "editor.semanticHighlighting.enabled": true
+    },
+    "editor.semanticTokenColorCustomizations": {
+      "rules": {
+        "*.client": { "foreground": "#61afef" },
+        "*.server": { "foreground": "#e0af68" },
+        "*.cut": { "italic": true },
+        "*.cut1": { "foreground": "#c678dd" },
+        "*.cut2": { "foreground": "#56b6c2" },
+        "*.cut3": { "foreground": "#e5c07b" },
+        "*.cut4": { "foreground": "#e06c75" },
+        "*.cut5": { "foreground": "#98c379" },
+        "*.cut6": { "foreground": "#d19a66" },
+        "*.cut7": { "foreground": "#d16d9e" },
+        "*.cut8": { "foreground": "#89ddff" },
+        "*.cut9": { "foreground": "#b48ead" },
+        "*.cut10": { "foreground": "#a3be8c" },
+        "*.cut11": { "foreground": "#ebcb8b" },
+        "*.cut12": { "foreground": "#7f9cf5" },
+        "*.crossing": { "foreground": "#9aa5b1" },
+        "*.dependency": { "underline": true }
       }
     }
   },

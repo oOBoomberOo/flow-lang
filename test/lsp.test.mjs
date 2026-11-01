@@ -94,6 +94,24 @@ function tmpFlow(src) {
 
 const uri = (file) => `file:///${path.resolve(file).replace(/\\/g, "/").replace(/^\/+/, "")}`;
 
+/** Decode LSP relative semantic-token data into absolute positions. */
+function decodeTokens(data) {
+  const out = [];
+  let line = 0, char = 0;
+  for (let i = 0; i < data.length; i += 5) {
+    const dl = data[i], dc = data[i + 1];
+    line += dl;
+    char = dl === 0 ? char + dc : dc;
+    out.push({ line, char, len: data[i + 2], type: data[i + 3], mods: data[i + 4] });
+  }
+  return out;
+}
+
+function hasMod(token, legend, name) {
+  const at = legend.tokenModifiers.indexOf(name);
+  return at >= 0 && (token.mods & (1 << at)) !== 0;
+}
+
 const GOOD = `
 module Main where
 
@@ -166,7 +184,7 @@ test("lsp: semantic tokens carry client/server modifiers", async () => {
   const file = tmpFlow(GOOD);
   const c = startServer();
   try {
-    await c.request("initialize", { rootUri: null, capabilities: {} });
+    const res = await c.request("initialize", { rootUri: null, capabilities: {} });
     c.notify("textDocument/didOpen", {
       textDocument: { uri: uri(file), languageId: "flow", version: 1, text: GOOD },
     });
@@ -175,21 +193,105 @@ test("lsp: semantic tokens carry client/server modifiers", async () => {
     assert.ok(toks.data.length > 0);
     assert.equal(toks.data.length % 5, 0);
 
-    // decode and check that at least one token is a keyword and one carries a side modifier
-    let line = 0, char = 0;
-    let sawKeyword = false, sawClient = false, sawServer = false;
-    for (let i = 0; i < toks.data.length; i += 5) {
-      const dl = toks.data[i], dc = toks.data[i + 1], type = toks.data[i + 3], mods = toks.data[i + 4];
-      line += dl;
-      char = dl === 0 ? char + dc : dc;
-      if (type === 0) sawKeyword = true;
-      if (mods & 1) sawClient = true;
-      if (mods & 2) sawServer = true;
-      void line; void char;
-    }
-    assert.ok(sawKeyword, "keywords are tokenized");
-    assert.ok(sawClient, "some token is client-colored");
-    assert.ok(sawServer, "some token is server-colored");
+    // Decode and check that symbols carry their tier. A cut is its own colour;
+    // it does not masquerade as an ordinary server symbol.
+    const legend = res.capabilities.semanticTokensProvider.legend;
+    const decoded = decodeTokens(toks.data);
+    assert.ok(decoded.some((t) => t.type === 0), "keywords are tokenized");
+    assert.ok(decoded.some((t) => hasMod(t, legend, "client")), "some symbol is client-colored");
+
+    const cut = decoded.filter((t) => hasMod(t, legend, "cut"));
+    assert.ok(cut.length > 0, "symbols inside the inferred cut are marked");
+    assert.ok(cut.some((t) => hasMod(t, legend, "cut1")), "the cut uses its palette slot");
+    assert.ok(!cut.some((t) => hasMod(t, legend, "server")), "a cut is not also painted as plain server code");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: separate cuts get separate colours and dependencies keep their owner's", async () => {
+  const src = `module Main where
+
+main :: Html
+main = do
+  let n = Client.now ()
+  <div>
+    <p>{str (Server.now ())}</p>
+    <p>{str (Server.now () + n)}</p>
+  </div>
+`;
+  const file = tmpFlow(src);
+  const c = startServer();
+  try {
+    const res = await c.request("initialize", { rootUri: null, capabilities: {} });
+    const legend = res.capabilities.semanticTokensProvider.legend;
+    c.notify("textDocument/didOpen", {
+      textDocument: { uri: uri(file), languageId: "flow", version: 1, text: src },
+    });
+    await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+
+    const boundary = await c.request("flow/boundary", { uri: uri(file) });
+    const cuts = boundary.regions.filter((r) => r.kind === "cut");
+    assert.equal(cuts.length, 2, "two server calls are two cuts");
+    const depCut = cuts.find((r) => (r.deps || []).includes("n"));
+    assert.ok(depCut, "the second cut carries `n` across the boundary");
+    assert.ok(cuts.every((r) => r.palette >= 1 && r.colorKey), "every cut reports a palette slot");
+
+    const toks = await c.request("textDocument/semanticTokens/full", { textDocument: { uri: uri(file) } });
+    const decoded = decodeTokens(toks.data);
+
+    const cutSlots = decoded.filter((t) => hasMod(t, legend, "cut"))
+      .map((t) => legend.tokenModifiers.find((m) => /^cut\d+$/.test(m) && hasMod(t, legend, m)));
+    assert.ok(cutSlots.includes("cut1") && cutSlots.includes("cut2"), "the two cuts use different palette colours");
+
+    // `n` in the second cut is the dependency, not a symbol owned by cut2.
+    const lines = src.split("\n");
+    const depLine = lines.findIndex((l) => l.includes("Server.now () + n"));
+    const depChar = lines[depLine].indexOf("n)");
+    const dep = decoded.find((t) => t.line === depLine && t.char === depChar && t.len === 1);
+    assert.ok(dep, "the dependency token is present");
+    assert.ok(hasMod(dep, legend, "dependency"), "the dependency is marked as crossing in");
+    assert.ok(hasMod(dep, legend, "client"), "the dependency keeps its client owner's colour");
+    assert.ok(!hasMod(dep, legend, "cut"), "the dependency is not owned by the cut it is used in");
+    assert.ok(!hasMod(dep, legend, "cut2"), "the dependency does not take the cut's palette colour");
+  } finally { c.proc.kill(); }
+});
+
+test("lsp: a where-clause cut inherits its function's tier and dependency owner", async () => {
+  const src = `module Main where
+
+main :: Html
+main =
+  <div>{str (add 1)}</div>
+
+  where
+    add x = Server.now () + x
+`;
+  const file = tmpFlow(src);
+  const c = startServer();
+  try {
+    const res = await c.request("initialize", { rootUri: null, capabilities: {} });
+    const legend = res.capabilities.semanticTokensProvider.legend;
+    c.notify("textDocument/didOpen", {
+      textDocument: { uri: uri(file), languageId: "flow", version: 1, text: src },
+    });
+    await c.waitFor((m) => m.method === "textDocument/publishDiagnostics");
+
+    const boundary = await c.request("flow/boundary", { uri: uri(file) });
+    const cut = boundary.regions.find((r) => r.kind === "cut");
+    assert.ok(cut, "the server call in the where binding is a cut");
+    assert.equal(cut.parent, "Main.main", "the cut belongs to the enclosing function, not to nothing");
+    assert.equal(cut.direction, "client→server");
+    assert.deepEqual(cut.deps, ["x"]);
+
+    const toks = await c.request("textDocument/semanticTokens/full", { textDocument: { uri: uri(file) } });
+    const decoded = decodeTokens(toks.data);
+    const lines = src.split("\n");
+    const line = lines.findIndex((l) => l.includes("Server.now () + x"));
+    const char = lines[line].lastIndexOf("x");
+    const dep = decoded.find((t) => t.line === line && t.char === char && t.len === 1);
+    assert.ok(dep, "the dependency reference is tokenized");
+    assert.ok(hasMod(dep, legend, "dependency"), "the where-clause dependency is marked");
+    assert.ok(hasMod(dep, legend, "client"), "it keeps the enclosing client function's colour");
+    assert.ok(!hasMod(dep, legend, "cut1"), "it is not painted as a symbol owned by the cut");
   } finally { c.proc.kill(); }
 });
 
