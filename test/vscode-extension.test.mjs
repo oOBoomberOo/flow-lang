@@ -49,6 +49,7 @@ function makeMock(workspaceRoot) {
 
   const mock = {
     StatusBarAlignment: { Left: 1, Right: 2 },
+    ConfigurationTarget: { Global: 1, Workspace: 2 },
     OverviewRulerLane: { Left: 1, Center: 2, Right: 4, Full: 7 },
     DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
     SymbolKind: { File: 0, Module: 1, Namespace: 2, Package: 3, Class: 4, Method: 5, Property: 6, Field: 7,
@@ -124,7 +125,11 @@ function makeMock(workspaceRoot) {
     workspace: {
       workspaceFolders: [{ uri: { fsPath: workspaceRoot, toString: () => "file:///" + workspaceRoot.replace(/\\/g, "/") } }],
       textDocuments: [],
-      getConfiguration: () => ({ get: (k, fallback) => mockConfig[k] ?? fallback }),
+      getConfiguration: () => ({
+        get: (k, fallback) => mockConfig[k] ?? fallback,
+        inspect: (k) => ({ globalValue: mockConfig[k] }),
+        update: (k, value) => { mockConfig[k] = value; return Promise.resolve(); },
+      }),
       applyEdit: (edit) => { appliedEdits.push(...edit.edits); return true; },
       onDidOpenTextDocument: (h) => { handlers.open = h; return d(); },
       onDidChangeTextDocument: (h) => { handlers.change = h; return d(); },
@@ -760,6 +765,32 @@ test("vscode: semantic colours stay on when cut markers are disabled", async () 
     const sem = env.registered.find((r) => r[0] === "semanticTokens");
     const tokens = await sem[1].provideDocumentSemanticTokens(doc);
     assert.ok(tokens.data.length > 0, "semantic tokens are independent of marker decoration state");
+  } finally {
+    ext.deactivate();
+    restore();
+  }
+});
+
+test("vscode: activation writes the semantic colour settings when missing", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-semwrite-"));
+  const file = path.join(dir, "main.flow");
+  fs.writeFileSync(file, SRC);
+  const env = makeMock(REPO);
+  delete env.config["editor.semanticHighlighting.enabled"];
+  delete env.config["editor.semanticTokenColorCustomizations"];
+  const { ext, restore } = loadExtension(env);
+  try {
+    ext.activate({ subscriptions: [], extensionPath: path.join(REPO, "vscode-extension") });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(
+      env.config["semanticHighlighting.enabled"],
+      true,
+      `semantic highlighting enabled; output=${env.outputLines.join(" | ")}`,
+    );
+    const custom = env.config["semanticTokenColorCustomizations"];
+    assert.equal(custom.enabled, true);
+    assert.equal(custom.rules["*.client"].foreground, "#61afef");
+    assert.equal(custom.rules["*.cut1"].foreground, "#c678dd");
   } finally {
     ext.deactivate();
     restore();
