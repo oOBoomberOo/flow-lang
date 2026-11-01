@@ -81,10 +81,12 @@ typing burst produces one analysis, and completion answers in single-digit ms.
 
 Editor analysis runs with recovery enabled: the parser skips a broken declaration
 and keeps the rest, type errors are collected per function, and module imports that
-fail do not discard the file. Symbols, semantic tokens, hover, definitions and
-completion therefore keep working while the buffer has errors; the diagnostic list
-still shows them. `flow check` / `build` keep the strict behaviour and fail on the
-first error.
+fail do not discard the file. Symbols, semantic tokens, hover, definitions,
+inlay hints and completion therefore keep working while the buffer has errors.
+Placement regions and cut spans are still derived from the valid declarations, so
+one broken function cannot blank the rest of the file's boundary colours; the
+diagnostic list still shows the error. `flow check` / `build` keep the strict
+behaviour and fail on the first error.
 
 Paths work without imports: `Flow.List.length xs` (or the short `List.length xs` when nothing
 local claims `List`) loads the module on demand, and completion offers module members after
@@ -209,7 +211,7 @@ changes are therefore live without touching the VSIX:
   restarts it too;
 * the **Flow** output channel prints the extension version, the server path and whether
   it came from the workspace, a setting or the bundle, e.g.
-  `[flow] extension 0.18.1 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
+  `[flow] extension 0.18.2 · server F:\projects\flow\src\lsp\server.ts (workspace)`.
 
 Point `flow.serverPath` at another checkout (a worktree, a second clone) and the
 watcher follows that checkout's `src/` and `registry/` instead. Turn

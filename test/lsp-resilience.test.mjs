@@ -284,3 +284,45 @@ main = do
     }
   } finally { c.proc.kill(); }
 });
+
+test("lsp: a localized type error keeps semantic colours and inlay hints elsewhere", async () => {
+  const text = `module Main where
+
+bad :: () -> Int
+bad () = "x"
+
+good :: () -> Int
+good () = Server.now ()
+
+main :: Html
+main = <p>{str (good ())}</p>
+`;
+  const file = fileWith(text);
+  const c = startServer();
+  try {
+    const init = await c.request("initialize", { rootUri: null, capabilities: {} });
+    const legend = init.capabilities.semanticTokensProvider.legend;
+    await open(c, file, text);
+
+    const toks = await c.request("textDocument/semanticTokens/full", { textDocument: { uri: uri(file) } });
+    let line = 0, char = 0;
+    let sawClient = false, sawCut = false;
+    for (let i = 0; i < toks.data.length; i += 5) {
+      const dl = toks.data[i], dc = toks.data[i + 1], mods = toks.data[i + 4];
+      line += dl;
+      char = dl === 0 ? char + dc : dc;
+      if (mods & (1 << legend.tokenModifiers.indexOf("client"))) sawClient = true;
+      if (mods & (1 << legend.tokenModifiers.indexOf("cut"))) sawCut = true;
+      void line; void char;
+    }
+    assert.ok(sawClient, "the valid part of the file keeps its client colour");
+    assert.ok(sawCut, "the valid server cut keeps its cut colour");
+
+    const hints = await c.request("textDocument/inlayHint", {
+      textDocument: { uri: uri(file) }, range: { start: { line: 0, character: 0 }, end: { line: 20, character: 0 } },
+    });
+    const labels = hints.map((h) => String(h.label));
+    assert.ok(labels.some((l) => /server/.test(l)), `placement hint survives: ${labels.join(", ")}`);
+    assert.ok(labels.some((l) => /cut1/.test(l)), `cut hint survives: ${labels.join(", ")}`);
+  } finally { c.proc.kill(); }
+});

@@ -338,7 +338,13 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         if (fn.synthetic) continue;
         const origin = result.display?.get(name) ?? name;
         if (origin.startsWith("flow::") || origin.startsWith("Flow.")) continue;
-        const h = result.codegen.home(fn.body);
+        let h: "client" | "server" | "neutral";
+        try {
+          h = result.codegen.home(fn.body);
+        } catch {
+          // One function with a placement error must not blank the whole file.
+          continue;
+        }
         if (h === "neutral") continue;
         const src = srcFor(fn.body.span.file ?? abs);
         const region: Region = {
@@ -427,7 +433,12 @@ export function analyze(entry: string, overlay?: Map<string, string>): Analysis 
         const key = `${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`;
         if (cutKeys.has(key) || crossingKeys.has(key)) continue;
         crossingKeys.add(key);
-        const home = result.codegen.home(node);
+        let home: "client" | "server" | "neutral";
+        try {
+          home = result.codegen.home(node);
+        } catch {
+          continue;
+        }
         const type = typeStr(ty);
         regions.push({
           file: span.file,

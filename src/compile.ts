@@ -71,10 +71,18 @@ export function compileProgram(
   let codegen: Codegen | undefined;
   let compiled: Compiled = { client: "", server: "", cuts: [], diagnostics: [] };
 
-  if (!mod.errors.length) {
-    codegen = new Codegen(mod, infer, program);
-    compiled = codegen.compile();
-    if (opts.requireMain !== false) checkEntry(mod, file);
+  // Editor mode: a localized type error must not disable placement/cut analysis
+  // for the rest of the file. Keep a Codegen instance even when checking failed
+  // so hover, semantic tokens and inlay hints still get regions.
+  if (!mod.errors.length || opts.collectErrors) {
+    try {
+      codegen = new Codegen(mod, infer, program);
+      compiled = codegen.compile();
+    } catch (e) {
+      if (!opts.collectErrors || !(e instanceof FlowError)) throw e;
+      if (!mod.errors.some((err) => err.message === (e as FlowError).message)) mod.errors.push(e as FlowError);
+    }
+    if (!mod.errors.length && opts.requireMain !== false) checkEntry(mod, file);
   }
 
   return {
